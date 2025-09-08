@@ -9,12 +9,13 @@ import type { Lead } from "@/app/page"
 interface SidebarProps {
   leads: Lead[]
   onLeadSelect: (leadId: string) => void
+  pipelines: String[]
 }
 
-export function Sidebar({ leads, onLeadSelect }: SidebarProps) {
-  const [isExpanded, setIsExpanded] = useState(true)
-
-  const vanzariLeads = leads.filter((lead) => lead.pipeline === "vanzari")
+export function Sidebar({ leads, onLeadSelect, pipelines }: SidebarProps) {
+  // const [isExpanded, setIsExpanded] = useState(true)
+  // const vanzariLeads = leads.filter((lead) => lead.pipeline === "vanzari")
+  console.log(pipelines);
 
   return (
     <aside className="w-64 bg-sidebar border-r border-sidebar-border">
@@ -25,19 +26,23 @@ export function Sidebar({ leads, onLeadSelect }: SidebarProps) {
         </div>
 
         <div className="space-y-2">
-          <Button
+          {/* <Button
             variant="ghost"
             className={cn(
               "w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent",
               isExpanded && "bg-sidebar-accent",
             )}
             onClick={() => setIsExpanded(!isExpanded)}
-          >
-            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            Vanzari ({vanzariLeads.length})
-          </Button>
+          > */}
+            {/* {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />} */}
+            <ul>
+              {pipelines.map((str, i) => (
+                <li key={`${str}-${i}`} className="cursor-pointer hover:text-blue-500">{str}</li>
+              ))}
+            </ul>
+          {/* </Button> */}
 
-          {isExpanded && (
+          {/* {isExpanded && (
             <div className="ml-6 space-y-1">
               {vanzariLeads.map((lead) => (
                 <Button
@@ -56,7 +61,7 @@ export function Sidebar({ leads, onLeadSelect }: SidebarProps) {
                 </Button>
               ))}
             </div>
-          )}
+          )} */}
         </div>
       </div>
     </aside>

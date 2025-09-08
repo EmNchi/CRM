@@ -90,15 +90,19 @@ export function LeadModal({ lead, isOpen, onClose, onStageChange, stages }: Lead
           )}
 
           <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <label className="font-medium text-foreground">Created At</label>
-              <p className="text-muted-foreground">{format(lead.createdAt, "MMM dd, yyyy")}</p>
-            </div>
+            { lead?.createdAt ?
+              <div>
+                <label className="font-medium text-foreground">Created At</label>
+                <p className="text-muted-foreground">{format(lead?.createdAt, "MMM dd, yyyy")}</p>
+              </div>
+            : null }
 
-            <div>
-              <label className="font-medium text-foreground">Last Activity</label>
-              <p className="text-muted-foreground">{format(lead.lastActivity, "MMM dd, yyyy")}</p>
-            </div>
+            {lead?.lastActivity ?
+              <div>
+                <label className="font-medium text-foreground">Last Activity</label>
+                <p className="text-muted-foreground">{format(lead?.lastActivity, "MMM dd, yyyy")}</p>
+              </div>
+            : null }       
           </div>
 
           <div>

@@ -5,13 +5,13 @@ import type React from "react"
 import { useState } from "react"
 import { LeadCard } from "@/components/lead-card"
 import { cn } from "@/lib/utils"
-import type { Lead } from "@/app/page"
+import type { KanbanLead } from "../lib/types/database"
 
 interface KanbanBoardProps {
-  leads: Lead[]
+  leads: KanbanLead[]
   stages: string[]
   onLeadMove: (leadId: string, newStage: string) => void
-  onLeadClick: (lead: Lead) => void
+  onLeadClick: (lead: KanbanLead) => void
 }
 
 export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick }: KanbanBoardProps) {
