@@ -4,6 +4,7 @@ import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import { Suspense } from "react"
+import AuthStatus from '@/components/AuthStatus'
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -20,6 +21,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
+        <header className="flex items-center justify-between p-4 border-b">
+          <div className="font-semibold">Ascutzit CRM</div>
+          <AuthStatus />
+        </header>
         <Suspense fallback={null}>{children}</Suspense>
         <Analytics />
       </body>

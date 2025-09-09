@@ -50,7 +50,7 @@ export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick }: KanbanBo
   }
 
   return (
-    <div className="flex gap-6 h-full overflow-x-auto">
+    <div className="flex gap-6 h-full overflow-x-auto overflow-y-hidden">
       {stages.map((stage) => {
         const stageLeads = getLeadsByStage(stage)
         const isDragOver = dragOverStage === stage

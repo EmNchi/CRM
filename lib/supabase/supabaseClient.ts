@@ -1,6 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
+'use client'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+let _client: ReturnType<typeof createClientComponentClient> | null = null
+export function supabaseBrowser() {
+  if (!_client) _client = createClientComponentClient()
+  return _client
+}

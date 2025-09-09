@@ -1,5 +1,9 @@
-import { supabase } from './supabaseClient'
+'use client'
+
+import { supabaseBrowser } from './supabaseClient'
 import type { Pipeline, Stage, Lead, LeadPipeline, PipelineWithStages, KanbanLead } from '../types/database'
+
+const supabase = supabaseBrowser()
 
 export async function getPipelinesWithStages() {
   try {

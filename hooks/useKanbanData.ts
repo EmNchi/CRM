@@ -1,7 +1,11 @@
+'use client'
+
+import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect } from 'react'
 import { getPipelinesWithStages, getKanbanLeads, moveLeadToStage } from '@/lib/supabase/leadOperations'
-import { supabase } from '@/lib/supabase/supabaseClient'
 import type { KanbanLead, Stage } from '../lib/types/database'
+
+const supabase = supabaseBrowser()
 
 export function useKanbanData(pipelineId?: string) {
   const [leads, setLeads] = useState<KanbanLead[]>([])
