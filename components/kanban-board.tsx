@@ -6,17 +6,49 @@ import { useState } from "react"
 import { LeadCard } from "@/components/lead-card"
 import { cn } from "@/lib/utils"
 import type { KanbanLead } from "../lib/types/database"
+import { Trash2 } from "lucide-react"
+import { useRole } from "@/hooks/useRole"
+import { Button } from "@/components/ui/button"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogFooter
+} from "@/components/ui/alert-dialog"
 
 interface KanbanBoardProps {
   leads: KanbanLead[]
   stages: string[]
   onLeadMove: (leadId: string, newStage: string) => void
   onLeadClick: (lead: KanbanLead) => void
+  onDeleteStage?: (stageName: string) => Promise<void>
 }
 
-export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick }: KanbanBoardProps) {
+export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick, onDeleteStage }: KanbanBoardProps) {
   const [draggedLead, setDraggedLead] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
+
+  const { isOwner } = useRole()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [targetStage, setTargetStage] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteErr, setDeleteErr] = useState<string | null>(null)
+
+  async function handleConfirmDelete() {
+    if (!targetStage) return
+    setDeleteErr(null)
+    setDeleting(true)
+    try {
+      if (typeof onDeleteStage === "function") {
+        await onDeleteStage(targetStage)
+      }
+      setConfirmOpen(false)
+      setTargetStage(null)
+    } catch (e: any) {
+      setDeleteErr(e?.message ?? "Failed to delete stage")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const getLeadsByStage = (stage: string) => {
     return leads.filter((lead) => lead.stage === stage)
@@ -67,10 +99,26 @@ export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick }: KanbanBo
             onDrop={(e) => handleDrop(e, stage)}
           >
             <div className="p-4 border-b border-border">
-              <h3 className="font-medium text-card-foreground">{stage}</h3>
-              <span className="text-sm text-muted-foreground">
-                {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
-              </span>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-medium text-card-foreground">{stage}</h3>
+                  <span className="text-sm text-muted-foreground">
+                    {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
+                  </span>
+                </div>
+
+                {isOwner && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => { setTargetStage(stage); setConfirmOpen(true) }}
+                    aria-label={`Delete stage ${stage}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="p-4 space-y-3 h-full overflow-y-auto">
@@ -94,6 +142,29 @@ export function KanbanBoard({ leads, stages, onLeadMove, onLeadClick }: KanbanBo
           </div>
         )
       })}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Are you sure you want to delete “{targetStage}” and all its leads?
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+
+          {deleteErr && (
+            <p className="text-sm text-red-500">{deleteErr}</p>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={handleConfirmDelete}
+            >
+              {deleting ? "Deleting…" : "Yes, delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

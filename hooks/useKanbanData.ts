@@ -1,6 +1,7 @@
 'use client'
+
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPipelinesWithStages, getKanbanLeads, moveLeadToStage } from '@/lib/supabase/leadOperations'
 import type { KanbanLead } from '../lib/types/database'
 
@@ -13,19 +14,12 @@ export function useKanbanData(pipelineSlug?: string) {
   const [pipelines, setPipelines] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
-  useEffect(() => {
-    loadData()
-    const channel = supabase
-      .channel('kanban-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lead_pipelines' }, loadData)
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [pipelineSlug])
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true)
+
       const { data: pipelinesData, error: pipelineError } = await getPipelinesWithStages()
       if (pipelineError) throw pipelineError
 
@@ -51,20 +45,69 @@ export function useKanbanData(pipelineSlug?: string) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [pipelineSlug])
 
-  async function handleLeadMove(leadId: string, newStageName: string) {
+  const loadDataRef = useRef(loadData)
+  useEffect(() => { loadDataRef.current = loadData }, [loadData])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData, reloadKey])
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('kanban-pipelines')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pipelines' },
+        () => loadDataRef.current()
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  useEffect(() => {
+    if (!pipelineSlug) return
+
+    const channel = supabase
+      .channel(`kanban-changes-${pipelineSlug}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'lead_pipelines' },
+        () => loadDataRef.current()
+      )
+      // also refresh on stage create/delete
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'stages' },
+        () => loadDataRef.current()
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [pipelineSlug])
+
+  const reload = () => setReloadKey(k => k + 1)
+
+  const handleLeadMove = useCallback(async (leadId: string, newStageName: string) => {
     const lead = leads.find(l => l.id === leadId)
     if (!lead) return
+
     const { data: pipelinesData } = await getPipelinesWithStages()
     const currentPipeline = pipelinesData?.find((p: any) => p.id === lead.pipelineId)
     const newStage = currentPipeline?.stages.find((s: any) => s.name === newStageName)
     if (!newStage) return
 
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l))
-    const { error } = await moveLeadToStage(lead.leadId, lead.pipelineId, newStage.id)
-    if (error) { setError('Failed to move lead'); loadData() }
-  }
+    setLeads(prev =>
+      prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l))
+    )
 
-  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData }
+    const { error } = await moveLeadToStage(lead.leadId, lead.pipelineId, newStage.id)
+    if (error) {
+      setError('Failed to move lead')
+      loadDataRef.current()
+    }
+  }, [leads])
+
+  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData, reload }
 }

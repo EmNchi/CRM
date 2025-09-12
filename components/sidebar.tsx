@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { useParams, usePathname } from "next/navigation"
 import { Plus, Users, UserPlus, LayoutDashboard, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
 import { useRouter } from "next/navigation"
 import { useRole } from '@/hooks/useRole'
+import { useKanbanData } from "@/hooks/useKanbanData"
 
 interface SidebarProps {
   leads: Lead[]
@@ -35,7 +36,14 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
   const [msg, setMsg] = useState<string | null>(null)
   const pathname = usePathname()
   const router = useRouter()
+  const params = useParams<{ pipeline?: string }>()
+  const pipelineSlug =
+    params?.pipeline ??
+    pathname.match(/^\/leads\/([^\/?#]+)/)?.[1] ??
+    undefined
+
   const { isOwner, loading: roleLoading } = useRole()
+  const { reload } = useKanbanData(pipelineSlug)
 
   const [createOpen, setCreateOpen] = useState(false)       
   const [pipelineName, setPipelineName] = useState("")      
@@ -54,6 +62,7 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: pipelineName }),
       })
+      reload()
   
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || "Failed to create pipeline")
@@ -93,7 +102,8 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
       const ct = res.headers.get("content-type") || ""
       const payload = ct.includes("application/json") ? await res.json() : { error: await res.text() }
       if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`)
-  
+      reload()
+
       setDeleteOpen(false)
       const removed = deleteTargetName
       setDeleteTarget(null)
