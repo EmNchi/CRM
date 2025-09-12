@@ -1,13 +1,13 @@
 'use client'
-
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect } from 'react'
 import { getPipelinesWithStages, getKanbanLeads, moveLeadToStage } from '@/lib/supabase/leadOperations'
-import type { KanbanLead, Stage } from '../lib/types/database'
+import type { KanbanLead } from '../lib/types/database'
 
 const supabase = supabaseBrowser()
+const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
 
-export function useKanbanData(pipelineId?: string) {
+export function useKanbanData(pipelineSlug?: string) {
   const [leads, setLeads] = useState<KanbanLead[]>([])
   const [stages, setStages] = useState<string[]>([])
   const [pipelines, setPipelines] = useState<string[]>([])
@@ -16,41 +16,35 @@ export function useKanbanData(pipelineId?: string) {
 
   useEffect(() => {
     loadData()
-    
     const channel = supabase
       .channel('kanban-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lead_pipelines' }, () => {
-        loadData()
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lead_pipelines' }, loadData)
       .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [pipelineId])
+    return () => { supabase.removeChannel(channel) }
+  }, [pipelineSlug])
 
   async function loadData() {
     try {
       setLoading(true)
-      
-      const { data: pipelines, error: pipelineError } = await getPipelinesWithStages()
+      const { data: pipelinesData, error: pipelineError } = await getPipelinesWithStages()
       if (pipelineError) throw pipelineError
 
-      setPipelines(pipelines.map(p => p.name))
+      setPipelines(pipelinesData.map((p: any) => p.name))
 
-      const currentPipeline = pipelineId 
-        ? pipelines?.find(p => p.id === pipelineId)
-        : pipelines?.[0]
+      const currentPipeline = pipelineSlug
+        ? pipelinesData.find((p: any) => toSlug(p.name) === pipelineSlug)
+        : pipelinesData?.[0]
 
       if (currentPipeline) {
-        setStages(currentPipeline.stages.map(s => s.name))
-        
+        setStages(currentPipeline.stages.map((s: any) => s.name))
         const { data: leadsData, error: leadsError } = await getKanbanLeads(currentPipeline.id)
         if (leadsError) throw leadsError
-        
         setLeads(leadsData || [])
+      } else {
+        setStages([])
+        setLeads([])
       }
-      
+
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -62,32 +56,15 @@ export function useKanbanData(pipelineId?: string) {
   async function handleLeadMove(leadId: string, newStageName: string) {
     const lead = leads.find(l => l.id === leadId)
     if (!lead) return
-
-    const { data: pipelines } = await getPipelinesWithStages()
-    const currentPipeline = pipelines?.find((p: { id: string }) => p.id === lead.pipelineId)
-    const newStage = currentPipeline?.stages.find((s: { name: string }) => s.name === newStageName)
-    
+    const { data: pipelinesData } = await getPipelinesWithStages()
+    const currentPipeline = pipelinesData?.find((p: any) => p.id === lead.pipelineId)
+    const newStage = currentPipeline?.stages.find((s: any) => s.name === newStageName)
     if (!newStage) return
 
-    setLeads(prev => prev.map(l => 
-      l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l
-    ))
-
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l))
     const { error } = await moveLeadToStage(lead.leadId, lead.pipelineId, newStage.id)
-    
-    if (error) {
-      setError('Failed to move lead')
-      loadData()
-    }
+    if (error) { setError('Failed to move lead'); loadData() }
   }
 
-  return {
-    leads,
-    stages,
-    pipelines,
-    loading,
-    error,
-    handleLeadMove,
-    refresh: loadData
-  }
+  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData }
 }

@@ -3,10 +3,13 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronDown, ChevronRight, Users, UserPlus, LayoutDashboard } from "lucide-react"
+import { Plus, Users, UserPlus, LayoutDashboard, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
+import { useRouter } from "next/navigation"
+import { useRole } from '@/hooks/useRole'
 
 interface SidebarProps {
   leads: Lead[]
@@ -14,9 +17,16 @@ interface SidebarProps {
   pipelines: String[]
 }
 
+interface SidebarProps {
+  leads: Lead[]
+  onLeadSelect: (leadId: string) => void
+  pipelines: String[]
+  canManagePipelines?: boolean 
+}
+
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
-export function Sidebar({ pipelines }: SidebarProps) {
+export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
   const [addOpen, setAddOpen] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -24,6 +34,83 @@ export function Sidebar({ pipelines }: SidebarProps) {
   const [submitting, setSubmitting] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const pathname = usePathname()
+  const router = useRouter()
+  const { isOwner, loading: roleLoading } = useRole()
+
+  const [createOpen, setCreateOpen] = useState(false)       
+  const [pipelineName, setPipelineName] = useState("")      
+  const [creating, setCreating] = useState(false)           
+  const [createError, setCreateError] = useState<string|null>(null) 
+
+  const canManage = (typeof canManagePipelines === 'boolean') ? canManagePipelines : isOwner
+
+  async function handleCreatePipeline(e: React.FormEvent) {
+    e.preventDefault()
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const res = await fetch("/api/pipelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: pipelineName }),
+      })
+  
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || "Failed to create pipeline")
+  
+      // close + clear
+      setCreateOpen(false)
+      setPipelineName("")
+  
+      try {
+        router.refresh?.()
+      } catch {
+      }
+  
+    } catch (err: any) {
+      setCreateError(err.message || "Failed")
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTargetName, setDeleteTarget] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  function openDelete(p: string, e?: React.MouseEvent) {
+    e?.preventDefault()
+    e?.stopPropagation()
+    setDeleteTarget(p)
+    setDeleteOpen(true)
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTargetName) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/pipelines?name=${encodeURIComponent(deleteTargetName)}`, { method: "DELETE" })
+      const ct = res.headers.get("content-type") || ""
+      const payload = ct.includes("application/json") ? await res.json() : { error: await res.text() }
+      if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`)
+  
+      setDeleteOpen(false)
+      const removed = deleteTargetName
+      setDeleteTarget(null)
+  
+      const removedPath = `/leads/${toSlug(removed)}`
+      if (pathname === removedPath) {
+        router.push("/dashboard")
+      }
+  
+      router.refresh()
+    } catch (e: any) {
+      setDeleting(false)
+      alert(e.message ?? "Delete failed")
+      return
+    }
+    setDeleting(false)
+  }
 
   async function onAddMember(e: React.FormEvent) {
     e.preventDefault()
@@ -70,26 +157,100 @@ export function Sidebar({ pipelines }: SidebarProps) {
           </Link>
 
           <div className="mt-4">
-            <div className="px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">Pipelines</div>
+          <div className="flex items-center justify-between px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">
+            <span>Pipelines</span>
+            {canManage && (
+              <button
+                type="button"
+                aria-label="Add pipeline"
+                onClick={() => setCreateOpen(true)}
+                className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-sidebar-accent"
+                title="Add pipeline"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            )}
+          </div>
             <ul className="space-y-1">
-              {pipelines.map((name, i) => {
-                const href = `/leads/${toSlug(name)}`
+              {pipelines.map((p, i) => {
+                const href = `/leads/${toSlug(p)}`
                 const active = pathname === href
                 return (
-                  <li key={`${name}-${i}`}>
-                    <Link
-                      href={href}
+                  <li key={p.id ?? `${p}-${i}`}>
+                    <div
                       className={cn(
-                        "block px-2 py-1.5 rounded hover:bg-sidebar-accent",
+                        "group flex items-center justify-between px-2 py-1.5 rounded hover:bg-sidebar-accent",
                         active && "bg-sidebar-accent"
                       )}
                     >
-                      {String(name)}
-                    </Link>
+                      <Link href={href} className="min-w-0 flex-1 truncate">
+                        {p}
+                      </Link>
+
+                      {canManage && (
+                        <button
+                          type="button"
+                          onClick={(e) => openDelete(p, e)}
+                          className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded hover:bg-background/50 opacity-80 hover:opacity-100"
+                          aria-label={`Delete ${p}`}
+                          title="Delete pipeline"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 )
               })}
             </ul>
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogContent className="max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>New pipeline</DialogTitle>
+                </DialogHeader>
+
+                <form onSubmit={handleCreatePipeline} className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-sidebar-foreground/70 mb-1">Pipeline name</label>
+                    <input
+                      autoFocus
+                      required
+                      value={pipelineName}
+                      onChange={(e) => setPipelineName(e.target.value)}
+                      className="border rounded px-2 py-1 w-full bg-background"
+                      placeholder="e.g. Vânzări"
+                    />
+                  </div>
+
+                  {createError && <p className="text-xs text-red-500">{createError}</p>}
+
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                    <Button type="submit" disabled={creating}>{creating ? "Creating…" : "Create"}</Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <DialogContent className="max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>Delete pipeline?</DialogTitle>
+                </DialogHeader>
+
+                <p className="text-sm text-muted-foreground">
+                  Are you sure you want to delete “{deleteTargetName}”? This will remove the pipeline,
+                  <b> all its stages</b> and <b>all leads</b>. This action cannot be undone.
+                </p>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+                  <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleting}>
+                    {deleting ? "Deleting…" : "Delete"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </nav>
 

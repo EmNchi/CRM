@@ -1,59 +1,53 @@
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
+// middleware.ts
+import { NextResponse } from "next/server"
+import type { NextRequest } from "next/server"
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs"
 
 export async function middleware(req: NextRequest) {
-  // 1) Skip prefetch/CORS noise (this was the "Expression expected" line—extra ')' before)
-  if (req.method === 'HEAD' || req.method === 'OPTIONS') {
+  // Ignore prefetch/noise
+  if (req.method === "HEAD" || req.method === "OPTIONS") {
     return NextResponse.next()
   }
 
   const { pathname } = req.nextUrl
-
-  // 2) Public routes fast-exit (no auth checks, no Supabase call)
-  if (
-    pathname.startsWith('/auth') ||
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/api') ||
-    pathname === '/favicon.ico' ||
-    pathname === '/robots.txt' ||
-    pathname === '/sitemap.xml'
-  ) {
-    return NextResponse.next()
-  }
-
-  // 3) If no auth cookies, redirect WITHOUT touching Supabase (prevents storms)
-  const hasAuth =
-    req.cookies.has('sb-access-token') || req.cookies.has('sb-refresh-token')
-
-  if (!hasAuth) {
-    const url = req.nextUrl.clone()
-    url.pathname = '/auth/sign-in'
-    url.searchParams.set('redirectTo', req.nextUrl.pathname + req.nextUrl.search)
-    return NextResponse.redirect(url)
-  }
-
-  // 4) Only now ask Supabase once (this may refresh token and set cookies)
   const res = NextResponse.next()
   const supabase = createMiddlewareClient({ req, res })
+
+  // 1) Session check
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
     const url = req.nextUrl.clone()
-    url.pathname = '/auth/sign-in'
-    url.searchParams.set('redirectTo', req.nextUrl.pathname + req.nextUrl.search)
+    url.pathname = "/auth/sign-in"
+    url.searchParams.set("next", pathname) // so we can bounce back after login
     return NextResponse.redirect(url)
   }
 
-  return res
+  const { data: member, error: memberErr } = await supabase
+    .from("app_members")
+    .select("role")
+    .eq("user_id", session.user.id)  
+    .single()
+
+  // If not in app, send to a simple "no access" page (or dashboard)
+  if (memberErr || !member) {
+    const url = req.nextUrl.clone()
+    url.pathname = "/auth/no-access"   // make a tiny page or change to "/"
+    return NextResponse.redirect(url)
+  }
+
+  // (Optional) only owners can access destructive areas; you can branch by path here
+  // if (pathname.startsWith("/settings") && member.role !== "owner") { ... }
+
+  return res // IMPORTANT: return the SAME res you passed to createMiddlewareClient
 }
 
-// Narrow the scope to only the real protected areas in your app
+// Protect only real app pages
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/pipelines/:path*',
-    '/leads/:path*',
-    '/settings/:path*',
+    "/dashboard/:path*",
+    "/leads/:path*",
+    "/pipelines/:path*",
+    "/settings/:path*",
   ],
 }
