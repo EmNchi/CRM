@@ -24,7 +24,6 @@ export default function CRMPage() {
     pathname.match(/^\/leads\/([^\/?#]+)/)?.[1] ??
     undefined
 
-  const { reload } = useKanbanData(pipelineSlug)
   const { toast } = useToast()
 
   const { isOwner} = useRole()
@@ -34,8 +33,7 @@ export default function CRMPage() {
   const [createErr, setCreateErr] = useState<string | null>(null)
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
 
-  const { leads, stages, pipelines, loading, error, handleLeadMove } = useKanbanData(pipelineSlug)
-
+  const { leads, stages, pipelines, loading, error, handleLeadMove, refresh } = useKanbanData(pipelineSlug)
 
   async function handleDeleteStage(stageName: string) {
     const res = await fetch("/api/stages", {
@@ -47,7 +45,7 @@ export default function CRMPage() {
     if (!res.ok) throw new Error(json.error || "Failed to delete stage")
 
     toast({ title: "Stage deleted", description: `“${stageName}” and its leads were removed.` })
-    reload()
+    await refresh()
   }
 
   const activePipelineName =
@@ -74,7 +72,7 @@ export default function CRMPage() {
 
   return (
     <div className="flex min-h-dvh bg-background overflow-hidden">
-      <Sidebar leads={leads} onLeadSelect={handleLeadSelect} pipelines={pipelines} />
+      <Sidebar leads={leads} onLeadSelect={handleLeadSelect} pipelines={pipelines} onRefresh={refresh}/>
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         <header className="border-b border-border p-4">
@@ -135,7 +133,7 @@ export default function CRMPage() {
                 // close + clear + refresh local data
                 setCreateStageOpen(false)
                 setStageName("")
-                reload()
+                await refresh()
               } catch (err: any) {
                 setCreateErr(err.message || "Failed to create stage")
               } finally {

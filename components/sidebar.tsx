@@ -10,24 +10,18 @@ import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
 import { useRouter } from "next/navigation"
 import { useRole } from '@/hooks/useRole'
-import { useKanbanData } from "@/hooks/useKanbanData"
 
 interface SidebarProps {
   leads: Lead[]
   onLeadSelect: (leadId: string) => void
-  pipelines: String[]
-}
-
-interface SidebarProps {
-  leads: Lead[]
-  onLeadSelect: (leadId: string) => void
-  pipelines: String[]
-  canManagePipelines?: boolean 
+  pipelines: string[]                 
+  canManagePipelines?: boolean
+  onRefresh?: () => Promise<void> | void  
 }
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
-export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
+export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarProps) {
   const [addOpen, setAddOpen] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -43,7 +37,6 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
     undefined
 
   const { isOwner, loading: roleLoading } = useRole()
-  const { reload } = useKanbanData(pipelineSlug)
 
   const [createOpen, setCreateOpen] = useState(false)       
   const [pipelineName, setPipelineName] = useState("")      
@@ -62,7 +55,6 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: pipelineName }),
       })
-      reload()
   
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || "Failed to create pipeline")
@@ -75,6 +67,8 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
         router.refresh?.()
       } catch {
       }
+
+      await onRefresh?.()
   
     } catch (err: any) {
       setCreateError(err.message || "Failed")
@@ -102,11 +96,12 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
       const ct = res.headers.get("content-type") || ""
       const payload = ct.includes("application/json") ? await res.json() : { error: await res.text() }
       if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`)
-      reload()
 
       setDeleteOpen(false)
       const removed = deleteTargetName
       setDeleteTarget(null)
+
+      await onRefresh?.() 
   
       const removedPath = `/leads/${toSlug(removed)}`
       if (pathname === removedPath) {
@@ -186,7 +181,7 @@ export function Sidebar({ pipelines, canManagePipelines }: SidebarProps) {
                 const href = `/leads/${toSlug(p)}`
                 const active = pathname === href
                 return (
-                  <li key={p.id ?? `${p}-${i}`}>
+                  <li key={`${p}-${i}`}>
                     <div
                       className={cn(
                         "group flex items-center justify-between px-2 py-1.5 rounded hover:bg-sidebar-accent",

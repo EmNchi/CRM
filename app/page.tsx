@@ -7,7 +7,7 @@ import { useKanbanData } from "@/hooks/useKanbanData"
 export type { KanbanLead as Lead } from "../lib/types/database"
 
 export default function DashboardPage() {
-  const { leads, pipelines, loading, error } = useKanbanData()
+  const { leads, pipelines, loading, error, refresh } = useKanbanData()
 
   if (loading) {
     return (
@@ -27,7 +27,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar leads={leads} onLeadSelect={() => {}} pipelines={pipelines} />
+      <Sidebar leads={leads} onLeadSelect={() => {}} pipelines={pipelines} onRefresh={refresh}/>
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         <header className="border-b border-border p-4">
