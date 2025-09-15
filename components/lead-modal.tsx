@@ -12,31 +12,38 @@ interface LeadModalProps {
   lead: Lead | null
   isOpen: boolean
   onClose: () => void
-  onStageChange: (leadId: string, newStage: string) => void
-  stages: string[]
+  onStageChange: (leadId: string, newStageName: string) => void
+  stages: string[]                                 
+  pipelines: string[]                               
+  pipelineSlug?: string                             
+  onMoveToPipeline: (leadId: string, targetPipelineName: string) => void
+  pipelineOptions?: { name: string; activeStages: number }[] 
 }
 
-export function LeadModal({ lead, isOpen, onClose, onStageChange, stages }: LeadModalProps) {
+export function LeadModal({
+  lead,
+  isOpen,
+  onClose,
+  onStageChange,
+  stages,
+  pipelines,
+  pipelineSlug,
+  onMoveToPipeline,
+  pipelineOptions
+}: LeadModalProps) {
+
+  const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
+
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose()
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener("keydown", handleEscape)
-    }
-
-    return () => {
-      document.removeEventListener("keydown", handleEscape)
-    }
+    const handleEscape = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    if (isOpen) document.addEventListener("keydown", handleEscape)
+    return () => document.removeEventListener("keydown", handleEscape)
   }, [isOpen, onClose])
 
   if (!lead) return null
 
-  const handleStageChange = (newStage: string) => {
-    onStageChange(lead.id, newStage)
+  const handleStageChange = (newStageName: string) => {
+    onStageChange(lead.id, newStageName)
   }
 
   return (
@@ -108,23 +115,46 @@ export function LeadModal({ lead, isOpen, onClose, onStageChange, stages }: Lead
           <div>
             <label className="font-medium text-foreground mb-2 block">Move to Stage</label>
             <Select value={lead.stage} onValueChange={handleStageChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {stages.map((stage) => (
-                  <SelectItem key={stage} value={stage}>
-                    {stage}
+                {stages.map((stageName) => (
+                  <SelectItem key={stageName} value={stageName}>
+                    {stageName}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
+          <div className="mt-4">
+            <label className="font-medium text-foreground mb-2 block">Move to another Pipeline</label>
+            <Select
+              onValueChange={(targetName: any) => {
+                if (!lead) return
+                if (targetName === pipelineSlug) return
+                onMoveToPipeline(lead.id, targetName)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select pipeline" />
+              </SelectTrigger>
+              <SelectContent>
+                {(pipelineOptions ?? pipelines.map((name) => ({ name, activeStages: 0 })))
+                  .map(({ name, activeStages }) => (
+                    <SelectItem
+                      key={name}
+                      value={name}
+                      disabled={toSlug(name) === pipelineSlug || activeStages === 0}
+                    >
+                      {name}{activeStages === 0 ? " (no stages)" : ""}
+                    </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="flex justify-end">
-            <Button variant="outline" onClick={onClose}>
-              Close
-            </Button>
+            <Button variant="outline" onClick={onClose}>Close</Button>
           </div>
         </div>
       </DialogContent>

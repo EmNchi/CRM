@@ -5,6 +5,57 @@ import type { Pipeline, Stage, Lead, LeadPipeline, PipelineWithStages, KanbanLea
 
 const supabase = supabaseBrowser()
 
+type MoveOk = { ok: true; data: { lead_pipeline_id: string; new_stage_id: string }[] }
+type MoveErr = { ok: false; code?: string; message?: string }
+export type MoveResult = MoveOk | MoveErr
+export type PipelineOption = { id: string; name: string; is_active: boolean; active_stages: number }
+
+export async function moveLeadToPipeline(
+  leadId: string,
+  targetPipelineId: string,
+  notes?: string
+): Promise<MoveResult> {
+  const { data, error } = await supabase.rpc('move_lead_to_pipeline', {
+    p_lead_id: leadId,
+    p_target_pipeline_id: targetPipelineId,
+    p_notes: notes ?? null,
+  })
+
+  if (error) {
+    // error.details will contain our server-side "code" (e.g., TARGET_PIPELINE_NO_ACTIVE_STAGES)
+    return { ok: false, code: (error as any)?.details, message: error.message }
+  }
+  return { ok: true, data }
+}
+
+export async function moveLeadToPipelineByName(
+  leadId: string,
+  targetPipelineName: string,
+  notes?: string
+): Promise<MoveResult> {
+
+  // 1) find the pipeline id (active only)
+  const { data: pipeline, error: pErr } = await supabase
+    .from('pipelines')
+    .select('id')
+    .eq('name', targetPipelineName)
+    .eq('is_active', true)
+    .single()
+
+  if (pErr || !pipeline?.id) {
+    return { ok: false, code: 'TARGET_PIPELINE_NOT_ACTIVE', message: pErr?.message ?? 'Pipeline not found or inactive' }
+  }
+
+  // 2) call main function
+  return moveLeadToPipeline(leadId, pipeline.id, notes)
+}
+
+export async function getPipelineOptions(): Promise<PipelineOption[]> {
+  const { data, error } = await supabase.rpc('get_pipeline_options')
+  if (error) throw error
+  return (data ?? []) as PipelineOption[]
+}
+
 export async function getPipelinesWithStages() {
   try {
     const { data: pipelines, error: pipelineError } = await supabase

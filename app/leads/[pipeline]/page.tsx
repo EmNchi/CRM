@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { KanbanBoard } from "@/components/kanban-board"
 import { LeadModal } from "@/components/lead-modal"
@@ -8,11 +8,12 @@ import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useKanbanData } from "@/hooks/useKanbanData"
 import type { KanbanLead } from '../lib/types/database'
-import { useParams, usePathname } from "next/navigation"
+import { useParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
+import { moveLeadToPipelineByName, getPipelineOptions } from "@/lib/supabase/leadOperations"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -25,6 +26,7 @@ export default function CRMPage() {
     undefined
 
   const { toast } = useToast()
+  const router = useRouter()
 
   const { isOwner} = useRole()
   const [createStageOpen, setCreateStageOpen] = useState(false)
@@ -32,6 +34,7 @@ export default function CRMPage() {
   const [creatingStage, setCreatingStage] = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
+  const [pipelineOptions, setPipelineOptions] = useState<{ name: string; activeStages: number }[]>([])
 
   const { leads, stages, pipelines, loading, error, handleLeadMove, refresh } = useKanbanData(pipelineSlug)
 
@@ -47,6 +50,22 @@ export default function CRMPage() {
     toast({ title: "Stage deleted", description: `“${stageName}” and its leads were removed.` })
     await refresh()
   }
+  
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const rows = await getPipelineOptions()
+        const byName = new Map(rows.map(r => [r.name, r.active_stages]))
+        const opts = pipelines.map(name => ({ name, activeStages: byName.get(name) ?? 0 }))
+        if (alive) setPipelineOptions(opts)
+      } catch {
+        // graceful fallback
+        if (alive) setPipelineOptions(pipelines.map(name => ({ name, activeStages: 0 })))
+      }
+    })()
+    return () => { alive = false }
+  }, [pipelines])
 
   const activePipelineName =
     useMemo(() =>
@@ -62,6 +81,34 @@ export default function CRMPage() {
   const handleMove = (leadId: string, newStage: string) => {
     handleLeadMove(leadId, newStage)
     toast({ title: "Lead moved", description: `Moved to ${newStage}`, duration: 2000 })
+  }
+
+  async function handleMoveToPipeline(leadId: string, targetName: string) {
+    const res = await moveLeadToPipelineByName(leadId, targetName, "UI move from modal")
+    if (!res.ok) {
+      if (res.code === "TARGET_PIPELINE_NO_ACTIVE_STAGES") {
+        toast({
+          title: "Cannot move lead",
+          description: "Selected pipeline has no stages. Add one and try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (res.code === "TARGET_PIPELINE_NOT_ACTIVE") {
+        toast({
+          title: "Pipeline inactive or missing",
+          description: "Please pick an active pipeline.",
+          variant: "destructive",
+        })
+        return
+      }
+      toast({ title: "Move failed", description: res.message ?? "Unexpected error", variant: "destructive" })
+      return
+    }
+
+    setSelectedLead(null)
+    toast({ title: "Lead moved", description: `Sent to ${targetName} (default stage).` })
+    router.refresh?.() 
   }
 
   const handleLeadClick = (lead: KanbanLead) => setSelectedLead(lead)
@@ -94,7 +141,7 @@ export default function CRMPage() {
         </header>
 
         <div className="flex-1 p-6 overflow-auto">
-          <KanbanBoard leads={leads} stages={stages} onLeadMove={handleMove} onLeadClick={handleLeadClick} onDeleteStage={handleDeleteStage}/>
+          <KanbanBoard leads={leads} stages={stages} onLeadMove={handleMove} onLeadClick={handleLeadClick} onDeleteStage={handleDeleteStage} />
         </div>
       </main>
 
@@ -105,7 +152,11 @@ export default function CRMPage() {
           onClose={handleCloseModal}
           onStageChange={handleMove}
           stages={stages}
-        />
+          pipelines={pipelines}
+          pipelineSlug={pipelineSlug}
+          onMoveToPipeline={handleMoveToPipeline}
+          pipelineOptions={pipelineOptions}
+          />
       )}
 
       <Toaster />
