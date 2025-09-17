@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { KanbanBoard } from "@/components/kanban-board"
-import { LeadModal } from "@/components/lead-modal"
+import { LeadDetailsPanel } from "@/components/lead-details-panel"
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useKanbanData } from "@/hooks/useKanbanData"
@@ -142,22 +142,18 @@ export default function CRMPage() {
 
         <div className="flex-1 p-6 overflow-auto">
           <KanbanBoard leads={leads} stages={stages} onLeadMove={handleMove} onLeadClick={handleLeadClick} onDeleteStage={handleDeleteStage} />
+          <LeadDetailsPanel
+            lead={selectedLead}
+            onClose={handleCloseModal}
+            onStageChange={handleMove}
+            stages={stages}
+            pipelines={pipelines}
+            pipelineSlug={pipelineSlug}
+            onMoveToPipeline={handleMoveToPipeline}
+            pipelineOptions={pipelineOptions}
+          />
         </div>
       </main>
-
-      {selectedLead && (
-        <LeadModal
-          lead={selectedLead}
-          isOpen={!!selectedLead}
-          onClose={handleCloseModal}
-          onStageChange={handleMove}
-          stages={stages}
-          pipelines={pipelines}
-          pipelineSlug={pipelineSlug}
-          onMoveToPipeline={handleMoveToPipeline}
-          pipelineOptions={pipelineOptions}
-          />
-      )}
 
       <Toaster />
 
