@@ -142,7 +142,7 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
   }
 
   return (
-    <aside className="w-64 bg-sidebar border-r border-sidebar-border">
+    <aside className="w-50 bg-sidebar border-r border-sidebar-border">
       <div className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Users className="h-5 w-5 text-sidebar-foreground" />
@@ -259,7 +259,7 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
             </Dialog>
           </div>
 
-          <div aria-hidden className="mx-auto h-px w-50 rounded-full bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
+          <div aria-hidden className="mx-auto h-px w-30 rounded-full bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
 
           <Link
               href="/servicii"
