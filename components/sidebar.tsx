@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
 import { useRouter } from "next/navigation"
 import { useRole } from '@/hooks/useRole'
+import { Wrench } from "lucide-react";
 
 interface SidebarProps {
   leads: Lead[]
@@ -257,6 +258,19 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
               </DialogContent>
             </Dialog>
           </div>
+
+          <div aria-hidden className="mx-auto h-px w-50 rounded-full bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
+
+          <Link
+              href="/servicii"
+              className={cn(
+                "flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted",
+                pathname === "/servicii" && "bg-muted"
+              )}
+            >
+              <Wrench className="h-4 w-4" />
+              <span>Servicii</span>
+          </Link>
         </nav>
 
         {/* Add members */}

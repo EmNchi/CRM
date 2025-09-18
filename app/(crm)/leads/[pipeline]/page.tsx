@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Sidebar } from "@/components/sidebar"
 import { KanbanBoard } from "@/components/kanban-board"
 import { LeadDetailsPanel } from "@/components/lead-details-panel"
 import { useToast } from "@/hooks/use-toast"
@@ -112,14 +111,9 @@ export default function CRMPage() {
   }
 
   const handleLeadClick = (lead: KanbanLead) => setSelectedLead(lead)
-  const handleLeadSelect = (leadId: string) => {
-    const lead = leads.find((l) => l.id === leadId)
-    if (lead) handleLeadClick(lead)
-  }
 
   return (
     <div className="flex min-h-dvh bg-background overflow-hidden">
-      <Sidebar leads={leads} onLeadSelect={handleLeadSelect} pipelines={pipelines} onRefresh={refresh}/>
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         <header className="border-b border-border p-4">
