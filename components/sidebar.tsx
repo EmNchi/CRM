@@ -254,7 +254,7 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
                   <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleting}>
                     {deleting ? "Deleting…" : "Delete"}
                   </Button>
-                </div>
+              </div>
               </DialogContent>
             </Dialog>
           </div>
@@ -262,14 +262,14 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
           <div aria-hidden className="mx-auto h-px w-30 rounded-full bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
 
           <Link
-              href="/servicii"
+              href="/configurari"
               className={cn(
                 "flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted",
-                pathname === "/servicii" && "bg-muted"
+                pathname === "/configurari" && "bg-muted"
               )}
             >
               <Wrench className="h-4 w-4" />
-              <span>Servicii</span>
+              <span>Configurari</span>
           </Link>
         </nav>
 

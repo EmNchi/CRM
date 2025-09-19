@@ -19,6 +19,11 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Trash2, Plus, Wrench } from 'lucide-react';
+import { listTechnicians, type Technician } from '@/lib/supabase/technicianOperations'
+import { listParts, type Part } from '@/lib/supabase/partOperations'
+import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+
+const supabase = supabaseBrowser()
 
 const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 
@@ -28,34 +33,61 @@ export default function Preturi({ leadId }: { leadId: string }) {
   const [quote, setQuote] = useState<LeadQuote | null>(null);
   const [items, setItems] = useState<LeadQuoteItem[]>([]);
 
+  const [pipelines, setPipelines] = useState<string[]>([])
+  const [pipeLoading, setPipeLoading] = useState(true)
+
+  const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [parts, setParts] = useState<Part[]>([])
+
   // Add-service form state
   const [svc, setSvc] = useState({
     id: '',
     qty: '1',
     discount: '0',
     urgent: false,
-    department: '',
-    technician: '',
-  });
+    technicianId: '',
+    department: '' 
+  })
 
   // Add-part form state
   const [part, setPart] = useState({
-    name: '',
-    price: '',
+    id: '',            
+    overridePrice: '', 
     qty: '1',
     discount: '0',
     urgent: false,
-  });
+    department:''
+  })
 
+  async function refreshPipelines() {
+    setPipeLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('pipelines')
+        .select('name,is_active,position')
+        .eq('is_active', true)
+        .order('position', { ascending: true })
+      if (error) throw error
+      setPipelines((data ?? []).map((r: any) => r.name))
+    } finally { setPipeLoading(false) }
+  }
+  
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [svcList, q] = await Promise.all([listServices(), getOrCreateQuote(leadId)]);
+        const [svcList, techList, partList, q] = await Promise.all([
+          listServices(),
+          listTechnicians(),
+          listParts(),
+          getOrCreateQuote(leadId),
+        ]);
         setServices(svcList);
+        setTechnicians(techList);
+        setParts(partList);
+        refreshPipelines();
         setQuote(q);
-        const rows = await listQuoteItems(q.id);
-        setItems(rows);
+        setItems(await listQuoteItems(q.id));
       } finally {
         setLoading(false);
       }
@@ -95,39 +127,49 @@ export default function Preturi({ leadId }: { leadId: string }) {
     if (!quote || !svc.id) return;
     const svcDef = services.find(s => s.id === svc.id);
     if (!svcDef) return;
-
+    
     const qty = Math.max(1, Number(svc.qty || 1));
     const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)));
+    const techName = svc.technicianId
+      ? (technicians.find(t => t.id === svc.technicianId)?.name ?? '')
+      : '';
+    
     await addServiceItem(quote.id, svcDef, {
       qty,
       discount_pct: discount,
       urgent: !!svc.urgent,
-      department: svc.department?.trim() || null,
-      technician: svc.technician?.trim() || null,
+      technician: techName || null,
+      department: svc.department || null,
     });
-
-    // reset service form (fresh defaults for next line)
-    setSvc({ id: '', qty: '1', discount: '0', urgent: false, department: '', technician: '' });
+    
+    setSvc({ id: '', qty: '1', discount: '0', urgent: false, technicianId: '', department:'' });
     await refreshItems();
   }
 
   async function onAddPart(e: React.FormEvent) {
     e.preventDefault();
     if (!quote) return;
-
-    const unit = Number(part.price);
+    if (!part.id) return;
+    
+    const partDef = parts.find(p => p.id === part.id);
+    if (!partDef) return;
+    
+    const unit = part.overridePrice !== '' ? Number(part.overridePrice) : Number(partDef.base_price);
+    if (isNaN(unit) || unit < 0) return;
+    
     const qty = Math.max(1, Number(part.qty || 1));
     const discount = Math.min(100, Math.max(0, Number(part.discount || 0)));
-    if (!part.name.trim() || isNaN(unit) || unit < 0) return;
-
-    await addPartItem(quote.id, part.name.trim(), unit, {
+    
+    await addPartItem(quote.id, partDef.name, unit, {
       qty,
       discount_pct: discount,
       urgent: !!part.urgent,
+      department: part.department || null,
     });
-
-    setPart({ name: '', price: '', qty: '1', discount: '0', urgent: false });
+    
+    setPart({ id: '', overridePrice: '', qty: '1', discount: '0', urgent: false, department:''  });
     await refreshItems();
+    
   }
 
   // ----- Inline updates -----
@@ -195,19 +237,28 @@ export default function Preturi({ leadId }: { leadId: string }) {
         {/* Dept & Tech (service-only meta at add time) */}
         <div className="md:col-span-3">
           <Label>Departament (opțional)</Label>
-          <Input
+          <select
+            className="w-full h-9 rounded-md border px-2"
             value={svc.department}
             onChange={e => setSvc(s => ({ ...s, department: e.target.value }))}
-            placeholder="Ex: Reparații"
-          />
+            disabled={pipeLoading}
+          >
+            <option value="">— selectează —</option>
+            {pipelines.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
         </div>
         <div className="md:col-span-3">
           <Label>Tehnician (opțional)</Label>
-          <Input
-            value={svc.technician}
-            onChange={e => setSvc(s => ({ ...s, technician: e.target.value }))}
-            placeholder="Nume tehnician"
-          />
+          <select
+            className="w-full h-9 rounded-md border px-2"
+            value={svc.technicianId}
+            onChange={e => setSvc(s => ({ ...s, technicianId: e.target.value }))}
+          >
+            <option value="">— selectează tehnician —</option>
+            {technicians.map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
         </div>
 
         <div className="flex items-end">
@@ -219,21 +270,28 @@ export default function Preturi({ leadId }: { leadId: string }) {
 
       {/* Add Part */}
       <form className="grid grid-cols-1 md:grid-cols-6 gap-3" onSubmit={onAddPart}>
-        <div className="md:col-span-2">
-          <Label>Piesă — denumire</Label>
-          <Input
-            value={part.name}
-            onChange={e => setPart(p => ({ ...p, name: e.target.value }))}
-            placeholder="Ex: Garnitură"
-          />
-        </div>
-        <div>
-          <Label>Preț unitar (RON)</Label>
+      <div className="md:col-span-2">
+        <Label>Piesă</Label>
+        <select
+          className="w-full h-9 rounded-md border px-2"
+          value={part.id}
+          onChange={e => setPart(p => ({ ...p, id: e.target.value, overridePrice: '' }))}
+        >
+          <option value="">— selectează piesă —</option>
+          {parts.map(p => (
+            <option key={p.id} value={p.id}>
+              {p.name} — {p.base_price.toFixed(2)} RON
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+          <Label>Preț unitar (override, opțional)</Label>
           <Input
             inputMode="decimal"
-            value={part.price}
-            onChange={e => setPart(p => ({ ...p, price: e.target.value }))}
-            placeholder="50"
+            value={part.overridePrice}
+            onChange={e => setPart(p => ({ ...p, overridePrice: e.target.value }))}
+            placeholder="lasă gol pt. preț catalog"
           />
         </div>
         <div>
@@ -353,24 +411,34 @@ export default function Preturi({ leadId }: { leadId: string }) {
                   </TableCell>
 
                   <TableCell>
-                    {it.item_type === 'service' ? (
-                      <Input
-                        value={it.department ?? ''}
-                        onChange={e => onUpdateItem(it.id, { department: e.target.value })}
-                        placeholder="—"
-                      />
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <select
+                      className="w-full h-9 rounded-md border px-2"
+                      value={it.department ?? ''}
+                      onChange={e => onUpdateItem(it.id, { department: e.target.value || null })}
+                      disabled={pipeLoading}
+                    >
+                      <option value="">—</option>
+                      {pipelines.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
                   </TableCell>
 
                   <TableCell>
                     {it.item_type === 'service' ? (
-                      <Input
-                        value={it.technician ?? ''}
-                        onChange={e => onUpdateItem(it.id, { technician: e.target.value })}
-                        placeholder="—"
-                      />
+                      <select
+                        className="w-full h-9 rounded-md border px-2"
+                        value={technicians.find(t => t.name === (it.technician ?? ''))?.id ?? ''}
+                        onChange={e => {
+                          const tech = technicians.find(t => t.id === e.target.value)
+                          onUpdateItem(it.id, { technician: tech ? tech.name : null })
+                        }}
+                      >
+                        <option value="">—</option>
+                        {technicians.map(t => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}

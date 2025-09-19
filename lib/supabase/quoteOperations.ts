@@ -127,6 +127,7 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
       qty?: number;
       discount_pct?: number;
       urgent?: boolean;
+      department?: string | null;
     }
   ) {
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -145,7 +146,7 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
       qty,
       discount_pct,
       urgent,
-      department: null,   // must be null for parts (DB check enforces)
+      department: (opts?.department ?? null) || null,
       technician: null,   // must be null for parts
       created_by: userRes.user.id,
     });
