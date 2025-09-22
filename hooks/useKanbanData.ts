@@ -15,6 +15,8 @@ export function useKanbanData(pipelineSlug?: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [currentPipelineId, setCurrentPipelineId] = useState<string | null>(null)
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
@@ -29,11 +31,13 @@ export function useKanbanData(pipelineSlug?: string) {
         : pipelinesData?.[0]
 
       if (currentPipeline) {
+        setCurrentPipelineId(currentPipeline.id)
         setStages(currentPipeline.stages.map((s: any) => s.name))
         const { data: leadsData, error: leadsError } = await getKanbanLeads(currentPipeline.id)
         if (leadsError) throw leadsError
         setLeads(leadsData || [])
       } else {
+        setCurrentPipelineId(null)
         setStages([])
         setLeads([])
       }
@@ -46,49 +50,36 @@ export function useKanbanData(pipelineSlug?: string) {
     }
   }, [pipelineSlug])
 
+  // keep ref to latest load function for use inside effects/callbacks
   const loadDataRef = useRef(loadData)
   useEffect(() => { loadDataRef.current = loadData }, [loadData])
 
-  const reload = useCallback(() => {
-    loadDataRef.current()
-  }, [])
-  
   useEffect(() => {
     loadDataRef.current()
-  }, [pipelineSlug])
+  }, [loadData])
 
   useEffect(() => {
-    const channel = supabase
-      .channel('kanban-pipelines')
-      .on(
+    const ch = supabase.channel('kanban-rt')
+
+    ch.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'pipelines' },
+      () => loadDataRef.current()
+    )
+
+    if (currentPipelineId) {
+      ch.on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'pipelines' },
+        { event: '*', schema: 'public', table: 'stages', filter: `pipeline_id=eq.${currentPipelineId}` },
         () => loadDataRef.current()
       )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [])
+    }
 
-  useEffect(() => {
-    if (!pipelineSlug) return
+    ch.subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [currentPipelineId])
 
-    const channel = supabase
-      .channel(`kanban-changes-${pipelineSlug}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'lead_pipelines' },
-        () => loadDataRef.current()
-      )
-      // also refresh on stage create/delete
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'stages' },
-        () => loadDataRef.current()
-      )
-      .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
-  }, [pipelineSlug])
   const handleLeadMove = useCallback(async (leadId: string, newStageName: string) => {
     const lead = leads.find(l => l.id === leadId)
     if (!lead) return
@@ -100,8 +91,11 @@ export function useKanbanData(pipelineSlug?: string) {
 
     setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
     const { error } = await moveLeadToStage(lead.leadId, lead.pipelineId, newStage.id)
-    if (error) { setError('Failed to move lead'); loadDataRef.current() }
+    if (error) {
+      setError('Failed to move lead')
+      loadDataRef.current()
+    }
   }, [leads])
 
-  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData, reload }
+  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData, reload: () => loadDataRef.current() }
 }

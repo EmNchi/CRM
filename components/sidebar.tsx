@@ -1,50 +1,69 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { useParams, usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Plus, Users, UserPlus, LayoutDashboard, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
-import { useRouter } from "next/navigation"
-import { useRole } from '@/hooks/useRole'
-import { Wrench } from "lucide-react";
+import { useRole } from "@/hooks/useRole"
+import { Wrench } from "lucide-react"
+import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 
 interface SidebarProps {
-  leads: Lead[]
-  onLeadSelect: (leadId: string) => void
-  pipelines: string[]                 
+  leads: Lead[]                       // kept for compatibility, not used
+  onLeadSelect: (leadId: string) => void // kept for compatibility, not used
+  pipelines: string[]
   canManagePipelines?: boolean
-  onRefresh?: () => Promise<void> | void  
+  onRefresh?: () => Promise<void> | void // kept for compatibility, not used
 }
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
-export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarProps) {
+export function Sidebar({ pipelines, canManagePipelines, onRefresh: _onRefresh }: SidebarProps) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const { isOwner } = useRole()
+
+  const [pipeNames, setPipeNames] = useState<string[]>(pipelines)
+
+  // create pipeline dialog state
+  const [createOpen, setCreateOpen] = useState(false)
+  const [pipelineName, setPipelineName] = useState("")
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
+  // delete pipeline dialog state
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTargetName, setDeleteTarget] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // add members panel
   const [addOpen, setAddOpen] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [role, setRole] = useState<"admin" | "owner" | "member">("admin")
   const [submitting, setSubmitting] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
-  const pathname = usePathname()
-  const router = useRouter()
-  const params = useParams<{ pipeline?: string }>()
-  const pipelineSlug =
-    params?.pipeline ??
-    pathname.match(/^\/leads\/([^\/?#]+)/)?.[1] ??
-    undefined
 
-  const { isOwner, loading: roleLoading } = useRole()
+  const canManage = (typeof canManagePipelines === "boolean") ? canManagePipelines : isOwner
 
-  const [createOpen, setCreateOpen] = useState(false)       
-  const [pipelineName, setPipelineName] = useState("")      
-  const [creating, setCreating] = useState(false)           
-  const [createError, setCreateError] = useState<string|null>(null) 
+  const reloadPipes = useCallback(async () => {
+    const { data, error } = await getPipelinesWithStages()
+    if (!error && data) setPipeNames(data.map((p: any) => p.name))
+  }, [])
 
-  const canManage = (typeof canManagePipelines === 'boolean') ? canManagePipelines : isOwner
+  // Single unified effect: mount/route-change + custom event from editor/sidebar actions
+  useEffect(() => {
+    // run now
+    reloadPipes()
+
+    const handler = () => { reloadPipes() }
+    window.addEventListener("pipelines:updated", handler)
+    return () => window.removeEventListener("pipelines:updated", handler)
+  }, [pathname, reloadPipes])
 
   async function handleCreatePipeline(e: React.FormEvent) {
     e.preventDefault()
@@ -54,33 +73,22 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
       const res = await fetch("/api/pipelines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: pipelineName }),
+        body: JSON.stringify({ name: pipelineName.trim() }),
       })
-  
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || "Failed to create pipeline")
-  
-      // close + clear
+
       setCreateOpen(false)
       setPipelineName("")
-  
-      try {
-        router.refresh?.()
-      } catch {
-      }
 
-      await onRefresh?.()
-  
+      await reloadPipes()
+      window.dispatchEvent(new Event("pipelines:updated"))
     } catch (err: any) {
       setCreateError(err.message || "Failed")
     } finally {
       setCreating(false)
     }
   }
-
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleteTargetName, setDeleteTarget] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
 
   function openDelete(p: string, e?: React.MouseEvent) {
     e?.preventDefault()
@@ -102,14 +110,14 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
       const removed = deleteTargetName
       setDeleteTarget(null)
 
-      await onRefresh?.() 
-  
+      await reloadPipes()
+      window.dispatchEvent(new Event("pipelines:updated"))
+
+      // If currently on the removed pipeline, bounce to dashboard
       const removedPath = `/leads/${toSlug(removed)}`
       if (pathname === removedPath) {
         router.push("/dashboard")
       }
-  
-      router.refresh()
     } catch (e: any) {
       setDeleting(false)
       alert(e.message ?? "Delete failed")
@@ -163,26 +171,28 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
           </Link>
 
           <div className="mt-4">
-          <div className="flex items-center justify-between px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">
-            <span>Pipelines</span>
-            {canManage && (
-              <button
-                type="button"
-                aria-label="Add pipeline"
-                onClick={() => setCreateOpen(true)}
-                className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-sidebar-accent"
-                title="Add pipeline"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+            <div className="flex items-center justify-between px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">
+              <span>Pipelines</span>
+              {canManage && (
+                <button
+                  type="button"
+                  aria-label="Add pipeline"
+                  onClick={() => setCreateOpen(true)}
+                  className="h-5 w-5 inline-flex items-center justify-center rounded hover:bg-sidebar-accent"
+                  title="Add pipeline"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
             <ul className="space-y-1">
-              {pipelines.map((p, i) => {
-                const href = `/leads/${toSlug(p)}`
+              {pipeNames.map((p) => {
+                const slug = toSlug(p)
+                const href = `/leads/${slug}`
                 const active = pathname === href
                 return (
-                  <li key={`${p}-${i}`}>
+                  <li key={slug}>
                     <div
                       className={cn(
                         "group flex items-center justify-between px-2 py-1.5 rounded hover:bg-sidebar-accent",
@@ -209,6 +219,7 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
                 )
               })}
             </ul>
+
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogContent className="max-w-sm">
                 <DialogHeader>
@@ -232,7 +243,9 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
 
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                    <Button type="submit" disabled={creating}>{creating ? "Creating…" : "Create"}</Button>
+                    <Button type="submit" disabled={creating || !pipelineName.trim()}>
+                      {creating ? "Creating…" : "Create"}
+                    </Button>
                   </div>
                 </form>
               </DialogContent>
@@ -254,7 +267,7 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh }: SidebarPro
                   <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleting}>
                     {deleting ? "Deleting…" : "Delete"}
                   </Button>
-              </div>
+                </div>
               </DialogContent>
             </Dialog>
           </div>

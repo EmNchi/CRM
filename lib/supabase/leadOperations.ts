@@ -249,3 +249,18 @@ export async function searchLeads(searchTerm: string) {
     return { data: null, error }
   }
 }
+
+export async function updatePipelineAndStages(
+  pipelineId: string,
+  pipelineName: string,                     // pass current/new name
+  stages: { id: string; name: string }[]    // final order
+) {
+  const payload = stages.map((s, i) => ({ id: s.id, position: i, name: s.name.trim() }))
+  const { error } = await supabase.rpc('update_pipeline_and_reorder_stages', {
+    p_pipeline_id: pipelineId,
+    p_pipeline_name: pipelineName?.trim() ?? null, // send null if you want to skip renaming
+    p_items: payload
+  })
+  return { error }
+}
+

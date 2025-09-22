@@ -10,9 +10,10 @@ import type { KanbanLead } from '../lib/types/database'
 import { useParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Plus } from "lucide-react"
+import { Plus, Settings2 } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
-import { moveLeadToPipelineByName, getPipelineOptions } from "@/lib/supabase/leadOperations"
+import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages } from "@/lib/supabase/leadOperations"
+import PipelineEditor from "@/components/pipeline-editor"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -27,6 +28,13 @@ export default function CRMPage() {
   const { toast } = useToast()
   const router = useRouter()
 
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editorData, setEditorData] = useState<{
+    pipelineId: string
+    pipelineName: string
+    stages: { id: string; name: string }[]
+  } | null>(null)
+
   const { isOwner} = useRole()
   const [createStageOpen, setCreateStageOpen] = useState(false)
   const [stageName, setStageName] = useState("")
@@ -36,6 +44,19 @@ export default function CRMPage() {
   const [pipelineOptions, setPipelineOptions] = useState<{ name: string; activeStages: number }[]>([])
 
   const { leads, stages, pipelines, loading, error, handleLeadMove, refresh } = useKanbanData(pipelineSlug)
+
+  async function openEditor() {
+    const { data } = await getPipelinesWithStages()
+    // find current pipeline by slug
+    const current = data?.find((p: any) => toSlug(p.name) === pipelineSlug) // you already have toSlug+pipelineSlug
+    if (!current) return
+    setEditorData({
+      pipelineId: current.id,
+      pipelineName: current.name,
+      stages: current.stages.map((s: any) => ({ id: s.id, name: s.name })),
+    })
+    setEditorOpen(true)
+  }
 
   async function handleDeleteStage(stageName: string) {
     const res = await fetch("/api/stages", {
@@ -120,7 +141,7 @@ export default function CRMPage() {
           <h1 className="text-2xl font-semibold text-foreground">{activePipelineName}</h1>
 
           {isOwner && (
-            <div className="mt-2">
+            <div className="mt-2 flex items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -130,9 +151,34 @@ export default function CRMPage() {
                 <Plus className="h-4 w-4" />
                 Add a new stage
               </Button>
+
+              <Button variant="outline" size="sm" onClick={openEditor} className="h-8 gap-2" aria-label="Edit board">
+                <Settings2 className="h-4 w-4" />
+                Edit board
+              </Button>
             </div>
           )}
         </header>
+
+        {editorData && (
+          <PipelineEditor
+            open={editorOpen}
+            onOpenChange={setEditorOpen}
+            pipelineName={editorData.pipelineName}
+            stages={editorData.stages}
+            onSubmit={async ({ pipelineName, stages }) => {
+              const { error } = await updatePipelineAndStages(editorData!.pipelineId, pipelineName, stages)
+              if (error) { toast({ variant: "destructive", title: "Save failed", description: String(error.message ?? error) }); return }
+              await refresh?.()                                   // ensure UI reflects new order/name
+              const newSlug = toSlug(pipelineName);               // if your URL uses slug
+              if (newSlug !== pipelineSlug) router.replace(`/leads/${newSlug}`)
+              setEditorOpen(false)
+              toast({ title: "Board updated" })
+              if (typeof window !== "undefined") window.dispatchEvent(new Event("pipelines:updated"))
+
+            }}
+          />
+        )}
 
         <div className="flex-1 p-6 overflow-auto">
           <KanbanBoard leads={leads} stages={stages} onLeadMove={handleMove} onLeadClick={handleLeadClick} onDeleteStage={handleDeleteStage} />
