@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { KanbanBoard } from "@/components/kanban-board"
-import { LeadDetailsPanel } from "@/components/lead-details-panel"
+import dynamic from "next/dynamic"
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useKanbanData } from "@/hooks/useKanbanData"
@@ -16,6 +16,11 @@ import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, u
 import PipelineEditor from "@/components/pipeline-editor"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
+
+const LeadDetailsPanel = dynamic(
+  () => import("@/components/lead-details-panel").then(m => m.LeadDetailsPanel),
+  { ssr: false }
+)
 
 export default function CRMPage() {
   const params = useParams<{ pipeline?: string }>()
@@ -182,16 +187,19 @@ export default function CRMPage() {
 
         <div className="flex-1 p-6 overflow-auto">
           <KanbanBoard leads={leads} stages={stages} onLeadMove={handleMove} onLeadClick={handleLeadClick} onDeleteStage={handleDeleteStage} />
-          <LeadDetailsPanel
-            lead={selectedLead}
-            onClose={handleCloseModal}
-            onStageChange={handleMove}
-            stages={stages}
-            pipelines={pipelines}
-            pipelineSlug={pipelineSlug}
-            onMoveToPipeline={handleMoveToPipeline}
-            pipelineOptions={pipelineOptions}
-          />
+          {selectedLead && (
+            <LeadDetailsPanel
+              key={selectedLead.id}              
+              lead={selectedLead}
+              onClose={handleCloseModal}
+              onStageChange={handleMove}
+              stages={stages}
+              pipelines={pipelines}
+              pipelineSlug={pipelineSlug}
+              onMoveToPipeline={handleMoveToPipeline}
+              pipelineOptions={pipelineOptions}
+            />
+          )}
         </div>
       </main>
 

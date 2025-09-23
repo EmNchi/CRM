@@ -260,7 +260,35 @@ export async function updatePipelineAndStages(
     p_pipeline_id: pipelineId,
     p_pipeline_name: pipelineName?.trim() ?? null, // send null if you want to skip renaming
     p_items: payload
-  })
+})
   return { error }
 }
 
+export async function logLeadEvent(
+  leadId: string,
+  message: string,
+  eventType: string = "update",
+  payload: Record<string, unknown> = {}
+) {
+  // capture the actor's display name once, on the client
+  const { data: authData } = await supabase.auth.getUser()
+  const user = authData?.user ?? null
+  const actor_name =
+    (user?.user_metadata?.full_name as string | undefined) ||
+    (user?.email as string | undefined) ||
+    null
+
+  const { data, error } = await supabase
+    .from("lead_events")
+    .insert({
+      lead_id: leadId,
+      event_type: eventType,
+      message,
+      payload,
+      actor_name, // NEW: store a snapshot for the UI
+    })
+    .select("id")
+    .single()
+
+  return { id: data?.id, error }
+}

@@ -1,11 +1,13 @@
 "use client"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { format } from "date-fns"
 import type { Lead } from "@/app/page" 
 import Preturi from '@/components/preturi';
+import LeadHistory from "@/components/lead-history"
+import { useEffect, useState } from "react"
+import { logLeadEvent } from "@/lib/supabase/leadOperations"
 
 type Maybe<T> = T | null
 
@@ -14,8 +16,6 @@ interface LeadDetailsPanelProps {
   onClose: () => void
   onStageChange: (leadId: string, newStage: string) => void
   stages: string[]
-
-  // keep these optional so current callers compile even if unused
   pipelines?: string[]
   pipelineSlug?: string
   onMoveToPipeline?: (leadId: string, targetName: string) => Promise<void>
@@ -30,10 +30,27 @@ export function LeadDetailsPanel({
 }: LeadDetailsPanelProps) {
   if (!lead) return null
 
-  const handleStageChange = (newStage: string) => {
-    onStageChange(lead.id, newStage)
-  }
+  const [section, setSection] = useState<"fisa" | "istoric">("fisa")
+  const [stage, setStage] = useState(lead.stage)
 
+  useEffect(() => {
+    setStage(lead.stage)
+  }, [lead.id, lead.stage])
+
+  const handleStageChange = (newStage: string) => {
+    const prevStage = stage            // use local stage as previous
+    setStage(newStage)                 // optimistic UI update
+  
+    onStageChange(lead.id, newStage)   // keep your existing behavior
+    // log to Istoric
+    logLeadEvent(
+      lead.id,
+      `Stadiu schimbat: ${prevStage} → ${newStage}`,
+      "stage_change",
+      { from: prevStage, to: newStage }
+    )
+  }
+  
   return (
     <section className="mt-6 rounded-lg border bg-card">
       <header className="flex items-center justify-between border-b p-4">
@@ -41,7 +58,7 @@ export function LeadDetailsPanel({
         <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
       </header>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_360px] gap-4 items-start p-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
         {/* LEFT column — identity & meta */}
         <div className="space-y-4">
           <div>
@@ -94,7 +111,7 @@ export function LeadDetailsPanel({
 
           <div>
             <label className="font-medium text-foreground mb-2 block">Move to Stage</label>
-            <Select value={lead.stage} onValueChange={handleStageChange}>
+            <Select value={stage} onValueChange={handleStageChange}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {stages.map((stage) => (
@@ -105,14 +122,26 @@ export function LeadDetailsPanel({
           </div>
         </div>
 
-        {/* MIDDLE column — Preturi (full-height center) */}
+        {/* RIGHT — switchable content */}
         <div className="min-w-0 space-y-4">
-          <Preturi leadId={lead.id} />
-        </div>
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">Secțiune</div>
+            <Select value={section} onValueChange={(v: any) => setSection(v as "fisa" | "istoric")}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Alege secțiunea" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="fisa">Fișa de serviciu</SelectItem>
+                <SelectItem value="istoric">Istoric</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-        {/* RIGHT column — actions & notes */}
-        <div className="space-y-4">
-
+          {section === "fisa" ? (
+            <Preturi leadId={lead.id} />
+          ) : (
+            <LeadHistory leadId={lead.id} />
+          )}
         </div>
       </div>
     </section>

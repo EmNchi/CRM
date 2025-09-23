@@ -1,14 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { listServices, type Service } from '@/lib/supabase/serviceOperations';
 import {
   getOrCreateQuote,
   listQuoteItems,
-  addServiceItem,
-  addPartItem,
-  updateItem,
-  deleteItem,
   type LeadQuoteItem,
   type LeadQuote,
 } from '@/lib/supabase/quoteOperations';
@@ -22,6 +18,7 @@ import { Trash2, Plus, Wrench } from 'lucide-react';
 import { listTechnicians, type Technician } from '@/lib/supabase/technicianOperations'
 import { listParts, type Part } from '@/lib/supabase/partOperations'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+import { persistAndLogServiceSheet } from "@/lib/history/serviceSheet"
 
 const supabase = supabaseBrowser()
 
@@ -38,6 +35,11 @@ export default function Preturi({ leadId }: { leadId: string }) {
 
   const [technicians, setTechnicians] = useState<Technician[]>([])
   const [parts, setParts] = useState<Part[]>([])
+
+  const [saving, setSaving] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
+
+  const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
 
   // Add-service form state
   const [svc, setSvc] = useState({
@@ -59,6 +61,8 @@ export default function Preturi({ leadId }: { leadId: string }) {
     department:''
   })
 
+  const lastSavedRef = useRef<any[]>([])
+
   async function refreshPipelines() {
     setPipeLoading(true)
     try {
@@ -70,6 +74,26 @@ export default function Preturi({ leadId }: { leadId: string }) {
       if (error) throw error
       setPipelines((data ?? []).map((r: any) => r.name))
     } finally { setPipeLoading(false) }
+  }
+
+  async function saveAllAndLog() {
+    if (!quote) return
+    setSaving(true)
+    try {
+      const { items: fresh, snapshot } = await persistAndLogServiceSheet({
+        leadId,
+        quoteId: quote.id,
+        items,
+        services,
+        totals: { subtotal, totalDiscount, urgentAmount, total },
+        prevSnapshot: lastSavedRef.current as any,
+      })
+      setItems(fresh)
+      lastSavedRef.current = snapshot
+      setIsDirty(false)
+    } finally {
+      setSaving(false)
+    }
   }
   
   useEffect(() => {
@@ -87,17 +111,25 @@ export default function Preturi({ leadId }: { leadId: string }) {
         setParts(partList);
         refreshPipelines();
         setQuote(q);
-        setItems(await listQuoteItems(q.id));
+        const qi = await listQuoteItems(q.id);
+        setItems(qi);
+
+        // Prime lastSavedRef with the current DB state
+        lastSavedRef.current = (qi ?? []).map((i: any) => ({
+          id: i.id ?? `${i.name_snapshot}:${i.item_type}`,
+          name: i.name_snapshot,
+          qty: i.qty,
+          price: i.unit_price_snapshot,
+          type: i.item_type,
+          urgent: !!i.urgent,
+          department: i.department ?? null,
+          technician: i.technician ?? null,
+        }))
       } finally {
         setLoading(false);
       }
     })();
   }, [leadId]);
-
-  async function refreshItems() {
-    if (!quote) return;
-    setItems(await listQuoteItems(quote.id));
-  }
 
   // ----- Totals (per-line discount & urgent only) -----
   const subtotal = useMemo(
@@ -123,70 +155,90 @@ export default function Preturi({ leadId }: { leadId: string }) {
   const total = useMemo(() => subtotal - totalDiscount + urgentAmount, [subtotal, totalDiscount, urgentAmount]);
 
   // ----- Add rows -----
-  async function onAddService() {
-    if (!quote || !svc.id) return;
-    const svcDef = services.find(s => s.id === svc.id);
-    if (!svcDef) return;
-    
-    const qty = Math.max(1, Number(svc.qty || 1));
-    const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)));
+  function onAddService() {
+    if (!quote || !svc.id) return
+    const svcDef = services.find(s => s.id === svc.id)
+    if (!svcDef) return
+  
+    const qty = Math.max(1, Number(svc.qty || 1))
+    const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)))
     const techName = svc.technicianId
       ? (technicians.find(t => t.id === svc.technicianId)?.name ?? '')
-      : '';
-    
-    await addServiceItem(quote.id, svcDef, {
-      qty,
-      discount_pct: discount,
-      urgent: !!svc.urgent,
-      technician: techName || null,
-      department: svc.department || null,
-    });
-    
-    setSvc({ id: '', qty: '1', discount: '0', urgent: false, technicianId: '', department:'' });
-    await refreshItems();
+      : ''
+  
+    // ⬇️ push a local row (no DB write)
+    setItems(prev => [
+      ...prev,
+      {
+        id: tempId(),
+        item_type: 'service',
+        name_snapshot: svcDef.name,
+        unit_price_snapshot: Number(svcDef.base_price),
+        qty,
+        discount_pct: discount,
+        urgent: !!svc.urgent,
+        technician: techName || null,
+        department: svc.department || null,
+      } as unknown as LeadQuoteItem
+    ])
+    setSvc({ id: '', qty: '1', discount: '0', urgent: false, technicianId: '', department:'' })
+    setIsDirty(true)
   }
 
-  async function onAddPart(e: React.FormEvent) {
-    e.preventDefault();
-    if (!quote) return;
-    if (!part.id) return;
-    
-    const partDef = parts.find(p => p.id === part.id);
-    if (!partDef) return;
-    
-    const unit = part.overridePrice !== '' ? Number(part.overridePrice) : Number(partDef.base_price);
-    if (isNaN(unit) || unit < 0) return;
-    
-    const qty = Math.max(1, Number(part.qty || 1));
-    const discount = Math.min(100, Math.max(0, Number(part.discount || 0)));
-    
-    await addPartItem(quote.id, partDef.name, unit, {
-      qty,
-      discount_pct: discount,
-      urgent: !!part.urgent,
-      department: part.department || null,
-    });
-    
-    setPart({ id: '', overridePrice: '', qty: '1', discount: '0', urgent: false, department:''  });
-    await refreshItems();
-    
+  function onAddPart(e: React.FormEvent) {
+    e.preventDefault()
+    if (!quote || !part.id) return
+  
+    const partDef = parts.find(p => p.id === part.id)
+    if (!partDef) return
+  
+    const unit = part.overridePrice !== '' ? Number(part.overridePrice) : Number(partDef.base_price)
+    if (isNaN(unit) || unit < 0) return
+  
+    const qty = Math.max(1, Number(part.qty || 1))
+    const discount = Math.min(100, Math.max(0, Number(part.discount || 0)))
+  
+    // ⬇️ push a local row (no DB write)
+    setItems(prev => [
+      ...prev,
+      {
+        id: tempId(),
+        item_type: 'part',
+        name_snapshot: partDef.name,
+        unit_price_snapshot: unit,
+        qty,
+        discount_pct: discount,
+        urgent: !!part.urgent,
+        department: part.department || null,
+        technician: null,
+      } as unknown as LeadQuoteItem
+    ])
+  
+    setPart({ id: '', overridePrice: '', qty: '1', discount: '0', urgent: false, department:'' })
+    setIsDirty(true)
   }
 
   // ----- Inline updates -----
-  async function onUpdateItem(id: string, patch: Partial<LeadQuoteItem>) {
-    await updateItem(id, patch as any);
-    setItems(prev => prev.map(it => (it.id === id ? { ...it, ...patch } as any : it)));
+  function onUpdateItem(id: string, patch: Partial<LeadQuoteItem>) {
+    setItems(prev => prev.map(it => (it.id === id ? { ...it, ...patch } as any : it)))
+    setIsDirty(true)
   }
 
-  async function onDelete(id: string) {
-    await deleteItem(id);
-    setItems(prev => prev.filter(it => it.id !== id));
+  function onDelete(id: string) {
+    setItems(prev => prev.filter(it => it.id !== id))
+    setIsDirty(true)
   }
 
   if (loading || !quote) return <Card className="p-4">Se încarcă…</Card>;
 
   return (
     <Card className="p-4 space-y-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium">Fișa de serviciu</h3>
+        <Button className="cursor-pointer" size="sm" onClick={saveAllAndLog} disabled={loading || saving || !isDirty}>
+          {saving ? "Se salvează…" : "Salvează în Istoric"}
+        </Button>
+      </div>
       {/* Add Service */}
       <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
         <div className="md:col-span-2">
@@ -286,7 +338,7 @@ export default function Preturi({ leadId }: { leadId: string }) {
         </select>
       </div>
       <div>
-          <Label>Preț unitar (override, opțional)</Label>
+          <Label>Preț unitar</Label>
           <Input
             inputMode="decimal"
             value={part.overridePrice}
