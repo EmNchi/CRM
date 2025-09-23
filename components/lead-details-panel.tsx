@@ -7,7 +7,6 @@ import type { Lead } from "@/app/page"
 import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { useEffect, useState } from "react"
-import { logLeadEvent } from "@/lib/supabase/leadOperations"
 
 type Maybe<T> = T | null
 
@@ -42,13 +41,6 @@ export function LeadDetailsPanel({
     setStage(newStage)                 // optimistic UI update
   
     onStageChange(lead.id, newStage)   // keep your existing behavior
-    // log to Istoric
-    logLeadEvent(
-      lead.id,
-      `Stadiu schimbat: ${prevStage} → ${newStage}`,
-      "stage_change",
-      { from: prevStage, to: newStage }
-    )
   }
   
   return (

@@ -14,6 +14,7 @@ import { Plus, Settings2 } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
+import { logLeadEvent } from "@/lib/supabase/leadOperations"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -104,7 +105,22 @@ export default function CRMPage() {
   if (error)   return <div className="flex items-center justify-center h-screen"><div className="text-red-500">Error: {error}</div></div>
 
   const handleMove = (leadId: string, newStage: string) => {
+    const prevStage = leads.find(l => l.id === leadId)?.stage ?? "—"
+  
+    // move in kanban data (your existing behavior)
     handleLeadMove(leadId, newStage)
+  
+    // update the left details panel immediately if this lead is open
+    setSelectedLead((sl: any) => (sl?.id === leadId ? { ...sl, stage: newStage } : sl))
+  
+    // single, centralized history log (works for DnD AND for dropdown)
+    logLeadEvent(
+      leadId,
+      `Stadiu schimbat: ${prevStage} → ${newStage}`,
+      "stage_change",
+      { from: prevStage, to: newStage }
+    )
+  
     toast({ title: "Lead moved", description: `Moved to ${newStage}`, duration: 2000 })
   }
 
