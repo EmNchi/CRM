@@ -267,28 +267,40 @@ export async function updatePipelineAndStages(
 export async function logLeadEvent(
   leadId: string,
   message: string,
-  eventType: string = "update",
-  payload: Record<string, unknown> = {}
+  eventType: string = 'message',
+  payload: Record<string, any> = {}
 ) {
-  // capture the actor's display name once, on the client
-  const { data: authData } = await supabase.auth.getUser()
-  const user = authData?.user ?? null
-  const actor_name =
-    (user?.user_metadata?.full_name as string | undefined) ||
-    (user?.email as string | undefined) ||
-    null
+  const supabase = supabaseBrowser()
+  const { data: { user } } = await supabase.auth.getUser()
+  const actorName =
+    (user?.user_metadata as any)?.name ||
+    (user?.user_metadata as any)?.full_name ||
+    user?.email || null
 
   const { data, error } = await supabase
     .from("lead_events")
-    .insert({
+    .insert([{
       lead_id: leadId,
       event_type: eventType,
       message,
       payload,
-      actor_name, // NEW: store a snapshot for the UI
-    })
-    .select("id")
+      actor_id: user?.id ?? null,
+      actor_name: actorName,
+    }])
+    .select("id, lead_id, event_type, message, actor_name, created_at") // ⬅️ return row
     .single()
 
-  return { id: data?.id, error }
+  if (error) throw error
+  return data
+}
+
+
+
+export async function moveLeadToStageAllPipelines(leadId: string, stageName: string) {
+  const { data, error } = await supabase.rpc('move_lead_to_stage_all_pipelines', {
+    p_lead_id: leadId,
+    p_stage_name: stageName,
+  })
+  if (error) throw error
+  return data // { moved: [...], skipped: [...] }
 }

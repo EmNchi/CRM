@@ -7,6 +7,7 @@ import type { Lead } from "@/app/page"
 import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { useEffect, useState } from "react"
+import DeConfirmat from "@/components/de-confirmat"
 
 type Maybe<T> = T | null
 
@@ -29,7 +30,7 @@ export function LeadDetailsPanel({
 }: LeadDetailsPanelProps) {
   if (!lead) return null
 
-  const [section, setSection] = useState<"fisa" | "istoric">("fisa")
+  const [section, setSection] = useState<"fisa" | "deconfirmat" | "istoric">("fisa")
   const [stage, setStage] = useState(lead.stage)
 
   useEffect(() => {
@@ -124,16 +125,20 @@ export function LeadDetailsPanel({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="fisa">Fișa de serviciu</SelectItem>
+                <SelectItem value="deconfirmat">De confirmat la client</SelectItem>
                 <SelectItem value="istoric">Istoric</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {section === "fisa" ? (
-            <Preturi leadId={lead.id} />
-          ) : (
-            <LeadHistory leadId={lead.id} />
+          {section === "fisa" && <Preturi leadId={lead.id} />}
+          {section === "deconfirmat" && (
+            <DeConfirmat
+              leadId={lead.id}
+              onMoveStage={(s) => onStageChange(lead.id, s)}
+            />
           )}
+          {section === "istoric" && <LeadHistory leadId={lead.id} />}
         </div>
       </div>
     </section>

@@ -1,0 +1,187 @@
+"use client"
+
+import { Button } from "@/components/ui/button"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+import { logLeadEvent, moveLeadToStageAllPipelines } from "@/lib/supabase/leadOperations"
+import { useToast } from "@/hooks/use-toast"
+import { useEffect, useMemo, useState } from "react"
+
+const supabase = supabaseBrowser()
+
+type Props = {
+  leadId: string
+  onMoveStage: (newStage: string) => void   // calls parent handler to move & log stage change
+}
+
+type Ev = {
+  id: string
+  actor_name: string | null
+  event_type: string
+  message: string
+  created_at: string
+}
+
+export default function DeConfirmat({ leadId, onMoveStage }: Props) {
+    const [req, setReq] = useState("")     // technician’s request
+    const [reply, setReply] = useState("") // operator’s reply
+    const [items, setItems] = useState<Ev[]>([])
+    const [loading, setLoading] = useState(true)
+
+    const { toast } = useToast()
+
+    function pushUnique(list: Ev[], entry: Ev) {
+        const next = [entry, ...list]
+        const seen = new Set<string>()
+        return next.filter(e => (seen.has(e.id) ? false : (seen.add(e.id), true)))
+    }
+
+    // Load only the confirmation conversation from lead_events
+    useEffect(() => {
+        let cancelled = false
+        const chRef = { current: null as any }
+        setLoading(true)
+        supabase
+            .from("lead_events")
+            .select("id,actor_name,event_type,message,created_at")
+            .eq("lead_id", leadId)
+            .in("event_type", ["confirm_request", "confirm_reply", "confirm_done"])
+            .order("created_at", { ascending: false })
+            .then(({ data }: any) => {
+            if (!cancelled) {
+            const seen = new Set<string>()
+            const unique = (data ?? []).filter((e: any) => !seen.has(e.id) && seen.add(e.id))
+            setItems(unique)
+            }
+            setLoading(false)
+            })
+
+        const ch = supabase
+            .channel(`lead_conf_${leadId}`)
+            .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "lead_events", filter: `lead_id=eq.${leadId}` },
+            (p: any) => {
+                if (!["confirm_request", "confirm_reply", "confirm_done"].includes(p.new.event_type)) return
+                setItems(prev => pushUnique(prev, p.new as Ev))
+            }
+            )
+            .subscribe()
+
+        return () => { cancelled = true; supabase.removeChannel(ch) }
+    }, [leadId])
+
+    async function sendRequest() {
+        if (!req.trim()) return
+        const ev = await logLeadEvent(leadId, req.trim(), "confirm_request", {})
+        setItems(prev => pushUnique(prev, ev))
+        const res = await moveLeadToStageAllPipelines(leadId, "DE CONFIRMAT")
+        if (res?.skipped?.length) {
+            toast({
+            variant: "destructive",
+            title: "Stadiu lipsă într-un pipeline",
+            description: `Nu am găsit "DE CONFIRMAT" în ${res.skipped.length} pipeline-uri.`,
+            })
+        } else {
+            toast({ title: 'Mutat în "DE CONFIRMAT" peste tot.' })
+        }
+        setReq("")
+        // (opțional) hint local imediat, dacă vrei feedback instant în boardul curent:
+        onMoveStage?.("DE CONFIRMAT")
+    }
+
+    async function sendReply() {
+        if (!reply.trim()) return
+        const ev = await logLeadEvent(leadId, reply.trim(), "confirm_reply", {})
+        setItems(prev => pushUnique(prev, ev))
+        setReply("")
+    }
+
+  async function markConfirmed() {
+    // optional event so it shows clearly in history
+    const ev = await logLeadEvent(
+        leadId,
+        "Confirmarea clientului a fost primită. Trimitem la tehnician pentru verificare.",
+        "confirm_done",
+        {}
+      )
+      setItems(prev => pushUnique(prev, ev))
+    const res = await moveLeadToStageAllPipelines(leadId, "IN LUCRU")
+    if (res?.skipped?.length) {
+      toast({
+        variant: "destructive",
+        title: "Stadiu lipsă într-un pipeline",
+        description: `Nu am găsit "IN LUCRU" în ${res.skipped.length} pipeline-uri.`,
+      })
+    } else {
+      toast({ title: 'Mutat în "IN LUCRU" peste tot.' })
+    }
+    onMoveStage?.("IN LUCRU")
+  }
+
+  const renderItems = useMemo(() => {
+    const seen = new Set<string>()
+    const arr: Ev[] = []
+    for (const e of items) {
+      if (!seen.has(e.id)) {
+        seen.add(e.id)
+        arr.push(e)
+      }
+    }
+    return arr
+  }, [items])
+
+  return (
+    <div className="space-y-6">
+      <h3 className="font-medium text-lg">De confirmat la client</h3>
+
+      {/* Technician block */}
+      <div className="rounded border p-3 bg-muted/30">
+        <div className="text-sm font-medium mb-2">Ce trebuie confirmat</div>
+        <textarea
+          className="w-full h-24 rounded-md border p-2 bg-background"
+          placeholder="[scrie in detaliu ce trebuie confirmat cu client si ce s-a facut pana acum cu comanda]."
+          value={req}
+          onChange={(e) => setReq(e.target.value)}
+        />
+        <div className="mt-2 flex justify-end">
+          <Button size="sm" onClick={sendRequest} disabled={!req.trim()}>Trimite la confirmare &rarr; DE CONFIRMAT</Button>
+        </div>
+      </div>
+
+      {/* Operator block */}
+      <div className="rounded border p-3 bg-muted/30">
+        <div className="text-sm font-medium mb-2">Răspunsul clientului / notițe operator</div>
+        <textarea
+          className="w-full h-20 rounded-md border p-2 bg-background"
+          placeholder="[scrie in detaliu raspunsul clientului sau intrebarile noi]"
+          value={reply}
+          onChange={(e) => setReply(e.target.value)}
+        />
+        <div className="mt-2 flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={sendReply} disabled={!reply.trim()}>Trimite mesaj</Button>
+          <Button size="sm" onClick={markConfirmed}>Marchează confirmat &rarr; IN LUCRU</Button>
+        </div>
+      </div>
+
+        {/* Mini thread (only confirmation-related) */}
+        <div className="space-y-2 max-h-80 overflow-y-auto">
+            <div className="text-sm text-muted-foreground">Istoric “De confirmat”</div>
+            {loading ? (
+                <div className="text-sm text-muted-foreground">Se încarcă…</div>
+            ) : renderItems.length === 0 ? (
+                <div className="text-sm text-muted-foreground">Nu există mesaje încă.</div>
+            ) : (
+                renderItems.map((ev) => (
+                <div key={ev.id} className="rounded border p-2">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>{new Date(ev.created_at).toLocaleString()}</span>
+                    <span>{ev.actor_name ?? "—"}</span>
+                    </div>
+                    <div className="mt-1 text-sm whitespace-pre-wrap">{ev.message}</div>
+                </div>
+                ))
+            )}
+        </div>
+    </div>
+  )
+}

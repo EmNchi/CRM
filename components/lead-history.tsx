@@ -50,6 +50,22 @@ function renderServiceSheetDetails(payload: any) {
   )
 }
 
+function ConfirmBadge({ type }: { type: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    confirm_request: { label: "DE CONFIRMAT", cls: "bg-yellow-100 text-yellow-900" },
+    confirm_reply:   { label: "RĂSPUNS CLIENT", cls: "bg-blue-100 text-blue-900" },
+    confirm_done:    { label: "CONFIRMAT", cls: "bg-emerald-100 text-emerald-900" },
+    confirm_auto_move:{ label: "AUTO MOVE", cls: "bg-slate-100 text-slate-900" },
+  }
+  const meta = map[type]
+  if (!meta) return null
+  return (
+    <span className={`ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${meta.cls} border border-black/5`}>
+      {meta.label}
+    </span>
+  )
+}
+
 const supabase = supabaseBrowser()
 
 export default function LeadHistory({ leadId }: { leadId: string }) {
@@ -105,7 +121,10 @@ export default function LeadHistory({ leadId }: { leadId: string }) {
       {items.map((ev) => (
         <div key={ev.id} className="rounded-lg border p-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{new Date(ev.created_at).toLocaleString()}</span>
+            <div className="flex items-center">
+              <span>{new Date(ev.created_at).toLocaleString()}</span>
+              <ConfirmBadge type={ev.event_type} />
+            </div>
             <span>{ev.actor_name || (ev.actor_id ? ev.actor_id.slice(0, 8) : "—")}</span>
           </div>
           <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap">{ev.message}</div>
