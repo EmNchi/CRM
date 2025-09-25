@@ -4,6 +4,7 @@ import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPipelinesWithStages, getKanbanLeads, moveLeadToStage } from '@/lib/supabase/leadOperations'
 import type { KanbanLead } from '../lib/types/database'
+import type { Tag } from '@/lib/supabase/tagOperations'
 
 const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
@@ -16,6 +17,10 @@ export function useKanbanData(pipelineSlug?: string) {
   const [error, setError] = useState<string | null>(null)
 
   const [currentPipelineId, setCurrentPipelineId] = useState<string | null>(null)
+
+  const patchLeadTags = useCallback((leadId: string, tags: Tag[]) => {
+    setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, tags } : l)))
+  }, [])
 
   const loadData = useCallback(async () => {
     try {
@@ -67,6 +72,18 @@ export function useKanbanData(pipelineSlug?: string) {
       () => loadDataRef.current()
     )
 
+    ch.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'lead_tags' },
+      () => loadDataRef.current()
+    )
+
+    ch.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'tags' },
+      () => loadDataRef.current()
+    )
+
     if (currentPipelineId) {
       ch.on(
         'postgres_changes',
@@ -97,5 +114,5 @@ export function useKanbanData(pipelineSlug?: string) {
     }
   }, [leads])
 
-  return { leads, stages, pipelines, loading, error, handleLeadMove, refresh: loadData, reload: () => loadDataRef.current() }
+  return { leads, stages, pipelines, loading, error, handleLeadMove, patchLeadTags, refresh: loadData, reload: () => loadDataRef.current() }
 }

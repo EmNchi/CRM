@@ -93,6 +93,7 @@ export interface KanbanLead {
     stageId: string
     pipelineId: string
     assignmentId: string
+    tags?: { id: string; name: string; color: 'green' | 'yellow' | 'red' }[]
 }
 
 export const STAGE_COLORS: Record<string, string> = {

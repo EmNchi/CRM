@@ -3,8 +3,9 @@
 import { Sidebar } from "@/components/sidebar"
 import { Toaster } from "@/components/ui/toaster"
 import { useKanbanData } from "@/hooks/useKanbanData"
-
-export type { KanbanLead as Lead } from "../lib/types/database"
+import type { KanbanLead } from "../lib/types/database"
+import type { Tag } from "@/lib/supabase/tagOperations"
+export type Lead = KanbanLead & { tags?: Tag[] }
 
 export default function DashboardPage() {
   const { leads, pipelines, loading, error, refresh } = useKanbanData()

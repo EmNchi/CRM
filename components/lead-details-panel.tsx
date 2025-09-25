@@ -8,6 +8,11 @@ import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { useEffect, useState } from "react"
 import DeConfirmat from "@/components/de-confirmat"
+import { Badge } from "@/components/ui/badge"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
+import { ChevronsUpDown } from "lucide-react"
+import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 
 type Maybe<T> = T | null
 
@@ -20,23 +25,71 @@ interface LeadDetailsPanelProps {
   pipelineSlug?: string
   onMoveToPipeline?: (leadId: string, targetName: string) => Promise<void>
   pipelineOptions?: { name: string; activeStages: number }[]
+  onTagsChange?: (leadId: string, tags: Tag[]) => void
 }
 
 export function LeadDetailsPanel({
   lead,
   onClose,
   onStageChange,
+  onTagsChange,
   stages,
 }: LeadDetailsPanelProps) {
   if (!lead) return null
 
+  const supabase = supabaseBrowser()
   const [section, setSection] = useState<"fisa" | "deconfirmat" | "istoric">("fisa")
   const [stage, setStage] = useState(lead.stage)
+
+  const tagClass = (c: TagColor) =>
+    c === "green" ? "bg-emerald-100 text-emerald-800"
+  : c === "yellow" ? "bg-amber-100  text-amber-800"
+  :                  "bg-rose-100   text-rose-800"
+
+  const [allTags, setAllTags] = useState<Tag[]>([])
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+
+  useEffect(() => {
+    const ch = supabase
+      .channel('rt-tags-lead-panel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' },
+        () => listTags().then(setAllTags).catch(console.error)
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => { listTags().then(setAllTags).catch(console.error) }, [])
+
+  useEffect(() => {
+    if (!lead) return
+    setSelectedTagIds((lead.tags ?? []).map(t => t.id))
+  }, [lead?.id])
 
   useEffect(() => {
     setStage(lead.stage)
   }, [lead.id, lead.stage])
 
+  async function handleToggleTag(tagId: string) {
+    if (!lead) return
+  
+    // 1) server change
+    await toggleLeadTag(lead.id, tagId)
+  
+    // 2) compute next selection based on current state
+    const nextIds = selectedTagIds.includes(tagId)
+      ? selectedTagIds.filter(id => id !== tagId)
+      : [...selectedTagIds, tagId]
+  
+    // 3) local update
+    setSelectedTagIds(nextIds)
+  
+    // 4) notify parent AFTER local setState (outside render)
+    const nextTags = allTags.filter(t => nextIds.includes(t.id))
+    onTagsChange?.(lead.id, nextTags)
+  }
+  
   const handleStageChange = (newStage: string) => {
     const prevStage = stage            // use local stage as previous
     setStage(newStage)                 // optimistic UI update
@@ -46,9 +99,59 @@ export function LeadDetailsPanel({
   
   return (
     <section className="mt-6 rounded-lg border bg-card">
-      <header className="flex items-center justify-between border-b p-4">
-        <h2 className="text-lg font-semibold">{lead.name}</h2>
-        <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+      <header className="border-b p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold truncate">{lead.name}</h2>
+
+            <div className="mt-2 flex items-center gap-2">
+              {/* Add tags button + multi-select */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-7 px-2">
+                    Add tags
+                    <ChevronsUpDown className="ml-1 h-4 w-4 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-[260px]">
+                  {allTags.map(tag => (
+                    <DropdownMenuCheckboxItem
+                      key={tag.id}
+                      checked={selectedTagIds.includes(tag.id)}
+                      onCheckedChange={() => handleToggleTag(tag.id)}
+                      onSelect={(e) => e.preventDefault()} // ← keep menu open
+                    >
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-sm border text-[11px] leading-5 ${tagClass(tag.color)}`}>
+                        {tag.name}
+                      </span>
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  {allTags.length === 0 && (
+                    <div className="px-2 py-1 text-xs text-muted-foreground">
+                      No tags defined yet.
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* Selected chips — inline, small radius, wrap at max width */}
+              <div className="flex flex-wrap gap-1 max-w-[60%] md:max-w-[520px]">
+                {allTags
+                  .filter(t => selectedTagIds.includes(t.id))
+                  .map(tag => (
+                    <span
+                      key={tag.id}
+                      className={`inline-flex items-center px-2 py-0.5 rounded-sm border text-[11px] leading-5 ${tagClass(tag.color)}`}
+                    >
+                      {tag.name}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          </div>
+
+          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">

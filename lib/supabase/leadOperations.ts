@@ -100,10 +100,22 @@ export async function getKanbanLeads(pipelineId?: string) {
     }
 
     const { data, error } = await query
-
     if (error) throw error
 
-    const kanbanLeads: KanbanLead[] = data.map(item => ({
+    const leadIds = (data ?? []).map((item: any) => item.lead.id)
+
+    // fetch tags for all these leads in one shot
+    let tagMap = new Map<string, any[]>()
+    if (leadIds.length) {
+      const { data: tagRows, error: tagErr } = await supabase
+        .from('v_lead_tags')
+        .select('lead_id,tags')
+        .in('lead_id', leadIds)
+      if (tagErr) throw tagErr
+      tagMap = new Map((tagRows ?? []).map((r: any) => [r.lead_id, r.tags]))
+    }
+
+    const kanbanLeads: KanbanLead[] = (data ?? []).map((item: any) => ({
       id: item.lead.id,
       name: item.lead.full_name || 'Unknown',
       email: item.lead.email || '',
@@ -116,7 +128,9 @@ export async function getKanbanLeads(pipelineId?: string) {
       leadId: item.lead.id,
       stageId: item.stage.id,
       pipelineId: item.pipeline_id,
-      assignmentId: item.id
+      assignmentId: item.id,
+      // NEW:
+      tags: (tagMap.get(item.lead.id) ?? []) as any,
     }))
 
     return { data: kanbanLeads, error: null }

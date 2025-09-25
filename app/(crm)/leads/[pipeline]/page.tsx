@@ -15,6 +15,7 @@ import { useRole } from '@/hooks/useRole'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
 import { logLeadEvent } from "@/lib/supabase/leadOperations"
+import { Tag } from "@/lib/supabase/tagOperations"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -49,7 +50,7 @@ export default function CRMPage() {
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
   const [pipelineOptions, setPipelineOptions] = useState<{ name: string; activeStages: number }[]>([])
 
-  const { leads, stages, pipelines, loading, error, handleLeadMove, refresh } = useKanbanData(pipelineSlug)
+  const { leads, stages, pipelines, loading, error, handleLeadMove, refresh, patchLeadTags } = useKanbanData(pipelineSlug)
 
   async function openEditor() {
     const { data } = await getPipelinesWithStages()
@@ -214,6 +215,7 @@ export default function CRMPage() {
               pipelineSlug={pipelineSlug}
               onMoveToPipeline={handleMoveToPipeline}
               pipelineOptions={pipelineOptions}
+              onTagsChange={(leadId: string, tags: Tag[]) => patchLeadTags(leadId, tags)}
             />
           )}
         </div>

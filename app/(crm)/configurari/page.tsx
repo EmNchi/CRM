@@ -11,6 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { listTechnicians, createTechnician, deleteTechnician, type Technician } from '@/lib/supabase/technicianOperations'
 import { listParts, createPart, deletePart, type Part } from '@/lib/supabase/partOperations'
+import { listTags, createTag, deleteTag, type Tag, type TagColor, updateTag } from '@/lib/supabase/tagOperations'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 
 const supabase = supabaseBrowser()
 
@@ -35,6 +37,46 @@ export default function ServiciiPage() {
   const [partSubmitting, setPartSubmitting] = useState(false)
   const [partForm, setPartForm] = useState({ name: '', base_price: '' })
 
+  //tags
+  const [tags, setTags] = useState<Tag[]>([])
+  const [tagLoading, setTagLoading] = useState(true)
+  const [tagSubmitting, setTagSubmitting] = useState(false)
+  const [tagForm, setTagForm] = useState<{ name: string; color: TagColor }>({ name: '', color: 'green' })
+
+  useEffect(() => {
+    const ch = supabase
+      .channel('rt-tags-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' },
+        () => refreshTags()
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function refreshTags() {
+    setTagLoading(true)
+    try { setTags(await listTags()) } finally { setTagLoading(false) }
+  }
+  
+  async function onAddTag(e: React.FormEvent) {
+    e.preventDefault()
+    if (!canManage) return
+    if (!tagForm.name.trim()) return
+    setTagSubmitting(true)
+    try {
+      await createTag(tagForm.name.trim(), tagForm.color)
+      setTagForm({ name: '', color: 'green' })
+      await refreshTags()
+    } finally { setTagSubmitting(false) }
+  }
+  
+  async function onDeleteTag(id: string) {
+    if (!canManage) return
+    await deleteTag(id)
+    await refreshTags()
+  }
+                    
   async function refreshTechs() {
     setTechLoading(true)
     try { setTechs(await listTechnicians()) } finally { setTechLoading(false) }
@@ -49,6 +91,7 @@ export default function ServiciiPage() {
     refresh()           
     refreshTechs()
     refreshParts()
+    refreshTags()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -211,7 +254,19 @@ export default function ServiciiPage() {
             <TableBody>
               {techs.map(t => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-medium">{t.name}</TableCell>
+                  <TableCell
+                    className="font-medium cursor-pointer"
+                    title="Dublu-click pentru redenumire"
+                    onDoubleClick={async () => {
+                      const v = prompt('Nume nou', t.name)
+                      if (v && v.trim() && v.trim() !== t.name) {
+                        await updateTag(t.id, { name: v.trim() })
+                        await refreshTags()
+                      }
+                    }}
+                  >
+                    {t.name}
+                  </TableCell>
                   {canManage && (
                     <TableCell className="text-right">
                       <Button variant="destructive" size="sm" onClick={() => onDeleteTechnician(t.id)}>Șterge</Button>
@@ -291,6 +346,99 @@ export default function ServiciiPage() {
         </Card>
       </div>
 
+      {/* ===== Tag-uri ===== */}
+      <header className="flex items-center justify-between p-6 border-b">
+        <h1 className="text-2xl font-semibold">Tag-uri</h1>
+        <div className="text-sm text-muted-foreground">
+          {tagLoading ? 'Se încarcă…' : `${tags.length} înregistrări`}
+        </div>
+      </header>
+
+      <div className="p-6 space-y-6">
+        {canManage && (
+          <Card className="p-4">
+            <form onSubmit={onAddTag} className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="md:col-span-2">
+                <Label htmlFor="tag-name">Denumire</Label>
+                <Input
+                  id="tag-name"
+                  value={tagForm.name}
+                  onChange={e => setTagForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="ex. VIP, URGENT, NU"
+                  required
+                />
+              </div>
+              <div className="md:col-span-2">
+                <Label htmlFor="tag-color">Culoare</Label>
+                <Select value={tagForm.color} onValueChange={(v) => setTagForm(f => ({ ...f, color: v as TagColor }))}>
+                  <SelectTrigger id="tag-color">
+                    <SelectValue placeholder="Alege culoarea" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="green">Verde</SelectItem>
+                    <SelectItem value="yellow">Galben</SelectItem>
+                    <SelectItem value="red">Roșu</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-end">
+                <Button type="submit" disabled={tagSubmitting}>Adaugă</Button>
+              </div>
+            </form>
+          </Card>
+        )}
+
+        <Card className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nume</TableHead>
+                <TableHead className="w-40">Culoare</TableHead>
+                {canManage && <TableHead className="w-28 text-right">Acțiuni</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tags.map(t => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">{t.name}</TableCell>
+                  <TableCell className="w-48">
+                    <Select
+                      value={t.color}
+                      onValueChange={async (v) => {
+                        if (v !== t.color) {
+                          await updateTag(t.id, { color: v as TagColor })
+                          await refreshTags()
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="green">Verde</SelectItem>
+                        <SelectItem value="yellow">Galben</SelectItem>
+                        <SelectItem value="red">Roșu</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  {canManage && (
+                    <TableCell className="text-right">
+                      <Button variant="destructive" size="sm" onClick={() => onDeleteTag(t.id)}>Șterge</Button>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+              {!tagLoading && tags.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={canManage ? 3 : 2} className="text-muted-foreground">
+                    Nu există tag-uri încă.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      </div>
     </div>
   )
 }

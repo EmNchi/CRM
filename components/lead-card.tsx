@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
+import type { Tag, TagColor } from "@/lib/supabase/tagOperations"
 
 interface LeadCardProps {
   lead: Lead
@@ -22,6 +23,11 @@ interface LeadCardProps {
 
 export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDragging, stages }: LeadCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+
+  const tagClass = (c: TagColor) =>
+    c === "green" ? "rounded-sm bg-emerald-100 text-emerald-800"
+  : c === "yellow" ? "rounded-sm bg-amber-100  text-amber-800"
+  :                  "rounded-sm bg-rose-100   text-rose-800"
 
   const handleCardClick = (e: React.MouseEvent) => {
     // Don't trigger onClick if clicking on the menu or drag handle
@@ -51,11 +57,15 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
         <div className="flex-1 min-w-0">
           <h4 className="font-medium text-foreground truncate">{lead.name}</h4>
           {lead.company && <p className="text-xs text-muted-foreground truncate mt-1">{lead.company}</p>}
-          <div className="flex items-center gap-2 mt-2">
-            <Badge variant="secondary" className="text-xs">
-              {lead.stage.split(" ")[0]}
-            </Badge>
-          </div>
+          {(lead.tags?.length ?? 0) > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1 max-h-10 overflow-y-auto">
+              {lead.tags!.map(tag => (
+                <Badge key={tag.id} variant="outline" className={tagClass(tag.color)}>
+                  {tag.name}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
