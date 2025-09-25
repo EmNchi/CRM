@@ -10,6 +10,17 @@ type MoveErr = { ok: false; code?: string; message?: string }
 export type MoveResult = MoveOk | MoveErr
 export type PipelineOption = { id: string; name: string; is_active: boolean; active_stages: number }
 
+export type BulkMoveResult = {
+  action: "created" | "updated"
+  pipeline_name: string
+  pipeline_id: string
+  assignment_id: string
+  to_stage_id: string
+  to_stage_name: string
+  from_stage_id: string | null
+  from_stage_name: string | null
+}
+
 export async function moveLeadToPipeline(
   leadId: string,
   targetPipelineId: string,
@@ -309,6 +320,40 @@ export async function logLeadEvent(
 }
 
 
+export async function bulkMoveLeadToPipelinesByNames(
+  leadId: string,
+  pipelineNames: string[],
+  notes?: string
+): Promise<BulkMoveResult[]> {
+  const { data, error } = await supabase.rpc("bulk_move_lead_to_pipelines_by_names", {
+    p_lead_id: leadId,
+    p_pipeline_names: pipelineNames,
+    p_notes: notes ?? null,
+  })
+  if (error) throw error
+  return (data ?? []) as BulkMoveResult[]
+}
+
+export async function autoMoveLeadConfirm(
+  leadId: string,
+  fromName = "IN LUCRU",
+  toName = "DE CONFIRMAT"
+) {
+  const { data, error } = await supabase.rpc("auto_move_lead_confirm", {
+    p_lead_id: leadId,
+    p_from_name: fromName,
+    p_to_name: toName,
+  })
+  if (error) throw error
+  return data as Array<{
+    pipeline_id: string
+    pipeline_name: string | null
+    from_stage_id: string
+    from_stage_name: string
+    to_stage_id: string
+    to_stage_name: string
+  }>
+}
 
 export async function moveLeadToStageAllPipelines(leadId: string, stageName: string) {
   const { data, error } = await supabase.rpc('move_lead_to_stage_all_pipelines', {

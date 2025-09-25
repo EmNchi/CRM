@@ -45,9 +45,16 @@ export async function middleware(req: NextRequest) {
 // Protect only real app pages
 export const config = {
   matcher: [
+    "/",
     "/dashboard/:path*",
+    "/dashboard",
+    "/configurari/:path*",
+    "/configurari",
     "/leads/:path*",
+    "/leads",
     "/pipelines/:path*",
+    "/pipelines",
     "/settings/:path*",
+    "/settings",
   ],
 }

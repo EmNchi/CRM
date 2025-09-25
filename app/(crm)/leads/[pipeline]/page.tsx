@@ -12,9 +12,8 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus, Settings2 } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
-import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages } from "@/lib/supabase/leadOperations"
+import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, bulkMoveLeadToPipelinesByNames, logLeadEvent } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
-import { logLeadEvent } from "@/lib/supabase/leadOperations"
 import { Tag } from "@/lib/supabase/tagOperations"
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
@@ -51,6 +50,16 @@ export default function CRMPage() {
   const [pipelineOptions, setPipelineOptions] = useState<{ name: string; activeStages: number }[]>([])
 
   const { leads, stages, pipelines, loading, error, handleLeadMove, refresh, patchLeadTags } = useKanbanData(pipelineSlug)
+
+  const handleBulkMoveToPipelines = async (leadId: string, pipelineNames: string[]) => {
+    try {
+      const res = await bulkMoveLeadToPipelinesByNames(leadId, pipelineNames)
+      toast({ description: `Moved to ${res.length} pipeline${res.length === 1 ? "" : "s"}` })
+      router.refresh() // re-render board, details, and history in one shot
+    } catch (e: any) {
+      toast({ variant: "destructive", description: e?.message ?? "Move failed" })
+    }
+  }
 
   async function openEditor() {
     const { data } = await getPipelinesWithStages()
@@ -214,6 +223,7 @@ export default function CRMPage() {
               pipelines={pipelines}
               pipelineSlug={pipelineSlug}
               onMoveToPipeline={handleMoveToPipeline}
+              onBulkMoveToPipelines={handleBulkMoveToPipelines}
               pipelineOptions={pipelineOptions}
               onTagsChange={(leadId: string, tags: Tag[]) => patchLeadTags(leadId, tags)}
             />

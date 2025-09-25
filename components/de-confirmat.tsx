@@ -2,15 +2,16 @@
 
 import { Button } from "@/components/ui/button"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
-import { logLeadEvent, moveLeadToStageAllPipelines } from "@/lib/supabase/leadOperations"
+import { logLeadEvent } from "@/lib/supabase/leadOperations"
 import { useToast } from "@/hooks/use-toast"
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 
 const supabase = supabaseBrowser()
 
 type Props = {
   leadId: string
-  onMoveStage: (newStage: string) => void   // calls parent handler to move & log stage change
+  onMoveStage: (newStage: string) => void
 }
 
 type Ev = {
@@ -22,100 +23,104 @@ type Ev = {
 }
 
 export default function DeConfirmat({ leadId, onMoveStage }: Props) {
-    const [req, setReq] = useState("")     // technician’s request
-    const [reply, setReply] = useState("") // operator’s reply
-    const [items, setItems] = useState<Ev[]>([])
-    const [loading, setLoading] = useState(true)
+  const [req, setReq] = useState("")
+  const [reply, setReply] = useState("")
+  const [items, setItems] = useState<Ev[]>([])
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const { toast } = useToast()
 
-    const { toast } = useToast()
+  function pushUnique(list: Ev[], entry: Ev) {
+    const next = [entry, ...list]
+    const seen = new Set<string>()
+    return next.filter(e => (seen.has(e.id) ? false : (seen.add(e.id), true)))
+  }
 
-    function pushUnique(list: Ev[], entry: Ev) {
-        const next = [entry, ...list]
-        const seen = new Set<string>()
-        return next.filter(e => (seen.has(e.id) ? false : (seen.add(e.id), true)))
-    }
+  async function moveEverywhere(fromName: string, toName: string) {
+    const { data, error } = await supabase.rpc("auto_move_lead_confirm", {
+      p_lead_id: leadId,
+      p_from_name: fromName,
+      p_to_name: toName,
+    })
+    if (error) throw error
+    return (data ?? []) as Array<any>
+  }
 
-    // Load only the confirmation conversation from lead_events
-    useEffect(() => {
-        let cancelled = false
-        const chRef = { current: null as any }
-        setLoading(true)
-        supabase
-            .from("lead_events")
-            .select("id,actor_name,event_type,message,created_at")
-            .eq("lead_id", leadId)
-            .in("event_type", ["confirm_request", "confirm_reply", "confirm_done"])
-            .order("created_at", { ascending: false })
-            .then(({ data }: any) => {
-            if (!cancelled) {
-            const seen = new Set<string>()
-            const unique = (data ?? []).filter((e: any) => !seen.has(e.id) && seen.add(e.id))
-            setItems(unique)
-            }
-            setLoading(false)
-            })
+  // Load only the confirmation conversation from lead_events
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
 
-        const ch = supabase
-            .channel(`lead_conf_${leadId}`)
-            .on(
-            "postgres_changes",
-            { event: "INSERT", schema: "public", table: "lead_events", filter: `lead_id=eq.${leadId}` },
-            (p: any) => {
-                if (!["confirm_request", "confirm_reply", "confirm_done"].includes(p.new.event_type)) return
-                setItems(prev => pushUnique(prev, p.new as Ev))
-            }
-            )
-            .subscribe()
-
-        return () => { cancelled = true; supabase.removeChannel(ch) }
-    }, [leadId])
-
-    async function sendRequest() {
-        if (!req.trim()) return
-        const ev = await logLeadEvent(leadId, req.trim(), "confirm_request", {})
-        setItems(prev => pushUnique(prev, ev))
-        const res = await moveLeadToStageAllPipelines(leadId, "DE CONFIRMAT")
-        if (res?.skipped?.length) {
-            toast({
-            variant: "destructive",
-            title: "Stadiu lipsă într-un pipeline",
-            description: `Nu am găsit "DE CONFIRMAT" în ${res.skipped.length} pipeline-uri.`,
-            })
-        } else {
-            toast({ title: 'Mutat în "DE CONFIRMAT" peste tot.' })
+    supabase
+      .from("lead_events")
+      .select("id,actor_name,event_type,message,created_at")
+      .eq("lead_id", leadId)
+      .in("event_type", ["confirm_request", "confirm_reply", "confirm_done"])
+      .order("created_at", { ascending: false })
+      .then(({ data }: any) => {
+        if (!cancelled) {
+          const seen = new Set<string>()
+          const unique = (data ?? []).filter((e: any) => !seen.has(e.id) && seen.add(e.id))
+          setItems(unique)
         }
-        setReq("")
-        // (opțional) hint local imediat, dacă vrei feedback instant în boardul curent:
-        onMoveStage?.("DE CONFIRMAT")
-    }
-
-    async function sendReply() {
-        if (!reply.trim()) return
-        const ev = await logLeadEvent(leadId, reply.trim(), "confirm_reply", {})
-        setItems(prev => pushUnique(prev, ev))
-        setReply("")
-    }
-
-  async function markConfirmed() {
-    // optional event so it shows clearly in history
-    const ev = await logLeadEvent(
-        leadId,
-        "Confirmarea clientului a fost primită. Trimitem la tehnician pentru verificare.",
-        "confirm_done",
-        {}
-      )
-      setItems(prev => pushUnique(prev, ev))
-    const res = await moveLeadToStageAllPipelines(leadId, "IN LUCRU")
-    if (res?.skipped?.length) {
-      toast({
-        variant: "destructive",
-        title: "Stadiu lipsă într-un pipeline",
-        description: `Nu am găsit "IN LUCRU" în ${res.skipped.length} pipeline-uri.`,
+        setLoading(false)
       })
-    } else {
-      toast({ title: 'Mutat în "IN LUCRU" peste tot.' })
+
+    const ch = supabase
+      .channel(`lead_conf_${leadId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "lead_events", filter: `lead_id=eq.${leadId}` },
+        (p: any) => {
+          if (!["confirm_request", "confirm_reply", "confirm_done"].includes(p.new.event_type)) return
+          setItems(prev => pushUnique(prev, p.new as Ev))
+        }
+      )
+      .subscribe()
+
+    return () => { cancelled = true; supabase.removeChannel(ch) }
+  }, [leadId])
+
+  // Technician → send for confirmation: log event + move IN LUCRU → DE CONFIRMAT
+  async function sendRequest() {
+    if (!req.trim()) return
+    const ev = await logLeadEvent(leadId, req.trim(), "confirm_request", {})
+    setItems(prev => pushUnique(prev, ev))
+    try {
+      const res = await moveEverywhere("IN LUCRU", "DE CONFIRMAT")
+      toast({ title: `Mutat în "DE CONFIRMAT" pe ${res.length} pipeline-uri.` })
+      onMoveStage?.("DE CONFIRMAT")
+      router.refresh()
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Eroare la mutare", description: e?.message ?? "Move failed" })
     }
-    onMoveStage?.("IN LUCRU")
+    setReq("")
+  }
+
+  async function sendReply() {
+    if (!reply.trim()) return
+    const ev = await logLeadEvent(leadId, reply.trim(), "confirm_reply", {})
+    setItems(prev => pushUnique(prev, ev))
+    setReply("")
+  }
+
+  // Operator → mark confirmed: log event + move DE CONFIRMAT → IN LUCRU
+  async function markConfirmed() {
+    const ev = await logLeadEvent(
+      leadId,
+      "Confirmarea clientului a fost primită. Trimitem la tehnician pentru verificare.",
+      "confirm_done",
+      {}
+    )
+    setItems(prev => pushUnique(prev, ev))
+    try {
+      const res = await moveEverywhere("DE CONFIRMAT", "IN LUCRU")
+      toast({ title: `Mutat în "IN LUCRU" pe ${res.length} pipeline-uri.` })
+      onMoveStage?.("IN LUCRU")
+      router.refresh()
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Eroare la mutare", description: e?.message ?? "Move failed" })
+    }
   }
 
   const renderItems = useMemo(() => {
@@ -144,7 +149,9 @@ export default function DeConfirmat({ leadId, onMoveStage }: Props) {
           onChange={(e) => setReq(e.target.value)}
         />
         <div className="mt-2 flex justify-end">
-          <Button size="sm" onClick={sendRequest} disabled={!req.trim()}>Trimite la confirmare &rarr; DE CONFIRMAT</Button>
+          <Button size="sm" onClick={sendRequest} disabled={!req.trim()}>
+            Trimite la confirmare &rarr; DE CONFIRMAT
+          </Button>
         </div>
       </div>
 
@@ -163,25 +170,25 @@ export default function DeConfirmat({ leadId, onMoveStage }: Props) {
         </div>
       </div>
 
-        {/* Mini thread (only confirmation-related) */}
-        <div className="space-y-2 max-h-80 overflow-y-auto">
-            <div className="text-sm text-muted-foreground">Istoric “De confirmat”</div>
-            {loading ? (
-                <div className="text-sm text-muted-foreground">Se încarcă…</div>
-            ) : renderItems.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Nu există mesaje încă.</div>
-            ) : (
-                renderItems.map((ev) => (
-                <div key={ev.id} className="rounded border p-2">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                    <span>{new Date(ev.created_at).toLocaleString()}</span>
-                    <span>{ev.actor_name ?? "—"}</span>
-                    </div>
-                    <div className="mt-1 text-sm whitespace-pre-wrap">{ev.message}</div>
-                </div>
-                ))
-            )}
-        </div>
+      {/* Mini thread (only confirmation-related) */}
+      <div className="space-y-2 max-h-80 overflow-y-auto">
+        <div className="text-sm text-muted-foreground">Istoric “De confirmat”</div>
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Se încarcă…</div>
+        ) : renderItems.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Nu există mesaje încă.</div>
+        ) : (
+          renderItems.map((ev) => (
+            <div key={ev.id} className="rounded border p-2">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>{new Date(ev.created_at).toLocaleString()}</span>
+                <span>{ev.actor_name ?? "—"}</span>
+              </div>
+              <div className="mt-1 text-sm whitespace-pre-wrap">{ev.message}</div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   )
 }

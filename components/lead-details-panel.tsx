@@ -8,7 +8,6 @@ import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { useEffect, useState } from "react"
 import DeConfirmat from "@/components/de-confirmat"
-import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
 import { ChevronsUpDown } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
@@ -21,11 +20,12 @@ interface LeadDetailsPanelProps {
   onClose: () => void
   onStageChange: (leadId: string, newStage: string) => void
   stages: string[]
-  pipelines?: string[]
+  pipelines: string[]
   pipelineSlug?: string
   onMoveToPipeline?: (leadId: string, targetName: string) => Promise<void>
   pipelineOptions?: { name: string; activeStages: number }[]
   onTagsChange?: (leadId: string, tags: Tag[]) => void
+  onBulkMoveToPipelines?: (leadId: string, pipelineNames: string[]) => Promise<void>
 }
 
 export function LeadDetailsPanel({
@@ -33,6 +33,9 @@ export function LeadDetailsPanel({
   onClose,
   onStageChange,
   onTagsChange,
+  onMoveToPipeline,
+  onBulkMoveToPipelines,
+  pipelines,
   stages,
 }: LeadDetailsPanelProps) {
   if (!lead) return null
@@ -48,6 +51,17 @@ export function LeadDetailsPanel({
 
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+
+  const [selectedPipes, setSelectedPipes] = useState<string[]>([])
+  const [movingPipes, setMovingPipes] = useState(false)
+
+  const allPipeNames = pipelines ?? []
+
+  const togglePipe = (name: string) =>
+    setSelectedPipes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name])
+
+  const pickAll = () => setSelectedPipes(allPipeNames)
+  const clearAll = () => setSelectedPipes([])
 
   useEffect(() => {
     const ch = supabase
@@ -91,10 +105,9 @@ export function LeadDetailsPanel({
   }
   
   const handleStageChange = (newStage: string) => {
-    const prevStage = stage            // use local stage as previous
-    setStage(newStage)                 // optimistic UI update
+    setStage(newStage)                
   
-    onStageChange(lead.id, newStage)   // keep your existing behavior
+    onStageChange(lead.id, newStage)
   }
   
   return (
@@ -216,34 +229,107 @@ export function LeadDetailsPanel({
               </SelectContent>
             </Select>
           </div>
-        </div>
+          {/* Move to pipeline(s) */}
+          <div className="mt-4">
+            <label className="font-medium text-foreground mb-2 block">
+              Move to pipeline(s)
+            </label>
 
-        {/* RIGHT — switchable content */}
-        <div className="min-w-0 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">Secțiune</div>
-            <Select value={section} onValueChange={(v: any) => setSection(v as "fisa" | "istoric")}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Alege secțiunea" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="fisa">Fișa de serviciu</SelectItem>
-                <SelectItem value="deconfirmat">De confirmat la client</SelectItem>
-                <SelectItem value="istoric">Istoric</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8">
+                    {selectedPipes.length > 0 ? `Selected: ${selectedPipes.length}` : "Choose pipelines"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+
+                <DropdownMenuContent align="start" className="w-[260px] max-h-[280px] overflow-y-auto">
+                  {/* Pick all / Clear all */}
+                  <DropdownMenuCheckboxItem
+                    checked={selectedPipes.length === allPipeNames.length && allPipeNames.length > 0}
+                    onCheckedChange={(v) => (v ? pickAll() : clearAll())}
+                    onSelect={(e) => e.preventDefault()} // keep menu open
+                  >
+                    Pick all
+                  </DropdownMenuCheckboxItem>
+
+                  <div className="my-1 h-px bg-border" />
+
+                  {/* Pipelines list */}
+                  {allPipeNames.map(name => (
+                    <DropdownMenuCheckboxItem
+                      key={name}
+                      checked={selectedPipes.includes(name)}
+                      onCheckedChange={() => togglePipe(name)}
+                      onSelect={(e) => e.preventDefault()} // keep menu open
+                    >
+                      <span className="truncate">{name}</span>
+                    </DropdownMenuCheckboxItem>
+                  ))}
+
+                  {allPipeNames.length === 0 && (
+                    <div className="px-2 py-1 text-xs text-muted-foreground">
+                      No pipelines available.
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* Action button – will do real work in Step 2 */}
+              <Button
+                size="sm"
+                disabled={movingPipes || selectedPipes.length === 0}
+                onClick={async () => {
+                  if (!lead?.id) return
+                  setMovingPipes(true)
+                  try {
+                    if (onBulkMoveToPipelines) {
+                      await onBulkMoveToPipelines(lead.id, selectedPipes)
+                    } else if (onMoveToPipeline) {
+                      for (const name of selectedPipes) {
+                        await onMoveToPipeline(lead.id, name)
+                      }
+                    }
+                    setSelectedPipes([])
+                  } finally {
+                    setMovingPipes(false)
+                  }
+                }}
+              >
+                {movingPipes ? "Moving…" : "Move"}
+              </Button>
+            </div>
           </div>
-
-          {section === "fisa" && <Preturi leadId={lead.id} />}
-          {section === "deconfirmat" && (
-            <DeConfirmat
-              leadId={lead.id}
-              onMoveStage={(s) => onStageChange(lead.id, s)}
-            />
-          )}
-          {section === "istoric" && <LeadHistory leadId={lead.id} />}
         </div>
-      </div>
+
+
+          {/* RIGHT — switchable content */}
+          <div className="min-w-0 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">Secțiune</div>
+              <Select value={section} onValueChange={(v: any) => setSection(v as "fisa" | "istoric")}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Alege secțiunea" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fisa">Fișa de serviciu</SelectItem>
+                  <SelectItem value="deconfirmat">De confirmat la client</SelectItem>
+                  <SelectItem value="istoric">Istoric</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {section === "fisa" && <Preturi leadId={lead.id} />}
+            {section === "deconfirmat" && (
+              <DeConfirmat
+                leadId={lead.id}
+                onMoveStage={(s) => onStageChange(lead.id, s)}
+              />
+            )}
+            {section === "istoric" && <LeadHistory leadId={lead.id} />}
+          </div>
+        </div>
     </section>
   )
 }
