@@ -6,10 +6,10 @@ const supabase = supabaseBrowser();
 export type LeadQuote = {
   id: string;
   lead_id: string;
-  department: string | null;
-  technician: string | null;
-  urgent: boolean;
-  discount_pct: number;
+  name: string;
+  sheet_index: number;
+  created_at: string;
+  created_by: string;
 };
 
 export type LeadQuoteItem = {
@@ -28,27 +28,11 @@ export type LeadQuoteItem = {
 };
 
 export async function getOrCreateQuote(leadId: string): Promise<LeadQuote> {
-  const { data: found, error: selErr } = await supabase
-    .from('lead_quotes')
-    .select('*')
-    .eq('lead_id', leadId)
-    .limit(1)
-    .maybeSingle();
-  if (selErr && selErr.code !== 'PGRST116') throw selErr; // ignore "no rows" code
-
-  if (found) return normalizeQuote(found as any);
-
-  const { data: userRes, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !userRes.user) throw userErr ?? new Error('No user');
-
-  const { data, error } = await supabase
-    .from('lead_quotes')
-    .insert({ lead_id: leadId, created_by: userRes.user.id })
-    .select('*')
-    .single();
-  if (error) throw error;
-  return normalizeQuote(data as any);
+  const list = await listQuotesForLead(leadId);
+  if (list.length) return list[0];
+  return await createQuoteForLead(leadId);
 }
+
 
 export async function updateQuote(quoteId: string, patch: Partial<LeadQuote>) {
   const { error } = await supabase.from('lead_quotes').update(patch).eq('id', quoteId);
@@ -80,7 +64,44 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
       position: Number(r.position ?? 0),
     }));
   }
+
+  export async function listQuotesForLead(leadId: string): Promise<LeadQuote[]> {
+    const { data, error } = await supabase
+      .from('lead_quotes')
+      .select('id, lead_id, name, sheet_index, created_at, created_by')
+      .eq('lead_id', leadId)
+      .order('sheet_index', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(normalizeQuote);
+  }
   
+  export async function createQuoteForLead(leadId: string, name?: string): Promise<LeadQuote> {
+    const { data: userRes, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !userRes?.user?.id) throw userErr ?? new Error('No user');
+  
+    // compute next index
+    const { data: idxRows, error: idxErr } = await supabase
+      .from('lead_quotes')
+      .select('sheet_index')
+      .eq('lead_id', leadId);
+    if (idxErr) throw idxErr;
+    const next = (idxRows?.reduce((m, r) => Math.max(m, r.sheet_index || 0), 0) || 0) + 1;
+  
+    const finalName = (name && name.trim()) || `Tăbliță ${next}`;
+  
+    const { data, error } = await supabase
+      .from('lead_quotes')
+      .insert({
+        lead_id: leadId,
+        name: finalName,
+        sheet_index: next,
+        created_by: userRes.user.id,
+      })
+      .select('id, lead_id, name, sheet_index, created_at, created_by')
+      .single();
+    if (error) throw error;
+    return normalizeQuote(data as any);
+  }
 
   export async function addServiceItem(
     quoteId: string,
@@ -192,16 +213,11 @@ export async function deleteItem(itemId: string) {
 
 function normalizeQuote(q: any): LeadQuote {
   return {
-    ...q,
-    discount_pct: Number(q.discount_pct ?? 0),
-    urgent: !!q.urgent,
-  };
-}
-function normalizeItem(r: any): LeadQuoteItem {
-  return {
-    ...r,
-    unit_price_snapshot: Number(r.unit_price_snapshot),
-    qty: Number(r.qty),
-    discount_pct: Number(r.discount_pct ?? 0),
+    id: q.id,
+    lead_id: q.lead_id,
+    name: q.name,
+    sheet_index: Number(q.sheet_index),
+    created_at: q.created_at,
+    created_by: q.created_by,
   };
 }

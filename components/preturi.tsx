@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { listServices, type Service } from '@/lib/supabase/serviceOperations';
 import {
-  getOrCreateQuote,
   listQuoteItems,
   type LeadQuoteItem,
   type LeadQuote,
+  listQuotesForLead,
+  createQuoteForLead,
 } from '@/lib/supabase/quoteOperations';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,8 +28,16 @@ const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 export default function Preturi({ leadId }: { leadId: string }) {
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<Service[]>([]);
-  const [quote, setQuote] = useState<LeadQuote | null>(null);
-  const [items, setItems] = useState<LeadQuoteItem[]>([]);
+  // Sheets (Tăblițe)
+  const [quotes, setQuotes] = useState<LeadQuote[]>([]);
+  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
+  const selectedQuote = useMemo(
+    () => quotes.find(q => q.id === selectedQuoteId) ?? null,
+    [quotes, selectedQuoteId]
+  );
+
+  // Total across all sheets
+  const [allSheetsTotal, setAllSheetsTotal] = useState<number>(0);  const [items, setItems] = useState<LeadQuoteItem[]>([]);
 
   const [pipelines, setPipelines] = useState<string[]>([])
   const [pipeLoading, setPipeLoading] = useState(true)
@@ -76,13 +85,33 @@ export default function Preturi({ leadId }: { leadId: string }) {
     } finally { setPipeLoading(false) }
   }
 
+  function computeItemsTotal(sheetItems: LeadQuoteItem[]) {
+    const subtotal = sheetItems.reduce((acc, it) => acc + it.qty * it.unit_price_snapshot, 0);
+    const totalDiscount = sheetItems.reduce(
+      (acc, it) => acc + it.qty * it.unit_price_snapshot * (Math.min(100, Math.max(0, it.discount_pct)) / 100),
+      0
+    );
+    const urgentAmount = sheetItems.reduce((acc, it) => {
+      const afterDisc = it.qty * it.unit_price_snapshot * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100);
+      return acc + (it.urgent ? afterDisc * (URGENT_MARKUP_PCT / 100) : 0);
+    }, 0);
+    return subtotal - totalDiscount + urgentAmount;
+  }
+  
+  async function recalcAllSheetsTotal(forQuotes: LeadQuote[]) {
+    if (!forQuotes.length) { setAllSheetsTotal(0); return; }
+    const all = await Promise.all(forQuotes.map(q => listQuoteItems(q.id)));
+    const sum = all.reduce((acc, sheet) => acc + computeItemsTotal(sheet ?? []), 0);
+    setAllSheetsTotal(sum);
+  }
+
   async function saveAllAndLog() {
-    if (!quote) return
+    if (!selectedQuote) return
     setSaving(true)
     try {
       const { items: fresh, snapshot } = await persistAndLogServiceSheet({
         leadId,
-        quoteId: quote.id,
+        quoteId: selectedQuote.id,
         items,
         services,
         totals: { subtotal, totalDiscount, urgentAmount, total },
@@ -90,7 +119,8 @@ export default function Preturi({ leadId }: { leadId: string }) {
       })
       setItems(fresh)
       lastSavedRef.current = snapshot
-      setIsDirty(false)
+      setIsDirty(false);
+      await recalcAllSheetsTotal(quotes);
     } finally {
       setSaving(false)
     }
@@ -100,21 +130,29 @@ export default function Preturi({ leadId }: { leadId: string }) {
     (async () => {
       setLoading(true);
       try {
-        const [svcList, techList, partList, q] = await Promise.all([
+        const [svcList, techList, partList] = await Promise.all([
           listServices(),
           listTechnicians(),
           listParts(),
-          getOrCreateQuote(leadId),
         ]);
         setServices(svcList);
         setTechnicians(techList);
         setParts(partList);
-        refreshPipelines();
-        setQuote(q);
-        const qi = await listQuoteItems(q.id);
-        setItems(qi);
-
-        // Prime lastSavedRef with the current DB state
+        await refreshPipelines();
+      
+        // Load or create first sheet
+        let qs = await listQuotesForLead(leadId);
+        if (!qs.length) {
+          const created = await createQuoteForLead(leadId); // auto: "Tăbliță 1 {leadId}"
+          qs = [created];
+        }
+        setQuotes(qs);
+        const firstId = qs[0].id;
+        setSelectedQuoteId(firstId);
+      
+        // Load items for selected sheet
+        const qi = await listQuoteItems(firstId);
+        setItems(qi ?? []);
         lastSavedRef.current = (qi ?? []).map((i: any) => ({
           id: i.id ?? `${i.name_snapshot}:${i.item_type}`,
           name: i.name_snapshot,
@@ -124,7 +162,10 @@ export default function Preturi({ leadId }: { leadId: string }) {
           urgent: !!i.urgent,
           department: i.department ?? null,
           technician: i.technician ?? null,
-        }))
+        }));
+      
+        // Compute global total
+        await recalcAllSheetsTotal(qs);
       } finally {
         setLoading(false);
       }
@@ -156,7 +197,7 @@ export default function Preturi({ leadId }: { leadId: string }) {
 
   // ----- Add rows -----
   function onAddService() {
-    if (!quote || !svc.id) return
+    if (!selectedQuote || !svc.id) return
     const svcDef = services.find(s => s.id === svc.id)
     if (!svcDef) return
   
@@ -187,7 +228,7 @@ export default function Preturi({ leadId }: { leadId: string }) {
 
   function onAddPart(e: React.FormEvent) {
     e.preventDefault()
-    if (!quote || !part.id) return
+    if (!selectedQuote || !part.id) return
   
     const partDef = parts.find(p => p.id === part.id)
     if (!partDef) return
@@ -229,12 +270,67 @@ export default function Preturi({ leadId }: { leadId: string }) {
     setIsDirty(true)
   }
 
-  if (loading || !quote) return <Card className="p-4">Se încarcă…</Card>;
+  async function onChangeSheet(newId: string) {
+    if (!newId || newId === selectedQuoteId) return;
+    setLoading(true);
+    try {
+      setSelectedQuoteId(newId);
+      const qi = await listQuoteItems(newId);
+      setItems(qi ?? []);
+      lastSavedRef.current = (qi ?? []).map((i: any) => ({
+        id: i.id ?? `${i.name_snapshot}:${i.item_type}`,
+        name: i.name_snapshot,
+        qty: i.qty,
+        price: i.unit_price_snapshot,
+        type: i.item_type,
+        urgent: !!i.urgent,
+        department: i.department ?? null,
+        technician: i.technician ?? null,
+      }));
+    } finally {
+      setLoading(false);
+    }
+  }
+  
+  async function onAddSheet() {
+    setLoading(true);
+    try {
+      const created = await createQuoteForLead(leadId);
+      const next = [...quotes, created].sort((a, b) => a.sheet_index - b.sheet_index);
+      setQuotes(next);
+      setSelectedQuoteId(created.id);
+      setItems([]);
+      lastSavedRef.current = [];
+      await recalcAllSheetsTotal(next);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (loading || !selectedQuote) return <Card className="p-4">Se încarcă…</Card>;
 
   return (
     <Card className="p-4 space-y-5">
       <div className="flex items-center justify-between">
-        <h3 className="font-medium">Fișa de serviciu</h3>
+        <div className="flex flex-col items-start gap-3">
+          <h3 className="font-medium">Fișa de serviciu</h3>
+          <div className="flex gap-3">
+            <Label className="text-sm text-muted-foreground">Tăbliță</Label>
+            <select
+              className="h-9 rounded-md border px-2"
+              value={selectedQuoteId ?? ''}
+              onChange={e => onChangeSheet(e.target.value)}
+            >
+              {quotes.map(q => (
+                <option key={q.id} value={q.id}>{`Tăbliță ${q.sheet_index}`}</option>
+              ))}
+            </select>
+            <Button size="sm" variant="secondary" onClick={onAddSheet}>
+              <Plus className="h-4 w-4 mr-1" /> Nouă
+            </Button>
+          </div>
+        </div>
+
         <Button className="cursor-pointer" size="sm" onClick={saveAllAndLog} disabled={loading || saving || !isDirty}>
           {saving ? "Se salvează…" : "Salvează în Istoric"}
         </Button>
@@ -537,6 +633,11 @@ export default function Preturi({ leadId }: { leadId: string }) {
           <span>Total</span>
           <span>{total.toFixed(2)} RON</span>
         </div>
+      </div>
+
+      <div className="ml-auto w-full md:w-[480px] mt-3 p-3 rounded-md border flex items-center justify-between">
+        <span className="font-medium">Total toate tăblițele</span>
+        <span className="font-semibold">{allSheetsTotal.toFixed(2)} RON</span>
       </div>
     </Card>
   );
