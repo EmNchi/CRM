@@ -94,6 +94,8 @@ export interface KanbanLead {
     pipelineId: string
     assignmentId: string
     tags?: { id: string; name: string; color: 'green' | 'yellow' | 'red' }[]
+    stageMovedAt?: string // data cand lead-ul a fost mutat in stage-ul curent
+    technician?: string | null // Tehnicianul atribuit lead-ului
 }
 
 export const STAGE_COLORS: Record<string, string> = {

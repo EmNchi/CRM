@@ -7,6 +7,7 @@ import {
   type LeadQuoteItem,
   type LeadQuote,
   listQuotesForLead,
+  updateQuote,
   createQuoteForLead,
 } from '@/lib/supabase/quoteOperations';
 import { Card } from '@/components/ui/card';
@@ -19,16 +20,112 @@ import { Trash2, Plus, Wrench } from 'lucide-react';
 import { listTechnicians, type Technician } from '@/lib/supabase/technicianOperations'
 import { listParts, type Part } from '@/lib/supabase/partOperations'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
-import { persistAndLogServiceSheet } from "@/lib/history/serviceSheet"
-
 const supabase = supabaseBrowser()
+import { persistAndLogServiceSheet } from "@/lib/history/serviceSheet"
+import { invalidateLeadTotalCache } from "@/lib/supabase/leadTotals"
+import { listTags, toggleLeadTag } from '@/lib/supabase/tagOperations'
+import { PrintView } from '@/components/print-view'
+import type { Lead } from '@/app/page'
 
 const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 
-export default function Preturi({ leadId }: { leadId: string }) {
+// Componenta pentru calcularea si afisarea datelor de print pentru toate tavitele
+function PrintViewData({ 
+  lead, 
+  quotes, 
+  allSheetsTotal, 
+  urgentMarkupPct,
+  hasSubscription,
+  subscriptionDiscount,
+  hasSterilization
+}: { 
+  lead: Lead
+  quotes: LeadQuote[]
+  allSheetsTotal: number
+  urgentMarkupPct: number
+  hasSubscription: boolean
+  subscriptionDiscount: string
+  hasSterilization: boolean
+}) {
+  const [sheetsData, setSheetsData] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const loadAllSheetsData = async () => {
+      if (!quotes.length) {
+        setSheetsData([])
+        setLoading(false)
+        return
+      }
+
+      const sheets = await Promise.all(
+        quotes.map(async (quote) => {
+          const items = await listQuoteItems(quote.id)
+          
+          // Calculeaza totalurile pentru aceasta tavita
+          const subtotal = items.reduce((acc, it) => acc + it.qty * it.unit_price_snapshot, 0)
+          const totalDiscount = items.reduce(
+            (acc, it) => acc + it.qty * it.unit_price_snapshot * (Math.min(100, Math.max(0, it.discount_pct)) / 100),
+            0
+          )
+          const urgentAmount = items.reduce((acc, it) => {
+            const afterDisc = it.qty * it.unit_price_snapshot * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
+            return acc + (it.urgent ? afterDisc * (urgentMarkupPct / 100) : 0)
+          }, 0)
+
+          // Calculeaza discount-urile
+          const subscriptionDiscountAmount = hasSubscription && subscriptionDiscount 
+            ? (subtotal - totalDiscount + urgentAmount) * (Number(subscriptionDiscount) / 100)
+            : 0
+          
+          const sterilizationDiscountAmount = hasSterilization
+            ? (subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount) * 0.1
+            : 0
+
+          const total = subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount - sterilizationDiscountAmount
+
+          return {
+            quote,
+            items,
+            subtotal,
+            totalDiscount,
+            urgentAmount,
+            total,
+            hasSubscription: hasSubscription && subscriptionDiscount ? true : false,
+            subscriptionDiscount: hasSubscription && subscriptionDiscount ? Number(subscriptionDiscount) : undefined,
+            hasSterilization,
+            sterilizationDiscountAmount: hasSterilization ? sterilizationDiscountAmount : undefined,
+            isCash: (quote as any).is_cash || false,
+            isCard: (quote as any).is_card || false,
+          }
+        })
+      )
+
+      setSheetsData(sheets)
+      setLoading(false)
+    }
+
+    loadAllSheetsData()
+  }, [quotes, hasSubscription, subscriptionDiscount, hasSterilization, urgentMarkupPct])
+
+  if (loading) return null
+
+  return (
+    <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', width: '210mm' }}>
+      <PrintView
+        lead={lead}
+        sheets={sheetsData}
+        allSheetsTotal={allSheetsTotal}
+        urgentMarkupPct={urgentMarkupPct}
+      />
+    </div>
+  )
+}
+
+export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead | null }) {
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<Service[]>([]);
-  // Sheets (Tăblițe)
+  // sheets (tavite)
   const [quotes, setQuotes] = useState<LeadQuote[]>([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const selectedQuote = useMemo(
@@ -47,6 +144,20 @@ export default function Preturi({ leadId }: { leadId: string }) {
 
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+  
+  // State pentru checkbox cash/card
+  const [isCash, setIsCash] = useState(false)
+  const [isCard, setIsCard] = useState(false)
+
+  // State pentru Buy Back
+  const [buyBack, setBuyBack] = useState(false)
+
+  // State pentru Sterilizare
+  const [hasSterilization, setHasSterilization] = useState(false)
+
+  // State pentru abonament
+  const [hasSubscription, setHasSubscription] = useState(false)
+  const [subscriptionDiscount, setSubscriptionDiscount] = useState<'5' | '10' | ''>('')
 
   const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
 
@@ -71,6 +182,50 @@ export default function Preturi({ leadId }: { leadId: string }) {
   })
 
   const lastSavedRef = useRef<any[]>([])
+  const [urgentTagId, setUrgentTagId] = useState<string | null>(null)
+
+  // gaseste tag-ul urgent la incarcare
+  useEffect(() => {
+    (async () => {
+      const tags = await listTags()
+      const urgentTag = tags.find(t => t.name.toLowerCase() === 'urgent')
+      if (urgentTag) {
+        setUrgentTagId(urgentTag.id)
+      }
+    })()
+  }, [])
+
+  // verifica si atribuie/elimina tag-ul urgent cand se schimba items-urile
+  useEffect(() => {
+    if (!urgentTagId || !items.length) return
+
+    const hasUrgentItems = items.some(item => item.urgent === true)
+    
+    // verifica daca tag-ul urgent este deja atribuit
+    const checkAndToggleUrgentTag = async () => {
+      try {
+        // verifica daca tag-ul este atribuit
+        const { data: existing } = await supabase
+          .from('lead_tags')
+          .select('lead_id')
+          .eq('lead_id', leadId)
+          .eq('tag_id', urgentTagId)
+          .maybeSingle()
+
+        if (hasUrgentItems && !existing) {
+          // exista items urgente dar tag-ul nu este atribuit - atribuie-l
+          await toggleLeadTag(leadId, urgentTagId)
+        } else if (!hasUrgentItems && existing) {
+          // nu exista items urgente dar tag-ul este atribuit - elimina-l
+          await toggleLeadTag(leadId, urgentTagId)
+        }
+      } catch (error) {
+        console.error('Eroare la gestionarea tag-ului urgent:', error)
+      }
+    }
+
+    checkAndToggleUrgentTag()
+  }, [items, urgentTagId, leadId])
 
   async function refreshPipelines() {
     setPipeLoading(true)
@@ -109,6 +264,12 @@ export default function Preturi({ leadId }: { leadId: string }) {
     if (!selectedQuote) return
     setSaving(true)
     try {
+      // salveaza cash/card in baza de date
+      await updateQuote(selectedQuote.id, {
+        is_cash: isCash,
+        is_card: isCard,
+      } as any)
+      
       const { items: fresh, snapshot } = await persistAndLogServiceSheet({
         leadId,
         quoteId: selectedQuote.id,
@@ -121,6 +282,10 @@ export default function Preturi({ leadId }: { leadId: string }) {
       lastSavedRef.current = snapshot
       setIsDirty(false);
       await recalcAllSheetsTotal(quotes);
+      
+      // invalideaza cache-ul pentru totalul lead-ului
+      // astfel lead-card va recalcula automat prin real-time subscription
+      invalidateLeadTotalCache(leadId)
     } finally {
       setSaving(false)
     }
@@ -143,12 +308,19 @@ export default function Preturi({ leadId }: { leadId: string }) {
         // Load or create first sheet
         let qs = await listQuotesForLead(leadId);
         if (!qs.length) {
-          const created = await createQuoteForLead(leadId); // auto: "Tăbliță 1 {leadId}"
+          const created = await createQuoteForLead(leadId); // auto: "Tablita 1 {leadId}"
           qs = [created];
         }
         setQuotes(qs);
         const firstId = qs[0].id;
         setSelectedQuoteId(firstId);
+        
+        // Load cash/card values from quote
+        const firstQuote = qs[0] as any
+        if (firstQuote) {
+          setIsCash(firstQuote.is_cash || false)
+          setIsCard(firstQuote.is_card || false)
+        }
       
         // Load items for selected sheet
         const qi = await listQuoteItems(firstId);
@@ -170,6 +342,82 @@ export default function Preturi({ leadId }: { leadId: string }) {
         setLoading(false);
       }
     })();
+
+    // Real-time subscription pentru actualizare automata a totalului
+    // cand se modifica items-urile in orice tăviță a acestui lead
+    const channel = supabase
+      .channel(`preturi-total-${leadId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'lead_quote_items',
+        },
+        async (payload) => {
+          // Verifica daca item-ul apartine unui quote al acestui lead
+          const payloadNew = payload.new as any
+          const payloadOld = payload.old as any
+          const quoteId = payloadNew?.quote_id || payloadOld?.quote_id
+          
+          if (quoteId) {
+            // Verifica daca quote-ul apartine acestui lead
+            const { data: quote } = await supabase
+              .from('lead_quotes')
+              .select('lead_id')
+              .eq('id', quoteId)
+              .single()
+            
+            if (quote && (quote as any).lead_id === leadId) {
+              // Recalculeaza totalul pentru toate tăvițele
+              const currentQuotes = await listQuotesForLead(leadId)
+              await recalcAllSheetsTotal(currentQuotes)
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'lead_quotes',
+          filter: `lead_id=eq.${leadId}`,
+        },
+        async (payload) => {
+          // Cand se modifica un quote (is_cash, is_card, sau se adauga/sterge tăviță)
+          const payloadNew = payload.new as any
+          const payloadOld = payload.old as any
+          const quoteId = payloadNew?.id || payloadOld?.id
+          
+          // Daca se modifica quote-ul curent, actualizeaza checkbox-urile
+          if (quoteId === selectedQuoteId && payloadNew) {
+            setIsCash(payloadNew.is_cash || false)
+            setIsCard(payloadNew.is_card || false)
+          }
+          
+          // Reincarca quotes-urile pentru a avea date actualizate
+          const currentQuotes = await listQuotesForLead(leadId)
+          setQuotes(currentQuotes)
+          
+          // Daca quote-ul curent s-a schimbat, actualizeaza checkbox-urile
+          if (selectedQuoteId) {
+            const updatedQuote = currentQuotes.find(q => q.id === selectedQuoteId) as any
+            if (updatedQuote) {
+              setIsCash(updatedQuote.is_cash || false)
+              setIsCard(updatedQuote.is_card || false)
+            }
+          }
+          
+          // Recalculeaza totalul
+          await recalcAllSheetsTotal(currentQuotes)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [leadId]);
 
   // ----- Totals (per-line discount & urgent only) -----
@@ -193,7 +441,25 @@ export default function Preturi({ leadId }: { leadId: string }) {
       }, 0),
     [items]
   );
-  const total = useMemo(() => subtotal - totalDiscount + urgentAmount, [subtotal, totalDiscount, urgentAmount]);
+  // Calcul discount abonament
+  const subscriptionDiscountAmount = useMemo(() => {
+    if (!hasSubscription || !subscriptionDiscount) return 0
+    const discountPct = Number(subscriptionDiscount)
+    const baseForDiscount = subtotal - totalDiscount + urgentAmount
+    return baseForDiscount * (discountPct / 100)
+  }, [hasSubscription, subscriptionDiscount, subtotal, totalDiscount, urgentAmount])
+
+  // Calcul discount sterilizare (10%)
+  const sterilizationDiscountAmount = useMemo(() => {
+    if (!hasSterilization) return 0
+    const baseForDiscount = subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount
+    return baseForDiscount * 0.1 // 10%
+  }, [hasSterilization, subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount])
+
+  const total = useMemo(() => {
+    const baseTotal = subtotal - totalDiscount + urgentAmount
+    return baseTotal - subscriptionDiscountAmount - sterilizationDiscountAmount
+  }, [subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount, sterilizationDiscountAmount]);
 
   // ----- Add rows -----
   function onAddService() {
@@ -274,6 +540,12 @@ export default function Preturi({ leadId }: { leadId: string }) {
     if (!newId || newId === selectedQuoteId) return;
     setLoading(true);
     try {
+      // incarca valorile cash/card pentru noua tavita
+      const newQuote = quotes.find(q => q.id === newId) as any
+      if (newQuote) {
+        setIsCash(newQuote.is_cash || false)
+        setIsCard(newQuote.is_card || false)
+      }
       setSelectedQuoteId(newId);
       const qi = await listQuoteItems(newId);
       setItems(qi ?? []);
@@ -314,15 +586,15 @@ export default function Preturi({ leadId }: { leadId: string }) {
       <div className="flex items-center justify-between">
         <div className="flex flex-col items-start gap-3">
           <h3 className="font-medium">Fișa de serviciu</h3>
-          <div className="flex gap-3">
-            <Label className="text-sm text-muted-foreground">Tăbliță</Label>
+          <div className="flex gap-3 items-center">
+            <Label className="text-sm text-muted-foreground">Tăviță</Label>
             <select
               className="h-9 rounded-md border px-2"
               value={selectedQuoteId ?? ''}
               onChange={e => onChangeSheet(e.target.value)}
             >
               {quotes.map(q => (
-                <option key={q.id} value={q.id}>{`Tăbliță ${q.sheet_index}`}</option>
+                <option key={q.id} value={q.id}>{`Tăviță ${q.sheet_index}`}</option>
               ))}
             </select>
             <Button size="sm" variant="secondary" onClick={onAddSheet}>
@@ -490,6 +762,88 @@ export default function Preturi({ leadId }: { leadId: string }) {
               <TableHead className="w-36 text-right">Total linie</TableHead>
               <TableHead className="w-12 text-right"></TableHead>
             </TableRow>
+            <TableRow>
+              <TableHead colSpan={9} className="bg-muted/50">
+                <div className="flex items-center gap-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="subscription"
+                      checked={hasSubscription}
+                      onCheckedChange={(c: any) => {
+                        setHasSubscription(!!c)
+                        if (!c) setSubscriptionDiscount('')
+                      }}
+                    />
+                    <Label htmlFor="subscription" className="text-sm font-medium cursor-pointer">
+                      Abonament
+                    </Label>
+                    {hasSubscription && (
+                      <select
+                        className="ml-2 h-8 rounded-md border px-2 text-sm"
+                        value={subscriptionDiscount}
+                        onChange={(e) => setSubscriptionDiscount(e.target.value as '5' | '10' | '')}
+                      >
+                        <option value="">Selectează discount</option>
+                        <option value="5">-5%</option>
+                        <option value="10">-10%</option>
+                      </select>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="payment-cash"
+                      checked={isCash}
+                      onCheckedChange={(c: any) => {
+                        setIsCash(!!c)
+                        if (!!c) setIsCard(false)
+                        setIsDirty(true) // activeaza butonul de salvare
+                      }}
+                    />
+                    <Label htmlFor="payment-cash" className="text-sm font-medium cursor-pointer">
+                      Cash
+                    </Label>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="payment-card"
+                      checked={isCard}
+                      onCheckedChange={(c: any) => {
+                        setIsCard(!!c)
+                        if (!!c) setIsCash(false)
+                        setIsDirty(true) // activeaza butonul de salvare
+                      }}
+                    />
+                    <Label htmlFor="payment-card" className="text-sm font-medium cursor-pointer">
+                      Card
+                    </Label>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="buy-back"
+                      checked={buyBack}
+                      onCheckedChange={(c: any) => setBuyBack(!!c)}
+                    />
+                    <Label htmlFor="buy-back" className="text-sm font-medium cursor-pointer">
+                      Buy back
+                    </Label>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="sterilization"
+                      checked={hasSterilization}
+                      onCheckedChange={(c: any) => setHasSterilization(!!c)}
+                    />
+                    <Label htmlFor="sterilization" className="text-sm font-medium cursor-pointer">
+                      Sterilizare (-10%)
+                    </Label>
+                  </div>
+                </div>
+              </TableHead>
+            </TableRow>
           </TableHeader>
           <TableBody>
             {items.map(it => {
@@ -628,6 +982,18 @@ export default function Preturi({ leadId }: { leadId: string }) {
           <span>Urgent (+{URGENT_MARKUP_PCT}% pe linii marcate)</span>
           <span>{urgentAmount.toFixed(2)} RON</span>
         </div>
+        {hasSubscription && subscriptionDiscount && (
+          <div className="flex items-center justify-between">
+            <span>Abonament (-{subscriptionDiscount}%)</span>
+            <span className="text-green-600">-{subscriptionDiscountAmount.toFixed(2)} RON</span>
+          </div>
+        )}
+        {hasSterilization && (
+          <div className="flex items-center justify-between">
+            <span>Sterilizare (-10%)</span>
+            <span className="text-green-600">-{sterilizationDiscountAmount.toFixed(2)} RON</span>
+          </div>
+        )}
         <div className="h-px bg-border my-2" />
         <div className="flex items-center justify-between text-lg font-semibold">
           <span>Total</span>
@@ -635,10 +1001,23 @@ export default function Preturi({ leadId }: { leadId: string }) {
         </div>
       </div>
 
-      <div className="ml-auto w-full md:w-[480px] mt-3 p-3 rounded-md border flex items-center justify-between">
-        <span className="font-medium">Total toate tăblițele</span>
-        <span className="font-semibold">{allSheetsTotal.toFixed(2)} RON</span>
+      <div className="ml-auto w-full md:w-[480px] mt-3 p-3 rounded-md border flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="font-medium">Total toate tăvițele</span>
+          <span className="font-semibold">{allSheetsTotal.toFixed(2)} RON</span>
+        </div>
       </div>
+
+      {/* PrintView - ascuns vizual, dar in DOM pentru print */}
+      {lead && <PrintViewData 
+        lead={lead}
+        quotes={quotes}
+        allSheetsTotal={allSheetsTotal}
+        urgentMarkupPct={URGENT_MARKUP_PCT}
+        hasSubscription={hasSubscription}
+        subscriptionDiscount={subscriptionDiscount}
+        hasSterilization={hasSterilization}
+      />}
     </Card>
   );
 }

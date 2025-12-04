@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { Plus, Users, UserPlus, LayoutDashboard, Trash2 } from "lucide-react"
+import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors, Wrench, Building, Target, Briefcase, Phone, Package, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
 import { useRole } from "@/hooks/useRole"
-import { Wrench } from "lucide-react"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 
 interface SidebarProps {
@@ -21,6 +20,31 @@ interface SidebarProps {
 }
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
+
+// functie pentru a returna iconita potrivita pentru fiecare pipeline
+const getPipelineIcon = (pipelineName: string) => {
+  const name = pipelineName.toLowerCase()
+  
+  if (name.includes('receptie') || name.includes('reception')) {
+    return <Phone className="h-4 w-4" />
+  } else if (name.includes('frizeri') || name.includes('frizerie') || name.includes('barber')) {
+    return <Scissors className="h-4 w-4" />
+  } else if (name.includes('saloane') || name.includes('salon')) {
+    return <Sparkles className="h-4 w-4" />
+  } else if (name.includes('curier') || name.includes('delivery') || name.includes('livrare')) {
+    return <Package className="h-4 w-4" />
+  } else if (name.includes('vanzari') || name.includes('sales')) {
+    return <ShoppingCart className="h-4 w-4" />
+  } else if (name.includes('reparati') || name.includes('service')) {
+    return <Wrench className="h-4 w-4" />
+  } else if (name.includes('horeca') || name.includes('corporate') || name.includes('business')) {
+    return <Building className="h-4 w-4" />
+  } else if (name.includes('marketing') || name.includes('campanii')) {
+    return <Target className="h-4 w-4" />
+  } else {
+    return <Briefcase className="h-4 w-4" />
+  }
+}
 
 export function Sidebar({ pipelines, canManagePipelines, onRefresh: _onRefresh }: SidebarProps) {
   const pathname = usePathname()
@@ -60,7 +84,9 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh: _onRefresh }
     // run now
     reloadPipes()
 
-    const handler = () => { reloadPipes() }
+    const handler = () => { 
+      reloadPipes()
+    }
     window.addEventListener("pipelines:updated", handler)
     return () => window.removeEventListener("pipelines:updated", handler)
   }, [pathname, reloadPipes])
@@ -199,9 +225,12 @@ export function Sidebar({ pipelines, canManagePipelines, onRefresh: _onRefresh }
                         active && "bg-sidebar-accent"
                       )}
                     >
-                      <Link href={href} className="min-w-0 flex-1 truncate">
-                        {p}
-                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <Link href={href} className="flex items-center gap-2">
+                          {getPipelineIcon(p)}
+                          <span className="truncate">{p}</span>
+                        </Link>
+                      </div>
 
                       {canManage && (
                         <button
