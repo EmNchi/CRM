@@ -418,6 +418,7 @@ export default function ServiciiPage() {
                         <SelectItem value="green">Verde</SelectItem>
                         <SelectItem value="yellow">Galben</SelectItem>
                         <SelectItem value="red">Roșu</SelectItem>
+                        <SelectItem value="orange">Portocaliu</SelectItem>
                       </SelectContent>
                     </Select>
                   </TableCell>

@@ -10,6 +10,8 @@ export type LeadQuote = {
   sheet_index: number;
   created_at: string;
   created_by: string;
+  is_cash?: boolean;
+  is_card?: boolean;
 };
 
 export type LeadQuoteItem = {
@@ -68,7 +70,7 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
   export async function listQuotesForLead(leadId: string): Promise<LeadQuote[]> {
     const { data, error } = await supabase
       .from('lead_quotes')
-      .select('id, lead_id, name, sheet_index, created_at, created_by')
+      .select('id, lead_id, name, sheet_index, created_at, created_by, is_cash, is_card')
       .eq('lead_id', leadId)
       .order('sheet_index', { ascending: true });
     if (error) throw error;
@@ -219,5 +221,7 @@ function normalizeQuote(q: any): LeadQuote {
     sheet_index: Number(q.sheet_index),
     created_at: q.created_at,
     created_by: q.created_by,
+    is_cash: q.is_cash ?? undefined,
+    is_card: q.is_card ?? undefined,
   };
 }

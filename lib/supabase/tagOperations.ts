@@ -3,10 +3,10 @@
 import { supabaseBrowser } from './supabaseClient'
 const supabase = supabaseBrowser()
 
-export type TagColor = 'green' | 'yellow' | 'red'
+export type TagColor = 'green' | 'yellow' | 'red' | 'orange' | 'blue'
 export type Tag = { id: string; name: string; color: TagColor }
 
-/** Admin list (Configurări) */
+/** admin list (configurari) */
 export async function listTags(): Promise<Tag[]> {
   const { data, error } = await supabase
     .from('tags')
@@ -37,7 +37,7 @@ export async function toggleLeadTag(leadId: string, tagId: string) {
   } else {
     const { error } = await supabase
       .from('lead_tags')
-      .insert([{ lead_id: leadId, tag_id: tagId }])
+      .insert([{ lead_id: leadId, tag_id: tagId }] as any)
     if (error) throw error
     return { added: true }
   }
@@ -46,7 +46,7 @@ export async function toggleLeadTag(leadId: string, tagId: string) {
 export async function createTag(name: string, color: TagColor) {
   const { data, error } = await supabase
     .from('tags')
-    .insert([{ name, color }])
+    .insert([{ name, color }] as any)
     .select('id,name,color')
     .single()
   if (error) throw error
@@ -59,13 +59,41 @@ export async function deleteTag(tagId: string) {
 }
 
 export async function updateTag(tagId: string, patch: Partial<Pick<Tag,'name'|'color'>>) {
+  const updateData: any = {}
+  if (patch.name !== undefined) updateData.name = patch.name
+  if (patch.color !== undefined) updateData.color = patch.color
+  
   const { data, error } = await supabase
     .from('tags')
-    .update(patch)
+    .update(updateData as any)
     .eq('id', tagId)
     .select('id,name,color')
     .single()
   if (error) throw error
   return data as Tag
+}
+
+/** Gaseste sau creeaza tag-ul PINNED */
+export async function getOrCreatePinnedTag(): Promise<Tag> {
+  // cauta tag-ul PINNED
+  const { data: existingTag } = await supabase
+    .from('tags')
+    .select('id,name,color')
+    .eq('name', 'PINNED')
+    .maybeSingle()
+  
+  if (existingTag) {
+    return existingTag as Tag
+  }
+  
+  // creeaza tag-ul PINNED daca nu exista
+  const { data: newTag, error } = await supabase
+    .from('tags')
+    .insert([{ name: 'PINNED', color: 'blue' }] as any)
+    .select('id,name,color')
+    .single()
+  
+  if (error) throw error
+  return newTag as Tag
 }
 
