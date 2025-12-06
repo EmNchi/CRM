@@ -2,7 +2,7 @@
 
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getPipelinesWithStages, getKanbanLeads, moveLeadToStage, getSingleKanbanLead } from '@/lib/supabase/leadOperations'
+import { getReceptieKanbanLeads, getKanbanLeads, moveLeadToStage, getSingleKanbanLead } from '@/lib/supabase/leadOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
 import type { Tag } from '@/lib/supabase/tagOperations'
@@ -72,124 +72,53 @@ export function useKanbanData(pipelineSlug?: string) {
       const currentPipeline = pipelineSlug
         ? pipelinesData.find((p: any) => toSlug(p.name) === pipelineSlug)
         : pipelinesData?.[0]
-
-      if (currentPipeline) {
-        setCurrentPipelineId(currentPipeline.id)
-        setStages(currentPipeline.stages.map((s: any) => s.name))
-        const { data: leadsData, error: leadsError } = await getKanbanLeads(currentPipeline.id)
-        if (leadsError) throw leadsError
+        if (currentPipeline) {
+          setCurrentPipelineId(currentPipeline.id)
+          setStages(currentPipeline.stages.map((s: any) => s.name))
+          
+          const isReceptie = toSlug(currentPipeline.name) === 'receptie'
+          let allLeads: KanbanLead[] = []
         
-        let allLeads = leadsData || []
-        
-        // Dacă pipeline-ul curent este "Receptie", adaugă lead-urile din "De Confirmat" din celelalte pipeline-uri
-        const isReceptie = toSlug(currentPipeline.name) === 'receptie'
-        if (isReceptie) {
-          const sourcePipelines = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
-          
-          // Găsește stage-ul "Confirmari" din Receptie
-          const confirmariStage = currentPipeline.stages.find((s: any) => 
-            toSlug(s.name) === 'confirmari'
-          )
-          
-          // Găsește stage-ul "In Lucru" din Receptie
-          const inLucruStage = currentPipeline.stages.find((s: any) => {
-            const stageName = toSlug(s.name)
-            return stageName.includes('lucru') || stageName.includes('work') || stageName.includes('progress')
-          })
-          
-          // Găsește stage-ul "Asteptare" din Receptie
-          const asteptareStage = currentPipeline.stages.find((s: any) => {
-            const stageName = toSlug(s.name)
-            return stageName.includes('asteptare') || stageName.includes('waiting')
-          })
-          
-          // OPTIMIZAT: Query-uri în paralel pentru toate pipeline-urile sursă
-          const sourcePipelineObjects = sourcePipelines
-            .map(name => pipelinesData.find((p: any) => toSlug(p.name) === toSlug(name)))
-            .filter(Boolean) as any[]
-          
-          if (sourcePipelineObjects.length > 0) {
-            // Execută toate query-urile în paralel
-            const sourceLeadsResults = await Promise.all(
-              sourcePipelineObjects.map(p => getKanbanLeads(p.id))
+          if (isReceptie) {
+            // Get stage IDs for mapping
+            const confirmariStage = currentPipeline.stages.find((s: any) => 
+              toSlug(s.name) === 'confirmari'
             )
-            
-            // Procesează lead-urile pentru "Confirmari"
-            if (confirmariStage) {
-              sourceLeadsResults.forEach((result, index) => {
-                if (!result.error && result.data) {
-                  const sourcePipeline = sourcePipelineObjects[index]
-                  const deConfirmatLeads = result.data.filter((lead: KanbanLead) => {
-                    const stageName = lead.stage?.toLowerCase() || ''
-                    return stageName.includes('confirmat')
-                  })
-                  
-                  allLeads = [
-                    ...allLeads,
-                    ...deConfirmatLeads.map((lead: KanbanLead) => ({
-                      ...lead,
-                      originalPipelineId: lead.pipelineId,
-                      originalPipelineName: sourcePipeline.name,
-                      pipelineId: currentPipeline.id,
-                      stage: confirmariStage.name,
-                      stageId: confirmariStage.id,
-                    }))
-                  ]
-                }
-              })
-            }
-            
-            // Procesează lead-urile pentru "In Lucru"
-            if (inLucruStage) {
-              sourceLeadsResults.forEach((result, index) => {
-                if (!result.error && result.data) {
-                  const sourcePipeline = sourcePipelineObjects[index]
-                  const inLucruLeads = result.data.filter((lead: KanbanLead) => {
-                    const stageName = lead.stage?.toLowerCase() || ''
-                    return stageName.includes('lucru') || stageName.includes('work') || stageName.includes('progress')
-                  })
-                  
-                  allLeads = [
-                    ...allLeads,
-                    ...inLucruLeads.map((lead: KanbanLead) => ({
-                      ...lead,
-                      originalPipelineId: lead.pipelineId,
-                      originalPipelineName: sourcePipeline.name,
-                      pipelineId: currentPipeline.id,
-                      stage: inLucruStage.name,
-                      stageId: inLucruStage.id,
-                    }))
-                  ]
-                }
-              })
-            }
-            
-            // Procesează lead-urile pentru "Asteptare"
-            if (asteptareStage) {
-              sourceLeadsResults.forEach((result, index) => {
-                if (!result.error && result.data) {
-                  const sourcePipeline = sourcePipelineObjects[index]
-                  const asteptareLeads = result.data.filter((lead: KanbanLead) => {
-                    const stageName = lead.stage?.toLowerCase() || ''
-                    return stageName.includes('asteptare') || stageName.includes('waiting')
-                  })
-                  
-                  allLeads = [
-                    ...allLeads,
-                    ...asteptareLeads.map((lead: KanbanLead) => ({
-                      ...lead,
-                      originalPipelineId: lead.pipelineId,
-                      originalPipelineName: sourcePipeline.name,
-                      pipelineId: currentPipeline.id,
-                      stage: asteptareStage.name,
-                      stageId: asteptareStage.id,
-                    }))
-                  ]
-                }
-              })
-            }
+            const inLucruStage = currentPipeline.stages.find((s: any) => {
+              const stageName = toSlug(s.name)
+              return stageName.includes('lucru') || stageName.includes('work') || stageName.includes('progress')
+            })
+            const asteptareStage = currentPipeline.stages.find((s: any) => {
+              const stageName = toSlug(s.name)
+              return stageName.includes('asteptare') || stageName.includes('waiting')
+            })
+        
+            // Get source pipeline IDs
+            const sourcePipelineNames = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
+            const sourcePipelineIds = sourcePipelineNames
+              .map(name => pipelinesData.find((p: any) => toSlug(p.name) === toSlug(name)))
+              .filter(Boolean)
+              .map((p: any) => p.id)
+        
+            // Single database call for everything
+            const { data: receptieLeads, error: receptieError } = await getReceptieKanbanLeads(
+              currentPipeline.id,
+              sourcePipelineIds,
+              {
+                confirmari: confirmariStage?.id || null,
+                inLucru: inLucruStage?.id || null,
+                asteptare: asteptareStage?.id || null,
+              }
+            )
+        
+            if (receptieError) throw receptieError
+            allLeads = receptieLeads || []
+          } else {
+            // Normal pipeline loading
+            const { data: leadsData, error: leadsError } = await getKanbanLeads(currentPipeline.id)
+            if (leadsError) throw leadsError
+            allLeads = leadsData || []
           }
-        }
         
         setLeads(allLeads)
       } else {
@@ -408,6 +337,8 @@ export function useKanbanData(pipelineSlug?: string) {
   const handleLeadMove = useCallback(async (leadId: string, newStageName: string) => {
     const lead = leads.find(l => l.id === leadId)
     if (!lead) return
+    
+    const previousLead = { ...lead }
 
     // Folosește cache pentru pipelines
     const pipelinesDataToUse = await getPipelines()
@@ -459,7 +390,6 @@ export function useKanbanData(pipelineSlug?: string) {
     if (!newStage) return
 
     // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
-    const previousLead = { ...lead }
     setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
     
     try {

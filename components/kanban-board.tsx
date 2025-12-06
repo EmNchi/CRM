@@ -14,7 +14,7 @@ import {
   AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogFooter
 } from "@/components/ui/alert-dialog"
-import { calculateMultipleLeadTotals } from "@/lib/supabase/leadTotals"
+import { getLeadTotalsBatch } from "@/lib/supabase/leadTotals"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog,
@@ -62,6 +62,7 @@ export function KanbanBoard({
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
   const [stageTotals, setStageTotals] = useState<Record<string, number>>({})
   const [loadingTotals, setLoadingTotals] = useState<Record<string, boolean>>({})
+  const [leadTotals, setLeadTotals] = useState<Record<string, number>>({})
 
   const { isOwner } = useRole()
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -192,8 +193,8 @@ export function KanbanBoard({
       }
 
       try {
-        // Batch request pentru toate lead-urile simultan
-        const totalsMap = await calculateMultipleLeadTotals(allLeadIds)
+        // Batch request pentru toate lead-urile simultan (single DB call)
+        const totalsMap = await getLeadTotalsBatch(allLeadIds)
         
         if (cancelled) return
 
@@ -217,6 +218,7 @@ export function KanbanBoard({
         if (!cancelled) {
           setStageTotals(newTotals)
           setLoadingTotals(newLoadingStates)
+          setLeadTotals(totalsMap)
         }
       } catch (error) {
         if (!cancelled) {
@@ -476,18 +478,20 @@ export function KanbanBoard({
                       )}
                       style={{ animationDelay: `${index * 50}ms` }}
                     >
-                      <LeadCard
-                        lead={lead}
-                        onMove={onLeadMove}
-                        onClick={(event) => onLeadClick(lead, event)}
-                        onDragStart={() => handleDragStart(lead.id)}
-                        onDragEnd={handleDragEnd}
-                        isDragging={draggedLead === lead.id}
-                        stages={stages}
-                        onPinToggle={onPinToggle}
-                        isSelected={selectedLeads.has(lead.id)}
-                        onSelectChange={(isSelected) => handleLeadSelect(lead.id, isSelected)}
-                      />
+                    <LeadCard
+                      key={lead.id}
+                      lead={lead}
+                      onMove={onLeadMove}
+                      onClick={(e) => onLeadClick(lead, e)}
+                      onDragStart={() => handleDragStart(lead.id)}
+                      onDragEnd={handleDragEnd}
+                      isDragging={draggedLead === lead.id}
+                      stages={stages}
+                      onPinToggle={onPinToggle}
+                      isSelected={selectedLeads.has(lead.id)}
+                      onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
+                      leadTotal={leadTotals[lead.id] || 0}
+                    />
                     </div>
                   ))}
                 </div>

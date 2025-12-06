@@ -287,12 +287,16 @@ export async function getSingleKanbanLead(leadId: string, pipelineId: string): P
 
 export async function getKanbanLeads(pipelineId?: string) {
   try {
+    // Step 1: Must run first - get lead_pipelines with joins
     let query = supabase
       .from('lead_pipelines')
       .select(`
-        *,
-        lead:leads(*),
-        stage:stages(*)
+        id,
+        lead_id,
+        pipeline_id,
+        stage_id,
+        lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name),
+        stage:stages(id, name)
       `)
 
     if (pipelineId) {
@@ -301,263 +305,115 @@ export async function getKanbanLeads(pipelineId?: string) {
 
     const { data, error } = await query
     if (error) throw error
+    if (!data || data.length === 0) {
+      return { data: [], error: null }
+    }
 
-    const leadIds = (data ?? []).map((item: any) => item.lead.id)
+    const leadIds = data.map((item: any) => item.lead.id)
+    const uniquePipelineIds = [...new Set(data.map((item: any) => item.pipeline_id))]
+    
+    // Build lead -> stage map for stage history lookup
+    const leadStageMap = new Map<string, string>()
+    data.forEach((item: any) => {
+      leadStageMap.set(item.lead.id, item.stage.id)
+    })
+    const uniqueStageIds = [...new Set(leadStageMap.values())]
 
-    // fetch tags for all these leads in one shot
-    let tagMap = new Map<string, any[]>()
-    if (leadIds.length) {
-      const { data: tagRows, error: tagErr } = await supabase
+    // Step 2: Run all secondary queries IN PARALLEL
+    const [tagsResult, historyResult, pipelinesResult, techniciansResult] = await Promise.all([
+      // Tags query
+      supabase
         .from('v_lead_tags')
-        .select('lead_id,tags')
-        .in('lead_id', leadIds)
-      if (tagErr) throw tagErr
-      tagMap = new Map((tagRows ?? []).map((r: any) => [r.lead_id, r.tags]))
-    }
+        .select('lead_id, tags')
+        .in('lead_id', leadIds),
 
-    // Fetch stage history to get when each lead was moved to current stage (OPTIMIZAT: batch query)
-    let stageHistoryMap = new Map<string, string>()
-    if (leadIds.length) {
-      // creeaza un map de lead_id -> stage_id pentru a sti in ce stage este fiecare lead
-      const leadStageMap = new Map<string, string>()
-      ;(data ?? []).forEach((item: any) => {
-        leadStageMap.set(item.lead.id, item.stage.id)
-      })
-      
-      // obtine toate stage-urile unice
-      const uniqueStageIds = [...new Set(leadStageMap.values())]
-      
-      // Batch query pentru toate stage history entries relevante
-      if (uniqueStageIds.length > 0) {
-        const { data: historyRows, error: historyErr } = await supabase
-          .from('stage_history')
-          .select('lead_id, moved_at, to_stage_id')
-          .in('lead_id', leadIds)
-          .in('to_stage_id', uniqueStageIds)
-          .order('moved_at', { ascending: false })
-        
-        if (!historyErr && historyRows) {
-          // grupeaza dupa lead_id si to_stage_id, pastrand doar cea mai recenta intrare
-          const latestByLeadAndStage = new Map<string, { leadId: string; movedAt: string }>()
-          historyRows.forEach((row: any) => {
-            const key = `${row.lead_id}:${row.to_stage_id}`
-            if (!latestByLeadAndStage.has(key)) {
-              latestByLeadAndStage.set(key, { leadId: row.lead_id, movedAt: row.moved_at })
-            }
-          })
-          
-          // populeaza map-ul final
-          leadIds.forEach(leadId => {
-            const currentStageId = leadStageMap.get(leadId)
-            if (currentStageId) {
-              const key = `${leadId}:${currentStageId}`
-              const entry = latestByLeadAndStage.get(key)
-              if (entry) {
-                stageHistoryMap.set(leadId, entry.movedAt)
-              }
-            }
-          })
-        }
-      }
-    }
+      // Stage history query
+      uniqueStageIds.length > 0
+        ? supabase
+            .from('stage_history')
+            .select('lead_id, moved_at, to_stage_id')
+            .in('lead_id', leadIds)
+            .in('to_stage_id', uniqueStageIds)
+            .order('moved_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
 
-    // obtine informatii despre pipeline-uri pentru a atribui tag-urile de departament
-    const { data: pipelinesData } = await supabase
-      .from('pipelines')
-      .select('id, name')
-      .in('id', [...new Set((data ?? []).map((item: any) => item.pipeline_id))])
-    
-    const pipelineMap = new Map<string, string>()
-    if (pipelinesData) {
-      pipelinesData.forEach((p: any) => {
-        pipelineMap.set(p.id, p.name)
-      })
-    }
-
-    // Tag-uri de departament care trebuie create/verificate
-    const departmentTags = [
-      { name: 'Horeca', color: 'orange' as const },
-      { name: 'Saloane', color: 'green' as const },
-      { name: 'Frizerii', color: 'yellow' as const },
-      { name: 'Reparatii', color: 'blue' as const },
-      { name: 'RETUR', color: 'red' as const },
-    ]
-
-    // Map pentru a stoca ID-urile tag-urilor de departament
-    const departmentTagIds = new Map<string, string>()
-
-    // verifica si creeaza tag-urile de departament daca nu exista (optimizat: batch query)
-    const tagNames = departmentTags.map(t => t.name)
-    const { data: existingTags } = await supabase
-      .from('tags')
-      .select('id, name')
-      .in('name', tagNames)
-    
-    if (existingTags) {
-      existingTags.forEach((tag: any) => {
-        departmentTagIds.set(tag.name, tag.id)
-      })
-    }
-    
-    // creeaza tag-urile care lipsesc (batch insert)
-    const missingTags = departmentTags.filter(t => !departmentTagIds.has(t.name))
-    if (missingTags.length > 0) {
-      const { data: newTags } = await supabase
-        .from('tags')
-        .insert(missingTags.map(t => ({ name: t.name, color: t.color })) as any)
+      // Pipelines query (for department tags)
+      supabase
+        .from('pipelines')
         .select('id, name')
-      
-      if (newTags) {
-        newTags.forEach((tag: any) => {
-          departmentTagIds.set(tag.name, tag.id)
-        })
-      }
-    }
+        .in('id', uniquePipelineIds),
 
-    // sterge tag-urile vechi cu majuscule (optimizat: batch delete)
-    const oldTagNames = ['HORECA', 'SALOANE', 'FRIZERII', 'REPARATII']
-    const { data: oldTags } = await supabase
-      .from('tags')
-      .select('id')
-      .in('name', oldTagNames)
-    
-    if (oldTags && oldTags.length > 0) {
-      const oldTagIds = oldTags.map((t: any) => t.id)
-      // sterge toate atribuirile tag-urilor vechi (batch delete)
-      await supabase
-        .from('lead_tags')
-        .delete()
-        .in('tag_id', oldTagIds)
-      
-      // sterge tag-urile vechi (batch delete)
-      await supabase
-        .from('tags')
-        .delete()
-        .in('id', oldTagIds)
-    }
+      // Technicians: quotes + items (chained but separate from others)
+      (async () => {
+        const { data: quotesData } = await supabase
+          .from('lead_quotes')
+          .select('id, lead_id')
+          .in('lead_id', leadIds)
 
-    // Atribuie tag-urile de departament lead-urilor (OPTIMIZAT: batch operations)
-    const tagAssignments: Array<{ lead_id: string; tag_id: string }> = []
-    const leadTagPairs = new Set<string>() // Pentru a evita duplicatele
-    
-    for (const item of (data ?? [])) {
-      const pipelineName = pipelineMap.get(item.pipeline_id)?.toUpperCase() || ''
-      const leadId = item.lead.id
-      
-      // determina tag-ul de departament bazat pe numele pipeline-ului
-      let departmentTagName: string | null = null
-      if (pipelineName.includes('HORECA')) {
-        departmentTagName = 'Horeca'
-      } else if (pipelineName.includes('SALOANE') || pipelineName.includes('SALON')) {
-        departmentTagName = 'Saloane'
-      } else if (pipelineName.includes('FRIZER') || pipelineName.includes('BARBER')) {
-        departmentTagName = 'Frizerii'
-      } else if (pipelineName.includes('REPARAT') || pipelineName.includes('SERVICE')) {
-        departmentTagName = 'Reparatii'
-      }
-      
-      if (departmentTagName) {
-        const tagId = departmentTagIds.get(departmentTagName)
-        if (tagId) {
-          const pairKey = `${leadId}:${tagId}`
-          if (!leadTagPairs.has(pairKey)) {
-            leadTagPairs.add(pairKey)
-            tagAssignments.push({ lead_id: leadId, tag_id: tagId })
-          }
-        }
-      }
-    }
-    
-    // Batch query pentru a verifica care tag-uri sunt deja atribuite
-    if (tagAssignments.length > 0) {
-      const leadIdsToCheck = [...new Set(tagAssignments.map(a => a.lead_id))]
-      const tagIdsToCheck = [...new Set(tagAssignments.map(a => a.tag_id))]
-      
-      const { data: existingAssignments } = await supabase
-        .from('lead_tags')
-        .select('lead_id, tag_id')
-        .in('lead_id', leadIdsToCheck)
-        .in('tag_id', tagIdsToCheck)
-      
-      const existingPairs = new Set<string>()
-      if (existingAssignments) {
-        existingAssignments.forEach((ea: any) => {
-          existingPairs.add(`${ea.lead_id}:${ea.tag_id}`)
-        })
-      }
-      
-      // filtreaza doar atribuirile noi (batch insert)
-      const newAssignments = tagAssignments.filter(a => 
-        !existingPairs.has(`${a.lead_id}:${a.tag_id}`)
-      )
-      
-      if (newAssignments.length > 0) {
-        // Batch insert pentru toate atribuirile noi
-        await supabase
-          .from('lead_tags')
-          .insert(newAssignments as any)
-      }
-    }
+        if (!quotesData || quotesData.length === 0) return new Map<string, string>()
 
-    // re-incarca tag-urile dupa ce am atribuit tag-urile de departament
-    if (leadIds.length) {
-      const { data: updatedTagRows, error: updatedTagErr } = await supabase
-        .from('v_lead_tags')
-        .select('lead_id,tags')
-        .in('lead_id', leadIds)
-      if (!updatedTagErr && updatedTagRows) {
-        tagMap = new Map((updatedTagRows ?? []).map((r: any) => [r.lead_id, r.tags]))
-      }
-    }
-
-    // obtine tehnicienii pentru fiecare lead (optimizat: batch query)
-    const technicianMap = new Map<string, string | null>()
-    if (leadIds.length > 0) {
-      // obtine toate quote-urile pentru lead-urile curente
-      const { data: quotesData } = await supabase
-        .from('lead_quotes')
-        .select('id, lead_id')
-        .in('lead_id', leadIds)
-      
-      if (quotesData && quotesData.length > 0) {
         const quoteIds = quotesData.map((q: any) => q.id)
-        
-        // obtine items-urile cu tehnician pentru toate quote-urile
         const { data: itemsData } = await supabase
           .from('lead_quote_items')
           .select('quote_id, technician')
           .in('quote_id', quoteIds)
           .not('technician', 'is', null)
-        
-        if (itemsData) {
-          // creeaza un map quote_id -> lead_id
-          const quoteToLeadMap = new Map<string, string>()
-          quotesData.forEach((q: any) => {
-            quoteToLeadMap.set(q.id, q.lead_id)
-          })
-          
-          // grupeaza tehnicienii pe lead (folosim primul tehnician gasit sau cel mai recent)
-          const leadTechnicians = new Map<string, Set<string>>()
-          itemsData.forEach((item: any) => {
-            const leadId = quoteToLeadMap.get(item.quote_id)
-            if (leadId && item.technician) {
-              if (!leadTechnicians.has(leadId)) {
-                leadTechnicians.set(leadId, new Set())
-              }
-              leadTechnicians.get(leadId)!.add(item.technician)
+
+        if (!itemsData) return new Map<string, string>()
+
+        // Build quote -> lead map
+        const quoteToLeadMap = new Map<string, string>()
+        quotesData.forEach((q: any) => quoteToLeadMap.set(q.id, q.lead_id))
+
+        // Group technicians by lead
+        const leadTechnicians = new Map<string, Set<string>>()
+        itemsData.forEach((item: any) => {
+          const leadId = quoteToLeadMap.get(item.quote_id)
+          if (leadId && item.technician) {
+            if (!leadTechnicians.has(leadId)) {
+              leadTechnicians.set(leadId, new Set())
             }
-          })
-          
-          // converteste set-urile in string-uri (toti tehnicienii, separati prin virgula)
-          leadTechnicians.forEach((techSet, leadId) => {
-            const techs = Array.from(techSet).filter(Boolean)
-            technicianMap.set(leadId, techs.length > 0 ? techs.join(', ') : null)
-          })
+            leadTechnicians.get(leadId)!.add(item.technician)
+          }
+        })
+
+        const techMap = new Map<string, string>()
+        leadTechnicians.forEach((techSet, leadId) => {
+          const techs = Array.from(techSet).filter(Boolean)
+          if (techs.length > 0) techMap.set(leadId, techs.join(', '))
+        })
+        return techMap
+      })()
+    ])
+
+    // Process tags
+    const tagMap = new Map<string, any[]>(
+      (tagsResult.data ?? []).map((r: any) => [r.lead_id, r.tags])
+    )
+
+    // Process stage history
+    const stageHistoryMap = new Map<string, string>()
+    if (historyResult.data) {
+      const latestByLeadAndStage = new Map<string, string>()
+      historyResult.data.forEach((row: any) => {
+        const key = `${row.lead_id}:${row.to_stage_id}`
+        if (!latestByLeadAndStage.has(key)) {
+          latestByLeadAndStage.set(key, row.moved_at)
         }
-      }
+      })
+      leadIds.forEach((leadId: string) => {
+        const currentStageId = leadStageMap.get(leadId)
+        if (currentStageId) {
+          const movedAt = latestByLeadAndStage.get(`${leadId}:${currentStageId}`)
+          if (movedAt) stageHistoryMap.set(leadId, movedAt)
+        }
+      })
     }
 
-    const kanbanLeads: KanbanLead[] = (data ?? []).map((item: any) => ({
+    const technicianMap = techniciansResult
+
+    // Build final kanban leads
+    const kanbanLeads: KanbanLead[] = data.map((item: any) => ({
       id: item.lead.id,
       name: item.lead.full_name || 'Unknown',
       email: item.lead.email || '',
@@ -812,4 +668,51 @@ export async function moveLeadToStageAllPipelines(leadId: string, stageName: str
   })
   if (error) throw error
   return data // { moved: [...], skipped: [...] }
+}
+
+export async function getReceptieKanbanLeads(
+  receptiePipelineId: string,
+  sourcePipelineIds: string[],
+  stageIds: {
+    confirmari?: string | null
+    inLucru?: string | null
+    asteptare?: string | null
+  }
+): Promise<{ data: KanbanLead[] | null; error: any }> {
+  try {
+    const { data, error } = await supabase.rpc('get_receptie_kanban_leads', {
+      p_receptie_pipeline_id: receptiePipelineId,
+      p_source_pipeline_ids: sourcePipelineIds,
+      p_confirmari_stage_id: stageIds.confirmari || null,
+      p_in_lucru_stage_id: stageIds.inLucru || null,
+      p_asteptare_stage_id: stageIds.asteptare || null,
+    })
+
+    if (error) throw error
+
+    const kanbanLeads: KanbanLead[] = (data ?? []).map((row: any) => ({
+      id: row.out_id,
+      name: row.out_full_name || 'Unknown',
+      email: row.out_email || '',
+      phone: row.out_phone_number || '',
+      stage: row.out_stage_name,
+      createdAt: row.out_created_at,
+      campaignName: row.out_campaign_name,
+      adName: row.out_ad_name,
+      formName: row.out_form_name,
+      leadId: row.out_lead_id,
+      stageId: row.out_stage_id,
+      pipelineId: row.out_pipeline_id,
+      assignmentId: row.out_assignment_id,
+      tags: row.out_tags || [],
+      stageMovedAt: row.out_stage_moved_at || undefined,
+      technician: row.out_technician || null,
+      originalPipelineId: row.out_original_pipeline_id || undefined,
+      originalPipelineName: row.out_original_pipeline_name || undefined,
+    }))
+
+    return { data: kanbanLeads, error: null }
+  } catch (error) {
+    return { data: null, error }
+  }
 }

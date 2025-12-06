@@ -165,3 +165,29 @@ export async function calculateMultipleLeadTotals(leadIds: string[]): Promise<Re
     return {}
   }
 }
+
+/**
+ * Get totals for multiple leads in a single database call
+ * This replaces calculateMultipleLeadTotals for performance
+ */
+ export async function getLeadTotalsBatch(leadIds: string[]): Promise<Record<string, number>> {
+  if (leadIds.length === 0) return {}
+
+  try {
+    const { data, error } = await supabase.rpc('get_lead_totals_batch', {
+      p_lead_ids: leadIds
+    })
+
+    if (error) throw error
+
+    const result: Record<string, number> = {}
+    ;(data || []).forEach((row: { lead_id: string; total: number }) => {
+      result[row.lead_id] = Number(row.total) || 0
+    })
+
+    return result
+  } catch (error) {
+    console.error('Error fetching lead totals batch:', error)
+    return {}
+  }
+}

@@ -10,9 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/page"
-import type { Tag, TagColor } from "@/lib/supabase/tagOperations"
-import { calculateLeadTotal, invalidateLeadTotalCache } from "@/lib/supabase/leadTotals"
-import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+import type { TagColor } from "@/lib/supabase/tagOperations"
 import { getOrCreatePinnedTag, toggleLeadTag } from "@/lib/supabase/tagOperations"
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns"
 import { ro } from "date-fns/locale"
@@ -29,12 +27,11 @@ interface LeadCardProps {
   onPinToggle?: (leadId: string, isPinned: boolean) => void
   isSelected?: boolean
   onSelectChange?: (isSelected: boolean) => void
+  leadTotal?: number
 }
 
-export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDragging, stages, onPinToggle, isSelected = false, onSelectChange }: LeadCardProps) {
+export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDragging, stages, onPinToggle, isSelected = false, onSelectChange, leadTotal = 0 }: LeadCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [leadTotal, setLeadTotal] = useState<number>(0)
-  const [loadingTotal, setLoadingTotal] = useState(true)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [isPinning, setIsPinning] = useState(false)
   const { toast } = useToast()
@@ -161,78 +158,6 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
     }
     return styles[tagName] || 'bg-gradient-to-r from-gray-500 to-gray-600 border-gray-300'
   }
-
-  
-  // functie pentru recalcularea totalului
-  const fetchClientTotal = async () => {
-    setLoadingTotal(true)
-    try {
-      // invalideaza cache-ul pentru acest lead
-      invalidateLeadTotalCache(lead.id)
-      const total = await calculateLeadTotal(lead.id)
-      setLeadTotal(total)
-    } catch (error) {
-      console.error('Eroare la calcularea totalului pentru client:', lead.name, error)
-      setLeadTotal(0)
-    } finally {
-      setLoadingTotal(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchClientTotal()
-
-    // Real-time subscription pentru actualizare automata cand se modifica serviciile
-    const supabase = supabaseBrowser()
-    const channel = supabase
-      .channel(`lead-total-${lead.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'lead_quote_items',
-        },
-        async (payload) => {
-          // Verifica daca item-ul apartine unui quote al acestui lead
-          const payloadNew = payload.new as any
-          const payloadOld = payload.old as any
-          const quoteId = payloadNew?.quote_id || payloadOld?.quote_id
-          
-          if (quoteId) {
-            // Verifica daca quote-ul apartine acestui lead
-            const { data: quote } = await supabase
-              .from('lead_quotes')
-              .select('lead_id')
-              .eq('id', quoteId)
-              .single()
-            
-            if (quote && (quote as any).lead_id === lead.id) {
-              // Recalculeaza totalul
-              fetchClientTotal()
-            }
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'lead_quotes',
-          filter: `lead_id=eq.${lead.id}`,
-        },
-        () => {
-          // Cand se modifica un quote (se adauga/sterge tăviță), recalculeaza
-          fetchClientTotal()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [lead.id, lead.name, lead.email])
 
   const handleCardClick = (e: React.MouseEvent) => {
     // daca se da click pe checkbox sau butoane, nu deschide detalii
@@ -460,10 +385,8 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
       </div>
       
       <div className="flex justify-end mt-2">
-        <div className="text-xs font-medium text-muted-foreground">
-          {loadingTotal ? (
-            <span className="animate-pulse">Calculez total client...</span>
-          ) : leadTotal > 0 ? (
+      <div className="text-xs font-medium text-muted-foreground">
+          {leadTotal > 0 ? (
             <span className="bg-green-50 text-green-700 px-2 py-1 rounded text-xs font-semibold" title="Total toate tăvițele clientului">
               Total: {leadTotal.toFixed(2)} RON
             </span>

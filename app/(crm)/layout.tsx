@@ -37,7 +37,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
 
   // unauthenticated -> go to login (make sure /login is outside the (crm) group)
   if (!isAuthed) {
-    router.replace('/login')
+    router.replace('/auth/sign-in')
     return null
   }
 
