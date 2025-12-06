@@ -7,16 +7,11 @@ import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors,
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
-import type { Lead } from "@/app/page"
 import { useRole } from "@/hooks/useRole"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 
 interface SidebarProps {
-  leads: Lead[]                       // kept for compatibility, not used
-  onLeadSelect: (leadId: string) => void // kept for compatibility, not used
-  pipelines: string[]
   canManagePipelines?: boolean
-  onRefresh?: () => Promise<void> | void // kept for compatibility, not used
 }
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
@@ -46,12 +41,12 @@ const getPipelineIcon = (pipelineName: string) => {
   }
 }
 
-export function Sidebar({ pipelines, canManagePipelines, onRefresh: _onRefresh }: SidebarProps) {
+export function Sidebar({ canManagePipelines }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const { isOwner } = useRole()
 
-  const [pipeNames, setPipeNames] = useState<string[]>(pipelines)
+  const [pipeNames, setPipeNames] = useState<string[]>([])
 
   // create pipeline dialog state
   const [createOpen, setCreateOpen] = useState(false)

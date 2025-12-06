@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 import { getPipelinesWithStages } from '@/lib/supabase/leadOperations'
 
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minute
@@ -10,46 +10,43 @@ interface CachedData {
   timestamp: number
 }
 
-export function usePipelinesCache() {
-  const [cachedData, setCachedData] = useState<CachedData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const fetchPromiseRef = useRef<Promise<any> | null>(null)
+let globalCache: CachedData | null = null
+let globalFetchPromise: Promise<any> | null = null
 
+export function usePipelinesCache() {
   const getPipelines = useCallback(async (forceRefresh = false): Promise<any[]> => {
     const now = Date.now()
 
     // Verifică cache-ul
-    if (!forceRefresh && cachedData && (now - cachedData.timestamp) < CACHE_DURATION) {
-      return cachedData.data
+    if (!forceRefresh && globalCache && (now - globalCache.timestamp) < CACHE_DURATION) {
+      return globalCache.data
     }
 
     // Dacă există deja un fetch în progres, așteaptă-l
-    if (fetchPromiseRef.current) {
-      return fetchPromiseRef.current
+    if (globalFetchPromise) {
+      return globalFetchPromise
     }
 
     // Fetch nou
-    setLoading(true)
-    const promise = getPipelinesWithStages().then(({ data, error }) => {
+    globalFetchPromise = getPipelinesWithStages().then(({ data, error }) => {
+
       if (error) throw error
       if (data) {
-        setCachedData({ data, timestamp: now })
+        globalCache = { data, timestamp: now }
       }
       return data || []
     }).finally(() => {
-      setLoading(false)
-      fetchPromiseRef.current = null
+      globalFetchPromise = null
     })
 
-    fetchPromiseRef.current = promise
-    return promise
-  }, [cachedData])
-
-  const invalidateCache = useCallback(() => {
-    setCachedData(null)
-    fetchPromiseRef.current = null
+    return globalFetchPromise
   }, [])
 
-  return { getPipelines, invalidateCache, loading, cachedData: cachedData?.data }
+  const invalidateCache = useCallback(() => {
+    globalCache = null
+    globalFetchPromise = null
+  }, [])
+
+  return { getPipelines, invalidateCache, cachedData: globalCache?.data }
 }
 

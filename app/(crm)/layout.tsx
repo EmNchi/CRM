@@ -1,21 +1,9 @@
 'use client'
 
 import { Sidebar } from '@/components/sidebar'
-import { useKanbanData } from '@/hooks/useKanbanData'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
-
-function AppShell({ children }: { children: React.ReactNode }) {
-  // <-- runs ONLY after session exists
-  const { leads, pipelines } = useKanbanData()
-  return (
-    <div className="min-h-screen flex">
-      <Sidebar leads={leads} onLeadSelect={() => {}} pipelines={pipelines} />
-      <main className="flex-1 overflow-auto">{children}</main>
-    </div>
-  )
-}
 
 export default function CrmShell({ children }: { children: React.ReactNode }) {
   const supabase = useMemo(() => supabaseBrowser(), [])
@@ -41,6 +29,10 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     return null
   }
 
-  // authenticated -> now mount the heavy shell (this is where useKanbanData runs)
-  return <AppShell>{children}</AppShell>
+  return (
+    <div className="min-h-screen flex">
+      <Sidebar />
+      <main className="flex-1 overflow-auto">{children}</main>
+    </div>
+  )
 }
