@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { format } from "date-fns"
 import type { Lead } from "@/app/page" 
 import Preturi from '@/components/preturi';
@@ -14,7 +15,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import DeConfirmat from "@/components/de-confirmat"
 import LeadMessenger from "@/components/lead-messenger"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
-import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, Maximize2 } from "lucide-react"
+import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, Maximize2, ChevronDown, ChevronRight, User, Building } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { uploadLeadImage, deleteLeadImage, listLeadImages, saveLeadImageReference, deleteLeadImageReference, type LeadImage } from "@/lib/supabase/imageOperations"
@@ -105,9 +106,22 @@ export function LeadDetailsPanel({
   const [nuRaspunde, setNuRaspunde] = useState(false)
   const [noDeal, setNoDeal] = useState(false)
 
+  // State pentru checkbox-uri Curier
+  const [curierTrimis, setCurierTrimis] = useState(false)
+  const [coletAjuns, setColetAjuns] = useState(false)
+  const [curierRetur, setCurierRetur] = useState(false)
+  const [coletTrimis, setColetTrimis] = useState(false)
+  const [asteptRidicarea, setAsteptRidicarea] = useState(false)
+  const [ridicPersonal, setRidicPersonal] = useState(false)
+
   // State pentru imagini
   const [images, setImages] = useState<LeadImage[]>([])
   const [uploading, setUploading] = useState(false)
+
+  // State pentru collapsible sections
+  const [isContactOpen, setIsContactOpen] = useState(true)
+  const [isImagesOpen, setIsImagesOpen] = useState(false)
+  const [isMessengerOpen, setIsMessengerOpen] = useState(false)
 
   const allPipeNames = pipelines ?? []
 
@@ -264,6 +278,25 @@ export function LeadDetailsPanel({
     const subject = encodeURIComponent(`Comanda Ascutzit.ro`)
     const body = encodeURIComponent(`Va contactez in legatura cu comanda dvs facuta la Ascutzit.ro`)
     window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${email}&su=${subject}&body=${body}`, '_blank')
+  }, [])
+
+  // Blochează scroll-ul pe body când panelul este deschis
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow
+    const originalPaddingRight = document.body.style.paddingRight
+    
+    // Calculează lățimea scrollbar-ului pentru a preveni jump-ul layout-ului
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
+    
+    document.body.style.overflow = 'hidden'
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`
+    }
+    
+    return () => {
+      document.body.style.overflow = originalOverflow
+      document.body.style.paddingRight = originalPaddingRight
+    }
   }, [])
 
   // Keyboard shortcuts
@@ -544,276 +577,323 @@ export function LeadDetailsPanel({
 
       <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
         {/* LEFT column — identity & meta */}
-        <div className="space-y-4">
-          <div>
-            <label className="font-medium text-foreground">Name</label>
-            <p className="text-muted-foreground">{lead.name}</p>
-          </div>
+        <div className="space-y-3">
+          {/* Contact Info - Collapsible */}
+          <Collapsible open={isContactOpen} onOpenChange={setIsContactOpen}>
+            <div className="rounded-lg border bg-muted/30">
+              <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-primary" />
+                  <span className="font-medium text-sm">Informații Contact</span>
+                </div>
+                {isContactOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent className="px-3 pb-3 space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Nume</label>
+                  <p className="text-sm font-medium">{lead.name}</p>
+                </div>
 
-          {lead.company && (
-            <div>
-              <label className="font-medium text-foreground">Company</label>
-              <p className="text-muted-foreground">{lead.company}</p>
-            </div>
-          )}
+                {lead.company && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Companie</label>
+                    <p className="text-sm">{lead.company}</p>
+                  </div>
+                )}
 
-          {lead.phone && (
-            <div>
-              <label className="font-medium text-foreground mb-1.5 block">Phone</label>
-              <div className="flex items-center gap-2 group">
-                <a
-                  href={`tel:${lead.phone}`}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    handlePhoneClick(lead.phone!)
-                  }}
-                  className="flex-1 flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Phone className="h-4 w-4" />
-                  <span className="truncate">{lead.phone}</span>
-                </a>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => handleCopy(lead.phone!, 'Telefon')}
-                  title="Copiază telefon"
-                >
-                  {copiedField === 'Telefon' ? (
-                    <Check className="h-3.5 w-3.5 text-green-600" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {lead.email && (
-            <div>
-              <label className="font-medium text-foreground mb-1.5 block">Email</label>
-              <div className="flex items-center gap-2 group">
-                <a
-                  href={`mailto:${lead.email}`}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    handleEmailClick(lead.email!)
-                  }}
-                  className="flex-1 flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors truncate"
-                >
-                  <Mail className="h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">{lead.email}</span>
-                </a>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                  onClick={() => handleCopy(lead.email!, 'Email')}
-                  title="Copiază email"
-                >
-                  {copiedField === 'Email' ? (
-                    <Check className="h-3.5 w-3.5 text-green-600" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {lead.technician && (
-            <div>
-              <label className="font-medium text-foreground">Tehnician</label>
-              <p className="text-muted-foreground">{lead.technician}</p>
-            </div>
-          )}
-
-          {lead.notes && (
-            <div>
-              <label className="font-medium text-foreground">Notes</label>
-              <p className="text-muted-foreground text-sm mt-1">{lead.notes}</p>
-            </div>
-          )}
-
-          {/* sectiune pentru imagini */}
-          <div>
-            <label className="font-medium text-foreground mb-2 block">Imagini</label>
-            <div className="space-y-3">
-              {/* buton pentru adaugare imagine */}
-              <div>
-                <input
-                  type="file"
-                  id="image-upload"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                  disabled={uploading}
-                />
-                <label
-                  htmlFor="image-upload"
-                  className={`inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-background hover:bg-accent cursor-pointer transition-colors ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <ImagePlus className="h-4 w-4" />
-                  <span className="text-sm">{uploading ? 'Se încarcă...' : 'Adaugă imagine'}</span>
-                </label>
-              </div>
-
-              {/* Grid cu imaginile existente */}
-              {images.length > 0 && (
-                <div className="grid grid-cols-2 gap-3">
-                  {images.map((image) => (
-                    <div key={image.id} className="relative group">
-                      <div 
-                        className="aspect-square rounded-lg overflow-hidden border border-border bg-muted cursor-pointer hover:ring-2 ring-primary transition-all"
-                        onClick={() => setLightboxImage(image.url)}
-                      >
-                        <img
-                          src={image.url}
-                          alt={image.filename}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                          <Maximize2 className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                      </div>
-                      <button
+                {lead.phone && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Telefon</label>
+                    <div className="flex items-center gap-2 group mt-1">
+                      <a
+                        href={`tel:${lead.phone}`}
                         onClick={(e) => {
-                          e.stopPropagation()
-                          handleImageDelete(image.id, image.file_path)
+                          e.preventDefault()
+                          handlePhoneClick(lead.phone!)
                         }}
-                        className="absolute top-2 right-2 p-1.5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/90 shadow-lg"
-                        title="Șterge imagine"
+                        className="flex-1 flex items-center gap-2 text-sm hover:text-primary transition-colors bg-background rounded px-2 py-1.5 border"
                       >
-                        <X className="h-4 w-4" />
-                      </button>
+                        <Phone className="h-3.5 w-3.5" />
+                        <span className="truncate">{lead.phone}</span>
+                      </a>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleCopy(lead.phone!, 'Telefon')}
+                        title="Copiază telefon"
+                      >
+                        {copiedField === 'Telefon' ? (
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                )}
 
-              {/* Lightbox pentru imagini */}
-              {lightboxImage && (
-                <Dialog open={!!lightboxImage} onOpenChange={(open) => !open && setLightboxImage(null)}>
-                  <DialogContent className="max-w-4xl p-0">
-                    <img
-                      src={lightboxImage}
-                      alt="Preview"
-                      className="w-full h-auto max-h-[80vh] object-contain"
-                    />
-                  </DialogContent>
-                </Dialog>
-              )}
+                {lead.email && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Email</label>
+                    <div className="flex items-center gap-2 group mt-1">
+                      <a
+                        href={`mailto:${lead.email}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          handleEmailClick(lead.email!)
+                        }}
+                        className="flex-1 flex items-center gap-2 text-sm hover:text-primary transition-colors bg-background rounded px-2 py-1.5 border truncate"
+                      >
+                        <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+                        <span className="truncate">{lead.email}</span>
+                      </a>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                        onClick={() => handleCopy(lead.email!, 'Email')}
+                        title="Copiază email"
+                      >
+                        {copiedField === 'Email' ? (
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
-              {images.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground border border-dashed rounded-lg">
-                  <ImageIcon className="h-8 w-8 mb-2 opacity-50" />
-                  <p className="text-sm">Nu există imagini adăugate</p>
-                </div>
-              )}
-            </div>
-          </div>
+                {lead.technician && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Tehnician</label>
+                    <p className="text-sm">{lead.technician}</p>
+                  </div>
+                )}
 
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            {lead?.createdAt && (
-              <div>
-                <label className="font-medium text-foreground">Created At</label>
-                <p className="text-muted-foreground">{format(lead.createdAt, "MMM dd, yyyy")}</p>
-              </div>
-            )}
-            {lead?.lastActivity && (
-              <div>
-                <label className="font-medium text-foreground">Last Activity</label>
-                <p className="text-muted-foreground">{format(lead.lastActivity, "MMM dd, yyyy")}</p>
-              </div>
-            )}
-          </div>
+                {lead.notes && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Notițe</label>
+                    <p className="text-sm text-muted-foreground mt-1">{lead.notes}</p>
+                  </div>
+                )}
 
-          <div>
-            <label className="font-medium text-foreground mb-2 block">Move to Stage</label>
-            <Select value={stage} onValueChange={handleStageChange}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {stages.map((stage) => (
-                  <SelectItem key={stage} value={stage}>{stage}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {/* Move to pipeline(s) */}
-          <div className="mt-4">
-            <label className="font-medium text-foreground mb-2 block">
-              Move to pipeline(s)
-            </label>
-
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-8">
-                    {selectedPipes.length > 0 ? `Selected: ${selectedPipes.length}` : "Choose pipelines"}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-60" />
-                  </Button>
-                </DropdownMenuTrigger>
-
-                <DropdownMenuContent align="start" className="w-[260px] max-h-[280px] overflow-y-auto">
-                  {/* Pick all / Clear all */}
-                  <DropdownMenuCheckboxItem
-                    checked={selectedPipes.length === allPipeNames.length && allPipeNames.length > 0}
-                    onCheckedChange={(v) => (v ? pickAll() : clearAll())}
-                    onSelect={(e) => e.preventDefault()} // keep menu open
-                  >
-                    Pick all
-                  </DropdownMenuCheckboxItem>
-
-                  <div className="my-1 h-px bg-border" />
-
-                  {/* Pipelines list */}
-                  {allPipeNames.map(name => (
-                    <DropdownMenuCheckboxItem
-                      key={name}
-                      checked={selectedPipes.includes(name)}
-                      onCheckedChange={() => togglePipe(name)}
-                      onSelect={(e) => e.preventDefault()} // keep menu open
-                    >
-                      <span className="truncate">{name}</span>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-
-                  {allPipeNames.length === 0 && (
-                    <div className="px-2 py-1 text-xs text-muted-foreground">
-                      No pipelines available.
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t">
+                  {lead?.createdAt && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground uppercase">Creat</label>
+                      <p className="text-xs">{format(lead.createdAt, "dd MMM yyyy")}</p>
                     </div>
                   )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                  {lead?.lastActivity && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground uppercase">Ultima activitate</label>
+                      <p className="text-xs">{format(lead.lastActivity, "dd MMM yyyy")}</p>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
 
-              {/* Action button – will do real work in Step 2 */}
-              <Button
-                size="sm"
-                disabled={movingPipes || selectedPipes.length === 0}
-                onClick={async () => {
-                  if (!lead?.id) return
-                  setMovingPipes(true)
-                  try {
-                    if (onBulkMoveToPipelines) {
-                      await onBulkMoveToPipelines(lead.id, selectedPipes)
-                    } else if (onMoveToPipeline) {
-                      for (const name of selectedPipes) {
-                        await onMoveToPipeline(lead.id, name)
+          {/* Imagini - Collapsible */}
+          <Collapsible open={isImagesOpen} onOpenChange={setIsImagesOpen}>
+            <div className="rounded-lg border bg-muted/30">
+              <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+                <div className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4 text-primary" />
+                  <span className="font-medium text-sm">Imagini {images.length > 0 && `(${images.length})`}</span>
+                </div>
+                {isImagesOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent className="px-3 pb-3 space-y-3">
+                {/* buton pentru adaugare imagine */}
+                <div>
+                  <input
+                    type="file"
+                    id="image-upload"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    disabled={uploading}
+                  />
+                  <label
+                    htmlFor="image-upload"
+                    className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 cursor-pointer transition-all text-sm font-medium text-primary ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {uploading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Se încarcă...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ImagePlus className="h-4 w-4" />
+                        <span>Instalează imagine</span>
+                      </>
+                    )}
+                  </label>
+                </div>
+
+                {/* Grid cu imaginile existente */}
+                {images.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {images.map((image) => (
+                      <div key={image.id} className="relative group">
+                        <div 
+                          className="aspect-square rounded-lg overflow-hidden border border-border bg-muted cursor-pointer hover:ring-2 ring-primary transition-all"
+                          onClick={() => setLightboxImage(image.url)}
+                        >
+                          <img
+                            src={image.url}
+                            alt={image.filename}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                            <Maximize2 className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleImageDelete(image.id, image.file_path)
+                          }}
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 shadow-lg border border-white/20"
+                          title="Șterge imagine"
+                        >
+                          <X className="h-4 w-4 text-white" strokeWidth={2.5} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Lightbox pentru imagini */}
+                {lightboxImage && (
+                  <Dialog open={!!lightboxImage} onOpenChange={(open) => !open && setLightboxImage(null)}>
+                    <DialogContent className="max-w-4xl p-0">
+                      <img
+                        src={lightboxImage}
+                        alt="Preview"
+                        className="w-full h-auto max-h-[80vh] object-contain"
+                      />
+                    </DialogContent>
+                  </Dialog>
+                )}
+
+                {images.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground border border-dashed rounded-lg">
+                    <ImageIcon className="h-6 w-6 mb-2 opacity-50" />
+                    <p className="text-xs">Nu există imagini</p>
+                  </div>
+                )}
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
+
+          {/* Acțiuni - Stage & Pipeline */}
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">Schimbă Etapa</label>
+              <Select value={stage} onValueChange={handleStageChange}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {stages.map((stage) => (
+                    <SelectItem key={stage} value={stage}>{stage}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
+                Mută în Pipeline
+              </label>
+              <div className="flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 text-xs">
+                      {selectedPipes.length > 0 ? `Selectate: ${selectedPipes.length}` : "Alege"}
+                      <ChevronsUpDown className="ml-1 h-3 w-3 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+
+                  <DropdownMenuContent align="start" className="w-[220px] max-h-[280px] overflow-y-auto">
+                    <DropdownMenuCheckboxItem
+                      checked={selectedPipes.length === allPipeNames.length && allPipeNames.length > 0}
+                      onCheckedChange={(v) => (v ? pickAll() : clearAll())}
+                      onSelect={(e) => e.preventDefault()}
+                    >
+                      Selectează toate
+                    </DropdownMenuCheckboxItem>
+
+                    <div className="my-1 h-px bg-border" />
+
+                    {allPipeNames.map(name => (
+                      <DropdownMenuCheckboxItem
+                        key={name}
+                        checked={selectedPipes.includes(name)}
+                        onCheckedChange={() => togglePipe(name)}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        <span className="truncate text-xs">{name}</span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+
+                    {allPipeNames.length === 0 && (
+                      <div className="px-2 py-1 text-xs text-muted-foreground">
+                        Nu există pipeline-uri.
+                      </div>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <Button
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={movingPipes || selectedPipes.length === 0}
+                  onClick={async () => {
+                    if (!lead?.id) return
+                    setMovingPipes(true)
+                    try {
+                      if (onBulkMoveToPipelines) {
+                        await onBulkMoveToPipelines(lead.id, selectedPipes)
+                      } else if (onMoveToPipeline) {
+                        for (const name of selectedPipes) {
+                          await onMoveToPipeline(lead.id, name)
+                        }
                       }
+                      setSelectedPipes([])
+                    } finally {
+                      setMovingPipes(false)
                     }
-                    setSelectedPipes([])
-                  } finally {
-                    setMovingPipes(false)
-                  }
-                }}
-              >
-                {movingPipes ? "Moving…" : "Move"}
-              </Button>
+                  }}
+                >
+                  {movingPipes ? "Se mută…" : "Mută"}
+                </Button>
+              </div>
             </div>
           </div>
 
-          {/* mesagerie intre receptie si tehnician */}
-          <LeadMessenger leadId={lead.id} leadTechnician={lead.technician} />
+          {/* Mesagerie - Collapsible */}
+          <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
+            <div className="rounded-lg border bg-muted/30">
+              <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4 text-primary" />
+                  <span className="font-medium text-sm">Mesagerie</span>
+                </div>
+                {isMessengerOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent className="px-3 pb-3">
+                <LeadMessenger leadId={lead.id} leadTechnician={lead.technician} />
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
         </div>
 
 

@@ -1,8 +1,10 @@
 'use client'
 
+import React from 'react'
 import { format } from 'date-fns'
 import type { Lead } from '@/app/page'
 import type { LeadQuoteItem, LeadQuote } from '@/lib/supabase/quoteOperations'
+import type { Service } from '@/lib/supabase/serviceOperations'
 
 interface SheetData {
   quote: LeadQuote
@@ -24,143 +26,276 @@ interface PrintViewProps {
   sheets: SheetData[]
   allSheetsTotal: number
   urgentMarkupPct: number
+  services?: Service[]
 }
+
+// Calculează totalul pentru un item
+function calculateItemTotal(item: LeadQuoteItem, urgentMarkupPct: number): number {
+  const disc = Math.min(100, Math.max(0, item.discount_pct))
+  const base = item.qty * item.unit_price_snapshot
+  const afterDisc = base * (1 - disc / 100)
+  return item.urgent ? afterDisc * (1 + urgentMarkupPct / 100) : afterDisc
+}
+
+// Stil comun pentru celule
+const cellStyle = {
+  border: '1px solid #000',
+  fontSize: '7px',
+  paddingTop: '1px',
+  paddingBottom: '1px',
+  paddingLeft: '0.5px',
+  paddingRight: '0.5px',
+  textAlign: 'center' as const,
+  verticalAlign: 'middle' as const,
+}
+
+// Header gri cu text negru
+const headerStyle = {
+  ...cellStyle,
+  fontSize: '9px',
+  backgroundColor: '#e0e0e0',
+  color: '#000000',
+  fontWeight: 'bold' as const,
+  padding: '4px 2px',
+}
+
+// Stil pentru rândul instrumentului (gri)
+const instrumentRowBg = '#d0d0d0'
 
 export function PrintView({
   lead,
   sheets,
   allSheetsTotal,
-  urgentMarkupPct
+  urgentMarkupPct,
+  services = []
 }: PrintViewProps) {
+  // Calculează totaluri pe departamente
+  const departmentTotals: Record<string, number> = {}
+  sheets.forEach(sheet => {
+    sheet.items.forEach(item => {
+      const dept = item.department || 'Alte'
+      const itemTotal = calculateItemTotal(item, urgentMarkupPct)
+      departmentTotals[dept] = (departmentTotals[dept] || 0) + itemTotal
+    })
+  })
+
+  // Calculează discount-urile totale
+  const allSubtotal = sheets.reduce((acc, s) => acc + s.subtotal, 0)
+  const allTotalDiscount = sheets.reduce((acc, s) => acc + s.totalDiscount, 0)
+  const allUrgentAmount = sheets.reduce((acc, s) => acc + s.urgentAmount, 0)
+  
+  const firstSheet = sheets[0]
+  const hasSubscription = firstSheet?.hasSubscription || false
+  const subscriptionDiscount = firstSheet?.subscriptionDiscount || 0
+  const hasSterilization = firstSheet?.hasSterilization || false
+  
+  const subscriptionDiscountAmount = hasSubscription && subscriptionDiscount
+    ? (allSubtotal - allTotalDiscount + allUrgentAmount) * (subscriptionDiscount / 100)
+    : 0
+  
+  const sterilizationDiscountAmount = hasSterilization
+    ? (allSubtotal - allTotalDiscount + allUrgentAmount - subscriptionDiscountAmount) * 0.1
+    : 0
+
+  const finalTotal = allSheetsTotal
+
   return (
-    <div id="print-section" className="p-8 bg-white text-black">
-      {/* Header cu datele clientului */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-4">Fișă de Serviciu</h1>
-        <div>
-          <h2 className="font-semibold mb-2">Date Client</h2>
-          <p><strong>Nume:</strong> {lead.name}</p>
-          {lead.email && <p><strong>Email:</strong> {lead.email}</p>}
-          {lead.phone && <p><strong>Telefon:</strong> {lead.phone}</p>}
+    <div id="print-section" className="p-1 bg-white text-black" style={{ fontFamily: 'Arial, sans-serif', fontSize: '7px' }}>
+      {/* Header cu detalii client și furnizor */}
+      <div style={{ marginBottom: '10px' }}>
+        {/* Titlu și număr fișă */}
+        <div style={{ display: 'flex', gap: '80px', marginBottom: '5px' }}>
+          <span style={{ fontSize: '16px', fontWeight: 'bold' }}>FISA DE SERVICE</span>
+          <span style={{ fontSize: '16px', fontWeight: 'bold' }}>NR. {lead.leadId?.slice(-1) || '1'}</span>
+        </div>
+        
+        {/* Număr comandă */}
+        <div style={{ fontSize: '11px', fontStyle: 'italic', marginBottom: '10px' }}>
+          la comanda Nr.: {lead.leadId?.slice(-3) || '000'}
+        </div>
+        
+        {/* Detalii client și furnizor - 2 coloane */}
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          {/* Coloana stângă - Client */}
+          <div style={{ fontSize: '10px', lineHeight: '1.8' }}>
+            <div><strong>CLIENT:</strong>&emsp;&emsp;{lead.name?.toUpperCase() || '-'}</div>
+            <div><strong>MOB:</strong>&emsp;&emsp;&emsp;{lead.phone || '-'}</div>
+            <div><strong>EMAIL:</strong>&emsp;&emsp;{lead.email || '-'}</div>
+          </div>
+          
+          {/* Coloana dreapta - Furnizor */}
+          <div style={{ fontSize: '10px', lineHeight: '1.8', textAlign: 'left' }}>
+            <div><strong>FURNIZOR:</strong>&emsp;ASCUTZIT.RO SRL</div>
+            <div><strong>CUI:</strong>&emsp;&emsp;&emsp;&emsp;&nbsp;123456</div>
+            <div><strong>REG:</strong>&emsp;&emsp;&emsp;&emsp;J12 / 1234 / 1235</div>
+            <div><strong>ADRESA:</strong>&emsp;&nbsp;București, str.Bujorul Alb 49</div>
+          </div>
         </div>
       </div>
 
-      {/* Toate tăvițele */}
-      {sheets.map((sheet, sheetIndex) => {
-        const { quote, items, subtotal, totalDiscount, urgentAmount, total, hasSubscription, subscriptionDiscount, hasSterilization, sterilizationDiscountAmount, isCash, isCard } = sheet
-        
-        return (
-          <div key={quote.id} className={sheetIndex > 0 ? "mt-8 page-break-before" : "mb-6"}>
-            {/* Titlul tăviței */}
-            <h2 className="text-xl font-semibold mb-3">{quote.name}</h2>
+      {/* Tabel principal - fără coloanele DISC% și URG */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #000' }}>
+        <thead>
+          <tr>
+            <th style={headerStyle}>DENUMIRE</th>
+            <th style={headerStyle}>CANT.</th>
+            <th style={headerStyle}>SERVICIU</th>
+            <th style={headerStyle}>PIESE</th>
+            <th style={headerStyle}>QTY</th>
+            <th style={headerStyle}>DEPT</th>
+            <th style={headerStyle}>TECH</th>
+            <th style={headerStyle}>PREȚ</th>
+            <th style={headerStyle}>TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sheets.map((sheet) => {
+            // Separă serviciile și piesele
+            const serviceItems = sheet.items.filter(item => item.item_type === 'service')
+            const parts = sheet.items.filter(item => item.item_type === 'part')
 
-            {/* Tabel cu items */}
-            <div className="mb-4">
-              <table className="w-full border-collapse border border-gray-800">
-                <thead>
-                  <tr className="bg-gray-100">
-                    <th className="border border-gray-800 px-3 py-2 text-left">Poziție</th>
-                    <th className="border border-gray-800 px-3 py-2 text-center">Cant.</th>
-                    <th className="border border-gray-800 px-3 py-2 text-right">Preț unitar</th>
-                    <th className="border border-gray-800 px-3 py-2 text-right">Disc %</th>
-                    <th className="border border-gray-800 px-3 py-2 text-center">Urgent</th>
-                    <th className="border border-gray-800 px-3 py-2 text-right">Total linie</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, index) => {
-                    const disc = Math.min(100, Math.max(0, item.discount_pct))
-                    const base = item.qty * item.unit_price_snapshot
-                    const afterDisc = base * (1 - disc / 100)
-                    const lineTotal = item.urgent ? afterDisc * (1 + urgentMarkupPct / 100) : afterDisc
+            // Obține denumirea instrumentului din primul serviciu
+            let instrumentName = sheet.quote.name
+            const firstService = serviceItems[0]
+            if (firstService?.service_id && services.length > 0) {
+              const serviceDef = services.find((s: Service) => s.id === firstService.service_id)
+              if (serviceDef?.instrument) {
+                instrumentName = serviceDef.instrument
+              }
+            }
 
-                    return (
-                      <tr key={item.id || index}>
-                        <td className="border border-gray-800 px-3 py-2">{item.name_snapshot}</td>
-                        <td className="border border-gray-800 px-3 py-2 text-center">{item.qty}</td>
-                        <td className="border border-gray-800 px-3 py-2 text-right">
-                          {item.unit_price_snapshot.toFixed(2)} RON
-                        </td>
-                        <td className="border border-gray-800 px-3 py-2 text-right">
-                          {disc > 0 ? `${disc.toFixed(0)}%` : '-'}
-                        </td>
-                        <td className="border border-gray-800 px-3 py-2 text-center">
-                          {item.urgent ? '✓' : '-'}
-                        </td>
-                        <td className="border border-gray-800 px-3 py-2 text-right font-medium">
-                          {lineTotal.toFixed(2)} RON
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  {items.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="border border-gray-800 px-3 py-2 text-center text-gray-500">
-                        Nu există poziții
-                      </td>
+            return (
+              <React.Fragment key={sheet.quote.id}>
+                {/* Linia pentru instrument - background gri */}
+                <tr style={{ backgroundColor: instrumentRowBg }}>
+                  <td style={{ ...cellStyle, fontWeight: 'bold', backgroundColor: instrumentRowBg }}>{instrumentName}</td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}>1</td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                  <td style={{ ...cellStyle, backgroundColor: instrumentRowBg }}></td>
+                </tr>
+
+                {/* Servicii */}
+                {serviceItems.map((item, idx) => {
+                  const lineTotal = calculateItemTotal(item, urgentMarkupPct)
+                  return (
+                    <tr key={`svc-${item.id}-${idx}`}>
+                      <td style={cellStyle}></td>
+                      <td style={cellStyle}></td>
+                      <td style={cellStyle}>{item.name_snapshot}</td>
+                      <td style={cellStyle}></td>
+                      <td style={cellStyle}>{item.qty}</td>
+                      <td style={cellStyle}>{item.department || '-'}</td>
+                      <td style={cellStyle}>{item.technician || '-'}</td>
+                      <td style={cellStyle}>{item.unit_price_snapshot.toFixed(2)}</td>
+                      <td style={{ ...cellStyle, fontWeight: 'bold' }}>{lineTotal.toFixed(2)}</td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  )
+                })}
 
-            {/* Totaluri pentru această tăviță */}
-            <div className="mb-4">
-              <div className="max-w-md ml-auto">
-                <div className="flex justify-between py-2 border-b">
-                  <span>Subtotal</span>
-                  <span className="font-medium">{subtotal.toFixed(2)} RON</span>
-                </div>
-                <div className="flex justify-between py-2 border-b">
-                  <span>Discount total</span>
-                  <span className="font-medium">-{totalDiscount.toFixed(2)} RON</span>
-                </div>
-                <div className="flex justify-between py-2 border-b">
-                  <span>Urgent (+{urgentMarkupPct}% pe linii marcate)</span>
-                  <span className="font-medium">{urgentAmount.toFixed(2)} RON</span>
-                </div>
-                {hasSubscription && subscriptionDiscount && (
-                  <div className="flex justify-between py-2 border-b">
-                    <span>Abonament (-{subscriptionDiscount}%)</span>
-                    <span className="font-medium text-green-600">-{((subtotal - totalDiscount + urgentAmount) * (subscriptionDiscount / 100)).toFixed(2)} RON</span>
-                  </div>
-                )}
-                {hasSterilization && sterilizationDiscountAmount !== undefined && (
-                  <div className="flex justify-between py-2 border-b">
-                    <span>Sterilizare (-10%)</span>
-                    <span className="font-medium text-green-600">-{sterilizationDiscountAmount.toFixed(2)} RON</span>
-                  </div>
-                )}
-                <div className="flex justify-between py-3 border-t-2 border-gray-800 font-bold text-lg">
-                  <span>Total {quote.name}</span>
-                  <span>{total.toFixed(2)} RON</span>
-                </div>
-                {(isCash || isCard) && (
-                  <div className="mt-2 pt-2 border-t">
-                    <p className="text-sm">
-                      <strong>Metodă de plată:</strong> {isCash ? 'Cash' : 'Card'}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })}
+                {/* Piese - afișează "Schimb piese" în coloana SERVICIU */}
+                {parts.map((item, idx) => {
+                  const lineTotal = calculateItemTotal(item, urgentMarkupPct)
+                  return (
+                    <tr key={`part-${item.id}-${idx}`}>
+                      <td style={cellStyle}></td>
+                      <td style={cellStyle}></td>
+                      <td style={cellStyle}>Schimb piese</td>
+                      <td style={cellStyle}>{item.name_snapshot}</td>
+                      <td style={cellStyle}>{item.qty}</td>
+                      <td style={cellStyle}>{item.department || '-'}</td>
+                      <td style={cellStyle}>-</td>
+                      <td style={cellStyle}>{item.unit_price_snapshot.toFixed(2)}</td>
+                      <td style={{ ...cellStyle, fontWeight: 'bold' }}>{lineTotal.toFixed(2)}</td>
+                    </tr>
+                  )
+                })}
+              </React.Fragment>
+            )
+          })}
+        </tbody>
+      </table>
 
-      {/* Total general toate tăvițele */}
-      {sheets.length > 1 && (
-        <div className="mt-6 pt-4 border-t-2 border-gray-800">
-          <div className="max-w-md ml-auto">
-            <div className="flex justify-between py-2 font-bold text-lg">
-              <span>Total toate tăvițele</span>
-              <span>{allSheetsTotal.toFixed(2)} RON</span>
+      {/* Secțiune subtotaluri pe departamente - SUB TABEL */}
+      <div style={{ marginTop: '10px', fontSize: '9px' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>SUBTOTAL PE DEPARTAMENTE:</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
+          {Object.entries(departmentTotals).map(([dept, total]) => (
+            <div key={dept} style={{ display: 'flex', gap: '10px' }}>
+              <span style={{ fontWeight: 'bold' }}>{dept.toUpperCase()}:</span>
+              <span>{total.toFixed(2)} RON</span>
             </div>
-          </div>
+          ))}
         </div>
-      )}
+      </div>
 
+      {/* Secțiune discount-uri și taxe */}
+      <div style={{ marginTop: '10px', fontSize: '9px', borderTop: '1px solid #000', paddingTop: '5px' }}>
+        {/* Subtotal brut */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+          <span>Subtotal (toate instrumentele):</span>
+          <span style={{ fontWeight: 'bold' }}>{allSubtotal.toFixed(2)} RON</span>
+        </div>
+
+        {/* Discount per linii (dacă există) */}
+        {allTotalDiscount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <span>Discount linii:</span>
+            <span>-{allTotalDiscount.toFixed(2)} RON</span>
+          </div>
+        )}
+
+        {/* Taxe suplimentare (dacă există) */}
+        {allUrgentAmount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <span>TAXELE SUPLIMENTARE, RON:</span>
+            <span>+{allUrgentAmount.toFixed(2)} RON</span>
+          </div>
+        )}
+
+        {/* Abonament (dacă există) */}
+        {hasSubscription && subscriptionDiscount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <span>Abonament (-{subscriptionDiscount}%):</span>
+            <span>-{subscriptionDiscountAmount.toFixed(2)} RON</span>
+          </div>
+        )}
+
+        {/* Sterilizare (dacă există) */}
+        {hasSterilization && sterilizationDiscountAmount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+            <span>Sterilizare (-10%):</span>
+            <span>-{sterilizationDiscountAmount.toFixed(2)} RON</span>
+          </div>
+        )}
+
+        {/* TOTAL FINAL */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', paddingTop: '5px', borderTop: '2px solid #000', fontSize: '11px' }}>
+          <span style={{ fontWeight: 'bold' }}>TOTAL DE PLATĂ:</span>
+          <span style={{ fontWeight: 'bold' }}>{finalTotal.toFixed(2)} RON</span>
+        </div>
+
+        {/* Metoda de plată (dacă e bifată) */}
+        {(firstSheet?.isCash || firstSheet?.isCard) && (
+          <div style={{ marginTop: '5px', textAlign: 'center' }}>
+            <strong>Metodă plată:</strong> {firstSheet?.isCash ? 'Cash' : ''} {firstSheet?.isCard ? 'Card' : ''}
+          </div>
+        )}
+      </div>
+
+      {/* Comentarii */}
+      <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+        <div style={{ flex: 1, border: '1px solid #000', padding: '5px', minHeight: '50px' }}>
+          <div style={{ fontWeight: 'bold', fontSize: '8px', marginBottom: '5px' }}>COMENTARII CLIENT:</div>
+        </div>
+        <div style={{ flex: 1, border: '1px solid #000', padding: '5px', minHeight: '50px' }}>
+          <div style={{ fontWeight: 'bold', fontSize: '8px', marginBottom: '5px' }}>COMENTARII TEHNICIAN:</div>
+        </div>
+      </div>
     </div>
   )
 }
-

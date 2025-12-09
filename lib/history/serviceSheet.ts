@@ -149,8 +149,10 @@ export async function persistAndLogServiceSheet(params: {
     if (!isLocalId(it.id)) continue
 
     if (it.item_type === "service") {
-      // match by name (we used name_snapshot when adding locally)
-      const svcDef = services.find(s => s.name === it.name_snapshot)
+      // match by service_id first, then fallback to name
+      const svcDef = it.service_id 
+        ? services.find(s => s.id === it.service_id)
+        : services.find(s => s.name === it.name_snapshot)
       if (!svcDef) continue
       await addServiceItem(quoteId, svcDef, {
         qty: Number(it.qty ?? 1),
@@ -166,6 +168,7 @@ export async function persistAndLogServiceSheet(params: {
         discount_pct: Number(it.discount_pct ?? 0),
         urgent: !!it.urgent,
         department: it.department ?? null,
+        technician: it.technician ?? null,
       })
     }
   }

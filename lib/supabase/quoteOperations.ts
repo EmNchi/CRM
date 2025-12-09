@@ -151,6 +151,7 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
       discount_pct?: number;
       urgent?: boolean;
       department?: string | null;
+      technician?: string | null;
     }
   ) {
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -170,7 +171,7 @@ export async function listQuoteItems(quoteId: string): Promise<LeadQuoteItem[]> 
       discount_pct,
       urgent,
       department: (opts?.department ?? null) || null,
-      technician: null,   // must be null for parts
+      technician: (opts?.technician ?? null)?.toString().trim() || null,
       created_by: userRes.user.id,
     });
     if (error) throw error;
@@ -200,7 +201,7 @@ export async function updateItem(
     if (patch.unit_price_snapshot !== undefined) body.unit_price_snapshot = Math.max(0, Number(patch.unit_price_snapshot));
     if (patch.urgent !== undefined) body.urgent = !!patch.urgent;
   
-    // These are only valid for services; DB constraint will reject them for parts — that’s fine.
+    // Department and technician are now valid for both services and parts
     if (patch.department !== undefined) body.department = (patch.department ?? null)?.toString().trim() || null;
     if (patch.technician !== undefined) body.technician = (patch.technician ?? null)?.toString().trim() || null;
   

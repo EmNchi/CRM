@@ -36,8 +36,7 @@ function PrintViewData({
   allSheetsTotal, 
   urgentMarkupPct,
   hasSubscription,
-  subscriptionDiscount,
-  hasSterilization
+  subscriptionDiscount
 }: { 
   lead: Lead
   quotes: LeadQuote[]
@@ -45,7 +44,6 @@ function PrintViewData({
   urgentMarkupPct: number
   hasSubscription: boolean
   subscriptionDiscount: string
-  hasSterilization: boolean
 }) {
   const [sheetsData, setSheetsData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,12 +75,8 @@ function PrintViewData({
           const subscriptionDiscountAmount = hasSubscription && subscriptionDiscount 
             ? (subtotal - totalDiscount + urgentAmount) * (Number(subscriptionDiscount) / 100)
             : 0
-          
-          const sterilizationDiscountAmount = hasSterilization
-            ? (subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount) * 0.1
-            : 0
 
-          const total = subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount - sterilizationDiscountAmount
+          const total = subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount
 
           return {
             quote,
@@ -93,8 +87,6 @@ function PrintViewData({
             total,
             hasSubscription: hasSubscription && subscriptionDiscount ? true : false,
             subscriptionDiscount: hasSubscription && subscriptionDiscount ? Number(subscriptionDiscount) : undefined,
-            hasSterilization,
-            sterilizationDiscountAmount: hasSterilization ? sterilizationDiscountAmount : undefined,
             isCash: (quote as any).is_cash || false,
             isCard: (quote as any).is_card || false,
           }
@@ -106,7 +98,7 @@ function PrintViewData({
     }
 
     loadAllSheetsData()
-  }, [quotes, hasSubscription, subscriptionDiscount, hasSterilization, urgentMarkupPct])
+  }, [quotes, hasSubscription, subscriptionDiscount, urgentMarkupPct])
 
   if (loading) return null
 
@@ -152,9 +144,6 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
   // State pentru Buy Back
   const [buyBack, setBuyBack] = useState(false)
 
-  // State pentru Sterilizare
-  const [hasSterilization, setHasSterilization] = useState(false)
-
   // State pentru abonament
   const [hasSubscription, setHasSubscription] = useState(false)
   const [subscriptionDiscount, setSubscriptionDiscount] = useState<'5' | '10' | ''>('')
@@ -163,6 +152,7 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
 
   // Add-service form state
   const [svc, setSvc] = useState({
+    instrumentId: '',
     id: '',
     qty: '1',
     discount: '0',
@@ -170,6 +160,17 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
     technicianId: '',
     department: '' 
   })
+
+  // Extrage instrumentele unice din servicii
+  const instruments = useMemo(() => {
+    const instrumentSet = new Set<string>()
+    services.forEach(s => {
+      if (s.instrument && s.instrument.trim()) {
+        instrumentSet.add(s.instrument.trim())
+      }
+    })
+    return Array.from(instrumentSet).sort((a, b) => a.localeCompare(b, 'ro'))
+  }, [services])
 
   // Add-part form state
   const [part, setPart] = useState({
@@ -335,6 +336,15 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
           department: i.department ?? null,
           technician: i.technician ?? null,
         }));
+
+        // Pre-selectează instrumentul dacă există deja servicii în tăviță
+        const serviceItems = (qi ?? []).filter((item: any) => item.item_type === 'service')
+        if (serviceItems.length > 0 && serviceItems[0].service_id) {
+          const firstServiceDef = svcList.find(s => s.id === serviceItems[0].service_id)
+          if (firstServiceDef?.instrument) {
+            setSvc(prev => ({ ...prev, instrumentId: firstServiceDef.instrument! }))
+          }
+        }
       
         // Compute global total
         await recalcAllSheetsTotal(qs);
@@ -449,17 +459,10 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
     return baseForDiscount * (discountPct / 100)
   }, [hasSubscription, subscriptionDiscount, subtotal, totalDiscount, urgentAmount])
 
-  // Calcul discount sterilizare (10%)
-  const sterilizationDiscountAmount = useMemo(() => {
-    if (!hasSterilization) return 0
-    const baseForDiscount = subtotal - totalDiscount + urgentAmount - subscriptionDiscountAmount
-    return baseForDiscount * 0.1 // 10%
-  }, [hasSterilization, subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount])
-
   const total = useMemo(() => {
     const baseTotal = subtotal - totalDiscount + urgentAmount
-    return baseTotal - subscriptionDiscountAmount - sterilizationDiscountAmount
-  }, [subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount, sterilizationDiscountAmount]);
+    return baseTotal - subscriptionDiscountAmount
+  }, [subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount]);
 
   // ----- Add rows -----
   function onAddService() {
@@ -479,6 +482,7 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
       {
         id: tempId(),
         item_type: 'service',
+        service_id: svcDef.id,
         name_snapshot: svcDef.name,
         unit_price_snapshot: Number(svcDef.base_price),
         qty,
@@ -488,7 +492,8 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
         department: svc.department || null,
       } as unknown as LeadQuoteItem
     ])
-    setSvc({ id: '', qty: '1', discount: '0', urgent: false, technicianId: '', department:'' })
+    // Păstrăm instrumentul selectat pentru a adăuga mai multe servicii pentru același instrument
+    setSvc(prev => ({ ...prev, id: '', qty: '1', discount: '0', urgent: false, technicianId: '', department: '' }))
     setIsDirty(true)
   }
 
@@ -532,7 +537,15 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
   }
 
   function onDelete(id: string) {
-    setItems(prev => prev.filter(it => it.id !== id))
+    setItems(prev => {
+      const newItems = prev.filter(it => it.id !== id)
+      // Resetează instrumentul dacă nu mai există servicii
+      const remainingServices = newItems.filter(it => it.item_type === 'service')
+      if (remainingServices.length === 0) {
+        setSvc(p => ({ ...p, instrumentId: '' }))
+      }
+      return newItems
+    })
     setIsDirty(true)
   }
 
@@ -559,6 +572,20 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
         department: i.department ?? null,
         technician: i.technician ?? null,
       }));
+
+      // Pre-selectează instrumentul dacă există deja servicii în tăviță
+      const serviceItems = (qi ?? []).filter((item: any) => item.item_type === 'service')
+      if (serviceItems.length > 0 && serviceItems[0].service_id) {
+        const firstServiceDef = services.find(s => s.id === serviceItems[0].service_id)
+        if (firstServiceDef?.instrument) {
+          setSvc(prev => ({ ...prev, instrumentId: firstServiceDef.instrument! }))
+        } else {
+          setSvc(prev => ({ ...prev, instrumentId: '' }))
+        }
+      } else {
+        // Resetează instrumentul dacă nu există servicii
+        setSvc(prev => ({ ...prev, instrumentId: '' }))
+      }
     } finally {
       setLoading(false);
     }
@@ -579,13 +606,16 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
     }
   }
 
-  if (loading || !selectedQuote) return <Card className="p-4">Se încarcă…</Card>;
+  // Verifică dacă există servicii în tăvița curentă
+  const hasServicesInSheet = items.some(it => it.item_type === 'service')
+
+  if (loading || !selectedQuote) return <Card className="p-2">Se încarcă…</Card>;
 
   return (
-    <Card className="p-4 space-y-5">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col items-start gap-3">
-          <h3 className="font-medium">Fișa de serviciu</h3>
+    <Card className="p-0 space-y-4">
+      <div className="flex items-center justify-between px-3 pt-3">
+        <div className="flex flex-col items-start gap-2">
+          <h3 className="font-medium text-sm">Fișa de serviciu</h3>
           <div className="flex gap-3 items-center">
             <Label className="text-sm text-muted-foreground">Tăviță</Label>
             <select
@@ -607,242 +637,219 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
           {saving ? "Se salvează…" : "Salvează în Istoric"}
         </Button>
       </div>
-      {/* Add Service */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-        <div className="md:col-span-2">
-          <Label>Serviciu</Label>
-          <select
-            className="w-full h-9 rounded-md border px-2"
-            value={svc.id}
-            onChange={e => setSvc(s => ({ ...s, id: e.target.value }))}
-          >
-            <option value="">— selectează —</option>
-            {services.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name} — {s.base_price.toFixed(2)} RON
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <Label>Cant.</Label>
-          <Input
-            inputMode="numeric"
-            value={svc.qty}
-            onChange={e => setSvc(s => ({ ...s, qty: e.target.value }))}
-            placeholder="1"
-          />
-        </div>
-
-        <div>
-          <Label>Discount %</Label>
-          <Input
-            inputMode="decimal"
-            value={svc.discount}
-            onChange={e => setSvc(s => ({ ...s, discount: e.target.value }))}
-            placeholder="0"
-          />
-        </div>
-
-        <div className="flex items-end gap-2">
-          <Checkbox
-            id="svc-urgent"
-            checked={svc.urgent}
-            onCheckedChange={(c: any) => setSvc(s => ({ ...s, urgent: !!c }))}
-          />
-          <Label htmlFor="svc-urgent">Urgent (+{URGENT_MARKUP_PCT}%)</Label>
-        </div>
-
-        {/* Dept & Tech (service-only meta at add time) */}
-        <div className="md:col-span-3">
-          <Label>Departament (opțional)</Label>
-          <select
-            className="w-full h-9 rounded-md border px-2"
-            value={svc.department}
-            onChange={e => setSvc(s => ({ ...s, department: e.target.value }))}
-            disabled={pipeLoading}
-          >
-            <option value="">— selectează —</option>
-            {pipelines.map(name => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </div>
-        <div className="md:col-span-3">
-          <Label>Tehnician (opțional)</Label>
-          <select
-            className="w-full h-9 rounded-md border px-2"
-            value={svc.technicianId}
-            onChange={e => setSvc(s => ({ ...s, technicianId: e.target.value }))}
-          >
-            <option value="">— selectează tehnician —</option>
-            {technicians.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-end">
-          <Button onClick={onAddService} disabled={!svc.id}>
-            <Wrench className="h-4 w-4 mr-2" /> Adaugă serviciu
+      {/* Add Service - Redesigned */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg border border-blue-200 dark:border-blue-800 mx-2 p-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Adaugă Serviciu</span>
+          </div>
+          <Button size="sm" onClick={onAddService} disabled={!svc.id} className="h-7">
+            <Plus className="h-3 w-3 mr-1" /> Adaugă
           </Button>
+        </div>
+        
+        <div className="grid grid-cols-12 gap-3">
+          {/* Instrument - 3 cols */}
+          <div className="col-span-3">
+            <Label className="text-xs text-muted-foreground mb-1 block">Instrument</Label>
+            <select
+              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
+              value={svc.instrumentId}
+              onChange={e => setSvc(s => ({ ...s, instrumentId: e.target.value, id: '' }))}
+              disabled={hasServicesInSheet}
+              title={hasServicesInSheet ? "Instrumentul este blocat - există deja servicii în tăviță" : "Selectează instrument"}
+            >
+              <option value="">— selectează —</option>
+              {instruments.map(inst => (
+                <option key={inst} value={inst}>{inst}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Serviciu - 4 cols */}
+          <div className="col-span-4">
+            <Label className="text-xs text-muted-foreground mb-1 block">Serviciu</Label>
+            <select
+              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
+              value={svc.id}
+              onChange={e => setSvc(s => ({ ...s, id: e.target.value }))}
+              disabled={!svc.instrumentId}
+            >
+              <option value="">— selectează —</option>
+              {services
+                .filter(s => s.instrument === svc.instrumentId)
+                .map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} — {s.base_price.toFixed(2)} RON
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          {/* Cant - 1 col */}
+          <div className="col-span-1">
+            <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
+            <Input
+              className="h-8 text-sm text-center"
+              inputMode="numeric"
+              value={svc.qty}
+              onChange={e => setSvc(s => ({ ...s, qty: e.target.value }))}
+              placeholder="1"
+            />
+          </div>
+
+          {/* Disc - 1 col */}
+          <div className="col-span-1">
+            <Label className="text-xs text-muted-foreground mb-1 block">Disc%</Label>
+            <Input
+              className="h-8 text-sm text-center"
+              inputMode="decimal"
+              value={svc.discount}
+              onChange={e => setSvc(s => ({ ...s, discount: e.target.value }))}
+              placeholder="0"
+            />
+          </div>
+
+          {/* Urgent - 1 col */}
+          <div className="col-span-1 flex flex-col justify-end">
+            <div className="flex items-center gap-1 h-8">
+              <Checkbox
+                id="svc-urgent"
+                checked={svc.urgent}
+                onCheckedChange={(c: any) => setSvc(s => ({ ...s, urgent: !!c }))}
+              />
+              <Label htmlFor="svc-urgent" className="text-xs cursor-pointer">Urgent</Label>
+            </div>
+          </div>
+        </div>
+
+        {/* Second row - Departament și Tehnician */}
+        <div className="grid grid-cols-12 gap-3 mt-2">
+          <div className="col-span-4">
+            <Label className="text-xs text-muted-foreground mb-1 block">Departament</Label>
+            <select
+              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
+              value={svc.department}
+              onChange={e => setSvc(s => ({ ...s, department: e.target.value }))}
+              disabled={pipeLoading}
+            >
+              <option value="">— selectează —</option>
+              {pipelines.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+          <div className="col-span-4">
+            <Label className="text-xs text-muted-foreground mb-1 block">Tehnician</Label>
+            <select
+              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
+              value={svc.technicianId}
+              onChange={e => setSvc(s => ({ ...s, technicianId: e.target.value }))}
+            >
+              <option value="">— selectează —</option>
+              {technicians.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Add Part */}
-      <form className="grid grid-cols-1 md:grid-cols-6 gap-3" onSubmit={onAddPart}>
-      <div className="md:col-span-2">
-        <Label>Piesă</Label>
-        <select
-          className="w-full h-9 rounded-md border px-2"
-          value={part.id}
-          onChange={e => setPart(p => ({ ...p, id: e.target.value, overridePrice: '' }))}
-        >
-          <option value="">— selectează piesă —</option>
-          {parts.map(p => (
-            <option key={p.id} value={p.id}>
-              {p.name} — {p.base_price.toFixed(2)} RON
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-          <Label>Preț unitar</Label>
-          <Input
-            inputMode="decimal"
-            value={part.overridePrice}
-            onChange={e => setPart(p => ({ ...p, overridePrice: e.target.value }))}
-            placeholder="lasă gol pt. preț catalog"
-          />
-        </div>
-        <div>
-          <Label>Cant.</Label>
-          <Input
-            inputMode="numeric"
-            value={part.qty}
-            onChange={e => setPart(p => ({ ...p, qty: e.target.value }))}
-            placeholder="1"
-          />
-        </div>
-        <div>
-          <Label>Discount %</Label>
-          <Input
-            inputMode="decimal"
-            value={part.discount}
-            onChange={e => setPart(p => ({ ...p, discount: e.target.value }))}
-            placeholder="0"
-          />
-        </div>
-        <div className="flex items-end gap-2">
-          <Checkbox
-            id="part-urgent"
-            checked={part.urgent}
-            onCheckedChange={(c: any) => setPart(p => ({ ...p, urgent: !!c }))}
-          />
-          <Label htmlFor="part-urgent">Urgent (+{URGENT_MARKUP_PCT}%)</Label>
-        </div>
-        <div className="flex items-end">
-          <Button type="submit">
-            <Plus className="h-4 w-4 mr-2" /> Adaugă piesă
+      {/* Add Part - Redesigned */}
+      <form onSubmit={onAddPart} className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 rounded-lg border border-amber-200 dark:border-amber-800 mx-2 p-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Plus className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <span className="text-sm font-medium text-amber-900 dark:text-amber-100">Adaugă Piesă</span>
+          </div>
+          <Button type="submit" size="sm" className="h-7" disabled={!part.id}>
+            <Plus className="h-3 w-3 mr-1" /> Adaugă
           </Button>
+        </div>
+        
+        <div className="grid grid-cols-12 gap-3">
+          {/* Piesă - 5 cols */}
+          <div className="col-span-5">
+            <Label className="text-xs text-muted-foreground mb-1 block">Piesă</Label>
+            <select
+              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
+              value={part.id}
+              onChange={e => setPart(p => ({ ...p, id: e.target.value, overridePrice: '' }))}
+            >
+              <option value="">— selectează —</option>
+              {parts.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} — {p.base_price.toFixed(2)} RON
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Preț - 2 cols */}
+          <div className="col-span-2">
+            <Label className="text-xs text-muted-foreground mb-1 block">Preț</Label>
+            <Input
+              className="h-8 text-sm"
+              inputMode="decimal"
+              value={part.overridePrice}
+              onChange={e => setPart(p => ({ ...p, overridePrice: e.target.value }))}
+              placeholder="catalog"
+            />
+          </div>
+
+          {/* Cant - 1 col */}
+          <div className="col-span-1">
+            <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
+            <Input
+              className="h-8 text-sm text-center"
+              inputMode="numeric"
+              value={part.qty}
+              onChange={e => setPart(p => ({ ...p, qty: e.target.value }))}
+              placeholder="1"
+            />
+          </div>
+
+          {/* Disc - 1 col */}
+          <div className="col-span-1">
+            <Label className="text-xs text-muted-foreground mb-1 block">Disc%</Label>
+            <Input
+              className="h-8 text-sm text-center"
+              inputMode="decimal"
+              value={part.discount}
+              onChange={e => setPart(p => ({ ...p, discount: e.target.value }))}
+              placeholder="0"
+            />
+          </div>
+
+          {/* Urgent - 2 cols */}
+          <div className="col-span-2 flex flex-col justify-end">
+            <div className="flex items-center gap-1 h-8">
+              <Checkbox
+                id="part-urgent"
+                checked={part.urgent}
+                onCheckedChange={(c: any) => setPart(p => ({ ...p, urgent: !!c }))}
+              />
+              <Label htmlFor="part-urgent" className="text-xs cursor-pointer">Urgent (+{URGENT_MARKUP_PCT}%)</Label>
+            </div>
+          </div>
         </div>
       </form>
 
       {/* Items Table */}
-      <Card className="p-0">
-        <Table>
+      <Card className="p-0 mx-2 overflow-hidden">
+        <Table className="text-sm">
           <TableHeader>
-            <TableRow>
-              <TableHead>Poziție</TableHead>
-              <TableHead className="w-28">Cant.</TableHead>
-              <TableHead className="w-36">Preț unitar</TableHead>
-              <TableHead className="w-28">Disc %</TableHead>
-              <TableHead className="w-24">Urgent</TableHead>
-              <TableHead className="w-40">Departament</TableHead>
-              <TableHead className="w-40">Technician</TableHead>
-              <TableHead className="w-36 text-right">Total linie</TableHead>
-              <TableHead className="w-12 text-right"></TableHead>
-            </TableRow>
-            <TableRow>
-              <TableHead colSpan={9} className="bg-muted/50">
-                <div className="flex items-center gap-4 py-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="subscription"
-                      checked={hasSubscription}
-                      onCheckedChange={(c: any) => {
-                        setHasSubscription(!!c)
-                        if (!c) setSubscriptionDiscount('')
-                      }}
-                    />
-                    <Label htmlFor="subscription" className="text-sm font-medium cursor-pointer">
-                      Abonament
-                    </Label>
-                    {hasSubscription && (
-                      <select
-                        className="ml-2 h-8 rounded-md border px-2 text-sm"
-                        value={subscriptionDiscount}
-                        onChange={(e) => setSubscriptionDiscount(e.target.value as '5' | '10' | '')}
-                      >
-                        <option value="">Selectează discount</option>
-                        <option value="5">-5%</option>
-                        <option value="10">-10%</option>
-                      </select>
-                    )}
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="payment-cash"
-                      checked={isCash}
-                      onCheckedChange={(c: any) => {
-                        setIsCash(!!c)
-                        if (!!c) setIsCard(false)
-                        setIsDirty(true) // activeaza butonul de salvare
-                      }}
-                    />
-                    <Label htmlFor="payment-cash" className="text-sm font-medium cursor-pointer">
-                      Cash
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="payment-card"
-                      checked={isCard}
-                      onCheckedChange={(c: any) => {
-                        setIsCard(!!c)
-                        if (!!c) setIsCash(false)
-                        setIsDirty(true) // activeaza butonul de salvare
-                      }}
-                    />
-                    <Label htmlFor="payment-card" className="text-sm font-medium cursor-pointer">
-                      Card
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="buy-back"
-                      checked={buyBack}
-                      onCheckedChange={(c: any) => setBuyBack(!!c)}
-                    />
-                    <Label htmlFor="buy-back" className="text-sm font-medium cursor-pointer">
-                      Buy back
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="sterilization"
-                      checked={hasSterilization}
-                      onCheckedChange={(c: any) => setHasSterilization(!!c)}
-                    />
-                    <Label htmlFor="sterilization" className="text-sm font-medium cursor-pointer">
-                      Sterilizare (-10%)
-                    </Label>
-                  </div>
-                </div>
-              </TableHead>
+            <TableRow className="bg-muted/30">
+              <TableHead className="w-24 text-xs font-semibold">Instrument</TableHead>
+              <TableHead className="text-xs font-semibold">Serviciu</TableHead>
+              <TableHead className="text-xs font-semibold">Piesă</TableHead>
+              <TableHead className="w-16 text-xs font-semibold text-center">Cant.</TableHead>
+              <TableHead className="w-24 text-xs font-semibold text-center">Preț</TableHead>
+              <TableHead className="w-16 text-xs font-semibold text-center">Disc%</TableHead>
+              <TableHead className="w-16 text-xs font-semibold text-center">Urgent</TableHead>
+              <TableHead className="w-28 text-xs font-semibold">Departament</TableHead>
+              <TableHead className="w-28 text-xs font-semibold">Tehnician</TableHead>
+              <TableHead className="w-24 text-xs font-semibold text-right">Total</TableHead>
+              <TableHead className="w-10"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -852,21 +859,38 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
               const afterDisc = base * (1 - disc / 100);
               const lineTotal = it.urgent ? afterDisc * (1 + URGENT_MARKUP_PCT / 100) : afterDisc;
 
+              // Găsește instrumentul pentru serviciu
+              const itemInstrument = it.item_type === 'service' && it.service_id
+                ? services.find(s => s.id === it.service_id)?.instrument || '—'
+                : '—'
+
+              // Determină ce să afișeze în coloanele Serviciu și Piesă
+              const serviceName = it.item_type === 'service' ? it.name_snapshot : 'Schimb piesă'
+              const partName = it.item_type === 'part' ? it.name_snapshot : null
+
               return (
-                <TableRow key={it.id}>
-                  <TableCell className="font-medium">
-                    {it.item_type === 'service' ? (
-                      it.name_snapshot
-                    ) : (
+                <TableRow key={it.id} className="hover:bg-muted/30">
+                  <TableCell className="text-xs text-muted-foreground py-2">
+                    {itemInstrument}
+                  </TableCell>
+                  <TableCell className="font-medium text-sm py-2">
+                    {serviceName}
+                  </TableCell>
+                  <TableCell className="text-sm py-2">
+                    {it.item_type === 'part' ? (
                       <Input
+                        className="h-7 text-sm"
                         value={it.name_snapshot}
                         onChange={e => onUpdateItem(it.id, { name_snapshot: e.target.value })}
                       />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-2">
                     <Input
+                      className="h-7 text-sm text-center w-14"
                       inputMode="numeric"
                       value={String(it.qty)}
                       onChange={e => {
@@ -876,11 +900,12 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
                     />
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-2 text-center">
                     {it.item_type === 'service' ? (
-                      <span>{it.unit_price_snapshot.toFixed(2)}</span>
+                      <span className="text-sm">{it.unit_price_snapshot.toFixed(2)}</span>
                     ) : (
                       <Input
+                        className="h-7 text-sm text-center w-20"
                         inputMode="decimal"
                         value={String(it.unit_price_snapshot)}
                         onChange={e => {
@@ -891,8 +916,9 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
                     )}
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-2">
                     <Input
+                      className="h-7 text-sm text-center w-12"
                       inputMode="decimal"
                       value={String(it.discount_pct)}
                       onChange={e => {
@@ -902,19 +928,16 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
                     />
                   </TableCell>
 
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        checked={!!it.urgent}
-                        onCheckedChange={(c: any) => onUpdateItem(it.id, { urgent: !!c })}
-                      />
-                      <span className="text-xs text-muted-foreground">+{URGENT_MARKUP_PCT}%</span>
-                    </div>
+                  <TableCell className="py-2 text-center">
+                    <Checkbox
+                      checked={!!it.urgent}
+                      onCheckedChange={(c: any) => onUpdateItem(it.id, { urgent: !!c })}
+                    />
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-2">
                     <select
-                      className="w-full h-9 rounded-md border px-2"
+                      className="w-full h-7 text-xs rounded border px-1 bg-white dark:bg-background"
                       value={it.department ?? ''}
                       onChange={e => onUpdateItem(it.id, { department: e.target.value || null })}
                       disabled={pipeLoading}
@@ -926,31 +949,27 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
                     </select>
                   </TableCell>
 
-                  <TableCell>
-                    {it.item_type === 'service' ? (
-                      <select
-                        className="w-full h-9 rounded-md border px-2"
-                        value={technicians.find(t => t.name === (it.technician ?? ''))?.id ?? ''}
-                        onChange={e => {
-                          const tech = technicians.find(t => t.id === e.target.value)
-                          onUpdateItem(it.id, { technician: tech ? tech.name : null })
-                        }}
-                      >
-                        <option value="">—</option>
-                        {technicians.map(t => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                  <TableCell className="py-2">
+                    <select
+                      className="w-full h-7 text-xs rounded border px-1 bg-white dark:bg-background"
+                      value={technicians.find(t => t.name === (it.technician ?? ''))?.id ?? ''}
+                      onChange={e => {
+                        const tech = technicians.find(t => t.id === e.target.value)
+                        onUpdateItem(it.id, { technician: tech ? tech.name : null })
+                      }}
+                    >
+                      <option value="">—</option>
+                      {technicians.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
                   </TableCell>
 
-                  <TableCell className="text-right font-medium">{lineTotal.toFixed(2)} RON</TableCell>
+                  <TableCell className="text-right font-medium text-sm py-2">{lineTotal.toFixed(2)}</TableCell>
 
-                  <TableCell className="text-right">
-                    <Button variant="destructive" size="icon" onClick={() => onDelete(it.id)}>
-                      <Trash2 className="h-4 w-4" />
+                  <TableCell className="py-2">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(it.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -959,7 +978,7 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
 
             {items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-muted-foreground">
+                <TableCell colSpan={11} className="text-muted-foreground text-center py-6 text-sm">
                   Nu există poziții încă.
                 </TableCell>
               </TableRow>
@@ -969,55 +988,114 @@ export default function Preturi({ leadId, lead }: { leadId: string; lead?: Lead 
       </Card>
 
       {/* Totals */}
-      <div className="ml-auto w-full md:w-[480px] space-y-1">
-        <div className="flex items-center justify-between">
-          <span>Subtotal</span>
-          <span>{subtotal.toFixed(2)} RON</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Discount total</span>
-          <span>-{totalDiscount.toFixed(2)} RON</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Urgent (+{URGENT_MARKUP_PCT}% pe linii marcate)</span>
-          <span>{urgentAmount.toFixed(2)} RON</span>
-        </div>
-        {hasSubscription && subscriptionDiscount && (
+      <div className="flex justify-end px-2">
+        <div className="w-full md:w-[320px] space-y-1 text-sm bg-muted/20 rounded-lg p-3">
           <div className="flex items-center justify-between">
-            <span>Abonament (-{subscriptionDiscount}%)</span>
-            <span className="text-green-600">-{subscriptionDiscountAmount.toFixed(2)} RON</span>
+            <span className="text-muted-foreground">Subtotal</span>
+            <span>{subtotal.toFixed(2)} RON</span>
           </div>
-        )}
-        {hasSterilization && (
           <div className="flex items-center justify-between">
-            <span>Sterilizare (-10%)</span>
-            <span className="text-green-600">-{sterilizationDiscountAmount.toFixed(2)} RON</span>
+            <span className="text-muted-foreground">Discount</span>
+            <span className="text-red-500">-{totalDiscount.toFixed(2)} RON</span>
           </div>
-        )}
-        <div className="h-px bg-border my-2" />
-        <div className="flex items-center justify-between text-lg font-semibold">
-          <span>Total</span>
-          <span>{total.toFixed(2)} RON</span>
-        </div>
-      </div>
-
-      <div className="ml-auto w-full md:w-[480px] mt-3 p-3 rounded-md border flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 ml-auto">
-          <span className="font-medium">Total toate tăvițele</span>
-          <span className="font-semibold">{allSheetsTotal.toFixed(2)} RON</span>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Urgent (+{URGENT_MARKUP_PCT}%)</span>
+            <span className="text-amber-600">+{urgentAmount.toFixed(2)} RON</span>
+          </div>
+          {hasSubscription && subscriptionDiscount && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Abonament (-{subscriptionDiscount}%)</span>
+              <span className="text-green-600">-{subscriptionDiscountAmount.toFixed(2)} RON</span>
+            </div>
+          )}
+          <div className="h-px bg-border my-2" />
+          <div className="flex items-center justify-between font-semibold text-base">
+            <span>Total</span>
+            <span>{total.toFixed(2)} RON</span>
+          </div>
+          
+          {/* Checkbox-uri pentru Abonament, Cash, Card, Buy back */}
+          <div className="space-y-2 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="subscription"
+                checked={hasSubscription}
+                onCheckedChange={(c: any) => {
+                  setHasSubscription(!!c)
+                  if (!c) setSubscriptionDiscount('')
+                }}
+              />
+              <Label htmlFor="subscription" className="text-xs font-medium cursor-pointer">Abonament</Label>
+              {hasSubscription && (
+                <select
+                  className="ml-auto h-6 rounded border px-1 text-xs"
+                  value={subscriptionDiscount}
+                  onChange={(e) => setSubscriptionDiscount(e.target.value as '5' | '10' | '')}
+                >
+                  <option value="">%</option>
+                  <option value="5">-5%</option>
+                  <option value="10">-10%</option>
+                </select>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                <Checkbox
+                  id="payment-cash"
+                  checked={isCash}
+                  onCheckedChange={(c: any) => {
+                    setIsCash(!!c)
+                    if (!!c) setIsCard(false)
+                    setIsDirty(true)
+                  }}
+                />
+                <Label htmlFor="payment-cash" className="text-xs font-medium cursor-pointer">Cash</Label>
+              </div>
+              
+              <div className="flex items-center gap-1.5">
+                <Checkbox
+                  id="payment-card"
+                  checked={isCard}
+                  onCheckedChange={(c: any) => {
+                    setIsCard(!!c)
+                    if (!!c) setIsCash(false)
+                    setIsDirty(true)
+                  }}
+                />
+                <Label htmlFor="payment-card" className="text-xs font-medium cursor-pointer">Card</Label>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="buy-back"
+                checked={buyBack}
+                onCheckedChange={(c: any) => setBuyBack(!!c)}
+              />
+              <Label htmlFor="buy-back" className="text-xs font-medium cursor-pointer">Buy back</Label>
+            </div>
+          </div>
+          
+          <div className="h-px bg-border my-2" />
+          <div className="flex items-center justify-between font-medium text-primary">
+            <span>Total toate tăvițele</span>
+            <span className="font-bold">{allSheetsTotal.toFixed(2)} RON</span>
+          </div>
         </div>
       </div>
 
       {/* PrintView - ascuns vizual, dar in DOM pentru print */}
-      {lead && <PrintViewData 
-        lead={lead}
-        quotes={quotes}
-        allSheetsTotal={allSheetsTotal}
-        urgentMarkupPct={URGENT_MARKUP_PCT}
-        hasSubscription={hasSubscription}
-        subscriptionDiscount={subscriptionDiscount}
-        hasSterilization={hasSterilization}
-      />}
+      <div className="pb-2">
+        {lead && <PrintViewData 
+          lead={lead}
+          quotes={quotes}
+          allSheetsTotal={allSheetsTotal}
+          urgentMarkupPct={URGENT_MARKUP_PCT}
+          hasSubscription={hasSubscription}
+          subscriptionDiscount={subscriptionDiscount}
+        />}
+      </div>
     </Card>
   );
 }
