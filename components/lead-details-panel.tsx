@@ -311,7 +311,7 @@ export function LeadDetailsPanel({
   }, [onClose])
   
   return (
-    <section ref={panelRef} className="mt-6 rounded-lg border bg-card shadow-sm">
+    <section ref={panelRef} className="h-full flex flex-col bg-card">
       <header className="border-b p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -575,7 +575,8 @@ export function LeadDetailsPanel({
         </div>
       </header>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
+      <div className="flex-1 overflow-y-auto">
+        <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
         {/* LEFT column — identity & meta */}
         <div className="space-y-3">
           {/* Contact Info - Collapsible */}
@@ -932,6 +933,7 @@ export function LeadDetailsPanel({
             </Tabs>
           </div>
         </div>
+      </div>
     </section>
   )
 }

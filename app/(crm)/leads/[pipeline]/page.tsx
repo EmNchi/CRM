@@ -611,12 +611,11 @@ export default function CRMPage() {
                     onClick={handleCloseModal}
                   />
                   
-                  {/* Panel de detalii - ocupă tot spațiul în afară de header și sidebar */}
+                  {/* Panel de detalii - ocupă tot spațiul vertical de sus până jos */}
                   <div 
-                    className="fixed right-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
+                    className="fixed right-0 top-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
                     style={{
-                      left: '200px',  // w-50 = 200px (50 * 4px)
-                      top: '73px'     // înălțimea header-ului (p-4 + text + mt-2 + buttons)
+                      left: '200px'  // w-50 = 200px (50 * 4px)
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >
