@@ -14,7 +14,6 @@ import {
   AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogFooter
 } from "@/components/ui/alert-dialog"
-import { getLeadTotalsBatch } from "@/lib/supabase/leadTotals"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog,
@@ -165,14 +164,40 @@ export function KanbanBoard({
     let cancelled = false
 
     const calculateStageTotals = async () => {
+      // Verifică dacă suntem în pipeline-ul Vanzari - dacă da, nu calculăm totaluri
+      const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
+      
+      // Stage-uri de exclus din Receptie
+      const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
+      const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+      
       const newTotals: Record<string, number> = {}
       const newLoadingStates: Record<string, boolean> = {}
-      const allLeadIds: string[] = []
+
+      // Dacă suntem în Vanzari, nu calculăm totaluri
+      if (isVanzariPipeline) {
+        stages.forEach(stage => {
+          newTotals[stage] = 0
+          newLoadingStates[stage] = false
+        })
+        setStageTotals(newTotals)
+        setLoadingTotals(newLoadingStates)
+        setLeadTotals({})
+        return
+      }
 
       // colecteaza toate lead-urile pentru batch request
       const stageLeadMap: Record<string, string[]> = {}
+      let hasAnyLeads = false
       
       for (const stage of stages) {
+        // Exclude stage-urile specificate din Receptie
+        if (isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())) {
+          newTotals[stage] = 0
+          newLoadingStates[stage] = false
+          continue
+        }
+        
         const stageLeads = getLeadsByStage(stage)
         if (stageLeads.length === 0) {
           newTotals[stage] = 0
@@ -180,40 +205,53 @@ export function KanbanBoard({
           continue
         }
 
+        hasAnyLeads = true
         newLoadingStates[stage] = true
-        const leadIds = stageLeads.map(lead => lead.id)
+        // Folosim leadId pentru leads normale, sau id pentru quotes
+        // Trebuie să folosim același ID atât pentru stageLeadMap, cât și pentru totalsMap
+        const leadIds = stageLeads.map(lead => {
+          if (lead.isQuote && lead.quoteId) {
+            return lead.id // Pentru quotes, folosim lead.id
+          }
+          return lead.leadId || lead.id // Pentru leads normale, folosim leadId (sau id dacă leadId nu există)
+        })
         stageLeadMap[stage] = leadIds
-        allLeadIds.push(...leadIds)
       }
 
-      if (allLeadIds.length === 0) {
-        setStageTotals({})
-        setLoadingTotals({})
+      if (!hasAnyLeads) {
+        setStageTotals(newTotals)
+        setLoadingTotals(newLoadingStates)
+        setLeadTotals({})
         return
       }
 
       try {
-        // Batch request pentru toate lead-urile simultan (single DB call)
-        const totalsMap = await getLeadTotalsBatch(allLeadIds)
+        // Calculează totalurile pe stage folosind câmpul 'total' din leads (pentru toate tipurile: lead, service_file, tray)
+        const totalsMap: Record<string, number> = {}
         
-        if (cancelled) return
-
-        // totalurile pe stage
         for (const stage of stages) {
-          const leadIds = stageLeadMap[stage]
-          if (!leadIds || leadIds.length === 0) {
-            newTotals[stage] = 0
-            newLoadingStates[stage] = false
+          // Exclude stage-urile specificate din Receptie
+          if (isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())) {
             continue
           }
-
-          const stageTotal = leadIds.reduce((sum, leadId) => {
-            return sum + (totalsMap[leadId] || 0)
-          }, 0)
+          
+          const stageLeads = getLeadsByStage(stage)
+          let stageTotal = 0
+          
+          stageLeads.forEach(lead => {
+            const leadAny = lead as any
+            // Pentru toate tipurile (lead, service_file, tray), folosim câmpul 'total' care vine de la getKanbanItems
+            if (leadAny.total) {
+              stageTotal += leadAny.total
+              totalsMap[lead.id] = leadAny.total
+            }
+          })
           
           newTotals[stage] = stageTotal
           newLoadingStates[stage] = false
         }
+        
+        if (cancelled) return
 
         if (!cancelled) {
           setStageTotals(newTotals)
@@ -225,7 +263,11 @@ export function KanbanBoard({
           console.error('Eroare la calcularea totalurilor:', error)
           // seteaza toate totalurile la 0 in caz de eroare
           stages.forEach(stage => {
-            newTotals[stage] = 0
+            if (isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())) {
+              newTotals[stage] = 0
+            } else {
+              newTotals[stage] = 0
+            }
             newLoadingStates[stage] = false
           })
           setStageTotals(newTotals)
@@ -241,7 +283,7 @@ export function KanbanBoard({
     return () => {
       cancelled = true
     }
-  }, [leadsByStage, stages, getLeadsByStage])
+  }, [leadsByStage, stages, getLeadsByStage, currentPipelineName])
 
   const handleDragStart = (leadId: string) => {
     setDraggedLead(leadId)
@@ -416,25 +458,38 @@ export function KanbanBoard({
                   </div>
                 </div>
 
-                {/* suma totala a stage-ului */}
-                <div className="text-right flex-shrink-0">
-                  {isLoading ? (
-                    <div className="space-y-1">
-                      <Skeleton className="h-4 w-16" />
-                      <Skeleton className="h-3 w-12" />
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-end">
-                      <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
-                        <TrendingUp className="h-3.5 w-3.5" />
-                        {total.toFixed(2)} RON
-                      </div>
-                      {total > 0 && (
-                        <span className="text-[10px] text-muted-foreground">Total</span>
+                {/* suma totala a stage-ului - ascunsă pentru Vânzări și stage-urile excluse din Receptie */}
+                {(() => {
+                  const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
+                  const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+                  const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
+                  const isExcludedStage = isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())
+                  
+                  if (isVanzariPipeline || isExcludedStage) {
+                    return null
+                  }
+                  
+                  return (
+                    <div className="text-right flex-shrink-0">
+                      {isLoading ? (
+                        <div className="space-y-1">
+                          <Skeleton className="h-4 w-16" />
+                          <Skeleton className="h-3 w-12" />
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-end">
+                          <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            {total.toFixed(2)} RON
+                          </div>
+                          {total > 0 && (
+                            <span className="text-[10px] text-muted-foreground">Total</span>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  )
+                })()}
 
                 {isOwner && (
                   <Button
@@ -491,6 +546,7 @@ export function KanbanBoard({
                       isSelected={selectedLeads.has(lead.id)}
                       onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
                       leadTotal={leadTotals[lead.id] || 0}
+                      pipelineName={currentPipelineName}
                     />
                     </div>
                   ))}

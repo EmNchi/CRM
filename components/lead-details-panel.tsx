@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { format } from "date-fns"
 import type { Lead } from "@/app/page" 
@@ -12,13 +12,170 @@ import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { PrintView } from '@/components/print-view'
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
-import DeConfirmat from "@/components/de-confirmat"
 import LeadMessenger from "@/components/lead-messenger"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
-import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, Maximize2, ChevronDown, ChevronRight, User, Building } from "lucide-react"
+import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, Maximize2, ChevronDown, ChevronRight, User, Building, Info, MapPin } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { uploadLeadImage, deleteLeadImage, listLeadImages, saveLeadImageReference, deleteLeadImageReference, type LeadImage } from "@/lib/supabase/imageOperations"
+import { useRole } from "@/hooks/useRole"
+import { useAuth } from "@/hooks/useAuth"
+import { 
+  listServiceFilesForLead, 
+  createServiceFile, 
+  listTraysForServiceFile,
+  listTrayItemsForTray,
+  type ServiceFile,
+  type TrayItem
+} from "@/lib/supabase/serviceFileOperations"
+
+// Tipuri pentru UI (alias-uri pentru claritate)
+type ServiceSheet = ServiceFile & { fisa_index?: number }
+type LeadQuote = Tray
+type LeadQuoteItem = TrayItem
+
+// Funcții wrapper pentru transformarea datelor
+const listServiceSheetsForLead = async (leadId: string): Promise<ServiceSheet[]> => {
+  const { data, error } = await listServiceFilesForLead(leadId)
+  if (error) {
+    console.error('Error loading service files:', error)
+    return []
+  }
+  // Transformă ServiceFile în ServiceSheet (adaugă fisa_index)
+  return (data || []).map((sf, index) => ({
+    ...sf,
+    fisa_index: index + 1,
+    id: sf.id,
+  })) as ServiceSheet[]
+}
+
+const createServiceSheet = async (leadId: string, name?: string): Promise<string> => {
+  // Generează un număr pentru fișă
+  const { data: existing } = await listServiceFilesForLead(leadId)
+  const nextNumber = `${(existing?.length || 0) + 1}`
+  
+  const serviceFileData = {
+    lead_id: leadId,
+    number: name || `Fisa ${nextNumber}`,
+    date: new Date().toISOString().split('T')[0],
+    status: 'noua' as const,
+    notes: null,
+  }
+  
+  const { data, error } = await createServiceFile(serviceFileData)
+  if (error || !data) {
+    console.error('Error creating service file:', error)
+    throw error || new Error('Failed to create service file')
+  }
+  
+  return data.id // Returnează fisa_id
+}
+
+const listTraysForServiceSheet = async (fisaId: string) => {
+  const { data, error } = await listTraysForServiceFile(fisaId)
+  if (error) {
+    console.error('Error loading trays:', error)
+    return []
+  }
+  return (data || []) as any[]
+}
+
+const listQuotesForLead = async (leadId: string) => {
+  // Trebuie să obținem toate fișele și apoi toate tăvițele
+  const serviceSheets = await listServiceSheetsForLead(leadId)
+  const allTrays: any[] = []
+  
+  for (const sheet of serviceSheets) {
+    const trays = await listTraysForServiceSheet(sheet.id)
+    allTrays.push(...trays)
+  }
+  
+  return allTrays
+}
+
+const listQuoteItems = async (
+  quoteId: string, 
+  services?: any[], 
+  instrumentPipelineMap?: Map<string, string | null>,
+  pipelineMap?: Map<string, string>
+): Promise<any[]> => {
+  const { data, error } = await listTrayItemsForTray(quoteId)
+  if (error) {
+    console.error('Error loading tray items:', error)
+    return []
+  }
+  
+  // Transformă TrayItem în LeadQuoteItem pentru UI
+  return (data || []).map((item: TrayItem) => {
+    // Parsează notes pentru a obține informații suplimentare
+    let notesData: any = {}
+    if (item.notes) {
+      try {
+        notesData = JSON.parse(item.notes)
+      } catch (e) {
+        // Notes nu este JSON, ignoră
+      }
+    }
+    
+    // Determină item_type
+    let item_type: 'service' | 'part' | null = notesData.item_type || null
+    if (!item_type) {
+      if (item.service_id) {
+        item_type = 'service'
+      } else if (notesData.name || !item.instrument_id) {
+        item_type = 'part'
+      }
+    }
+    
+    // Obține prețul
+    let price = notesData.price || 0
+    if (!price && item_type === 'service' && item.service_id && services) {
+      const service = services.find((s: any) => s.id === item.service_id)
+      price = service?.price || 0
+    }
+    
+    // Obține departamentul din instruments.pipeline
+    let department: string | null = null
+    let instrumentId = item.instrument_id
+    
+    // Pentru servicii, obține instrument_id din serviciu dacă nu există direct pe item
+    if (!instrumentId && item_type === 'service' && item.service_id && services) {
+      const service = services.find((s: any) => s.id === item.service_id)
+      if (service?.instrument_id) {
+        instrumentId = service.instrument_id
+      }
+    }
+    
+    // Obține pipeline-ul din instrument și apoi numele departamentului
+    if (instrumentId && instrumentPipelineMap && pipelineMap) {
+      const pipelineId = instrumentPipelineMap.get(instrumentId)
+      if (pipelineId) {
+        department = pipelineMap.get(pipelineId) || null
+      }
+    }
+    
+    return {
+      ...item,
+      item_type,
+      price: price || 0,
+      discount_pct: notesData.discount_pct || 0,
+      urgent: notesData.urgent || false,
+      name_snapshot: notesData.name_snapshot || notesData.name || '',
+      brand: notesData.brand || null,
+      serial_number: notesData.serial_number || null,
+      garantie: notesData.garantie || false,
+      pipeline_id: notesData.pipeline_id || null,
+      department, // Departament preluat din instruments.pipeline
+      qty: item.qty || 1,
+    }
+  })
+}
+type Technician = {
+  id: string // user_id din app_members
+  name: string
+}
+import { listServices } from "@/lib/supabase/serviceOperations"
+import { Plus } from "lucide-react"
 import { ImagePlus, X, Image as ImageIcon } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -49,6 +206,7 @@ export function LeadDetailsPanel({
   stages,
   pipelineSlug,
 }: LeadDetailsPanelProps) {
+  const supabase = supabaseBrowser()
   if (!lead) return null
 
   // verifica daca suntem in unul dintre pipeline-urile care arata checkbox-urile
@@ -64,12 +222,73 @@ export function LeadDetailsPanel({
     return pipelineSlug.toLowerCase().includes('curier')
   }, [pipelineSlug])
 
-  const supabase = supabaseBrowser()
-  const [section, setSection] = useState<"fisa" | "deconfirmat" | "istoric">("fisa")
+  // Verifică dacă suntem în pipeline-ul Vânzări
+  const isVanzariPipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    return pipelineSlug.toLowerCase().includes('vanzari') || pipelineSlug.toLowerCase().includes('sales')
+  }, [pipelineSlug])
+
+  // Verifică dacă suntem în pipeline-ul Reparații
+  const isReparatiiPipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    return pipelineSlug.toLowerCase().includes('reparatii') || pipelineSlug.toLowerCase().includes('repair')
+  }, [pipelineSlug])
+
+  // Obține rolul utilizatorului curent
+  const { role, loading: roleLoading } = useRole()
+  const { user } = useAuth()
+  const [isTechnician, setIsTechnician] = useState(false)
+  
+  // Verifică dacă utilizatorul există în app_members
+  useEffect(() => {
+    async function checkTechnician() {
+      if (!user?.id) {
+        setIsTechnician(false)
+        return
+      }
+      // Verifică dacă utilizatorul există în app_members
+      const { data } = await supabase
+        .from('app_members')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .single()
+      setIsTechnician(!!data)
+    }
+    checkTechnician()
+  }, [user])
+
+  // Verifică dacă utilizatorul este vânzător (nu tehnician)
+  const isVanzator = !isTechnician && (role === 'admin' || role === 'owner' || role === 'member')
+
+  const [section, setSection] = useState<"fisa" | "istoric">("fisa")
   const [stage, setStage] = useState(lead.stage)
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
   const panelRef = useRef<HTMLElement>(null)
+  
+  // State pentru fișe de serviciu
+  const [serviceSheets, setServiceSheets] = useState<ServiceSheet[]>([])
+  const [selectedFisaId, setSelectedFisaId] = useState<string | null>(null)
+  const [loadingSheets, setLoadingSheets] = useState(false)
+  
+  // State pentru modalul de detalii fișă
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false)
+  const [traysDetails, setTraysDetails] = useState<Array<{
+    tray: LeadQuote
+    items: LeadQuoteItem[]
+    subtotal: number
+    discount: number
+    urgent: number
+    subscriptionDiscount: number
+    subscriptionDiscountServices: number
+    subscriptionDiscountParts: number
+    subscriptionType: string | null
+    total: number
+  }>>([])
+  const [loadingDetails, setLoadingDetails] = useState(false)
+  const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [totalFisaSum, setTotalFisaSum] = useState<number | null>(null)
+  const [loadingTotalSum, setLoadingTotalSum] = useState(false)
 
   // memoizeaza functiile ca sa nu le recreez la fiecare render
   const tagClass = useCallback((c: TagColor) =>
@@ -125,6 +344,40 @@ export function LeadDetailsPanel({
 
   const allPipeNames = pipelines ?? []
 
+  // Helper pentru a obține leadId corect 
+  // Pentru service_files și quotes/trays, folosim leadId din relație
+  // Pentru leads normale, folosim id
+  const getLeadId = useCallback(() => {
+    const leadAny = lead as any
+    // Verifică dacă este service_file sau tray (au leadId din relație)
+    if (leadAny?.type === 'service_file' || leadAny?.type === 'tray') {
+      return leadAny.leadId || lead.id
+    }
+    // Pentru tray items (isQuote indică că este un tray)
+    if (leadAny?.isQuote && leadAny?.leadId) {
+      return leadAny.leadId
+    }
+    return lead.id
+  }, [lead])
+  
+  // Helper pentru a obține fisaId-ul corect pentru service_files
+  const getServiceFileId = useCallback(() => {
+    const leadAny = lead as any
+    if (leadAny?.type === 'service_file') {
+      return lead.id // Pentru service_file, id-ul cardului este fisaId
+    }
+    return null
+  }, [lead])
+  
+  // Helper pentru a obține trayId-ul corect pentru trays
+  const getTrayId = useCallback(() => {
+    const leadAny = lead as any
+    if (leadAny?.type === 'tray') {
+      return lead.id // Pentru tray, id-ul cardului este trayId
+    }
+    return null
+  }, [lead])
+
   const togglePipe = (name: string) =>
     setSelectedPipes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name])
 
@@ -151,7 +404,91 @@ export function LeadDetailsPanel({
 
   useEffect(() => {
     setStage(lead.stage)
-  }, [lead.id, lead.stage])
+  }, [getLeadId(), lead.stage])
+
+  // Funcție helper pentru încărcarea fișelor (folosită atât la inițializare cât și după creare)
+  const loadServiceSheets = useCallback(async (leadId: string) => {
+    try {
+      // Folosește direct listServiceSheetsForLead care returnează fișele
+      const sheets = await listServiceSheetsForLead(leadId)
+      console.log('Loaded service sheets:', sheets)
+      return sheets
+    } catch (error) {
+      console.error('Error loading service sheets:', error)
+      throw error
+    }
+  }, [])
+
+  // Încarcă fișele de serviciu pentru lead
+  useEffect(() => {
+    // Pentru quotes, folosim leadId în loc de id
+    const leadIdToUse = getLeadId()
+    if (!leadIdToUse) return
+    
+    const loadData = async () => {
+      setLoadingSheets(true)
+      try {
+        const sheets = await loadServiceSheets(leadIdToUse)
+        setServiceSheets(sheets)
+        
+        // Dacă este un service_file (vine din pipeline Curier), selectează fișa direct
+        const serviceFileId = getServiceFileId()
+        const trayId = getTrayId()
+        
+        if (serviceFileId) {
+          // Cardului service_file - selectează fișa corespunzătoare
+          const fisaFromCard = sheets.find(s => s.id === serviceFileId)
+          if (fisaFromCard) {
+            setSelectedFisaId(fisaFromCard.id)
+          } else if (sheets.length > 0) {
+            setSelectedFisaId(sheets[0].id)
+          }
+        } else if (trayId) {
+          // Dacă este un tray (vine din pipeline departament), găsește fișa care conține tăvița
+          // Caută în toate fișele pentru a găsi tăvița
+          for (const sheet of sheets) {
+            const trays = await listTraysForServiceSheet(sheet.id)
+            const foundTray = trays.find((t: any) => t.id === trayId)
+            if (foundTray) {
+              setSelectedFisaId(sheet.id)
+              break
+            }
+          }
+          // Dacă nu s-a găsit, selectează prima fișă
+          if (!selectedFisaId && sheets.length > 0) {
+            setSelectedFisaId(sheets[0].id)
+          }
+        } else if ((lead as any)?.isQuote && (lead as any)?.quoteId) {
+          // Dacă este un tray, găsește fișa care conține tăvița
+          const quoteId = (lead as any).quoteId
+          const allQuotes = await listQuotesForLead(leadIdToUse)
+          const quote = allQuotes.find(q => q.id === quoteId)
+          if (quote?.fisa_id) {
+            const fisaWithQuote = sheets.find(s => s.id === quote.fisa_id)
+            if (fisaWithQuote) {
+              setSelectedFisaId(fisaWithQuote.id)
+            } else if (sheets.length > 0) {
+              setSelectedFisaId(sheets[0].id)
+            }
+          } else if (sheets.length > 0) {
+            setSelectedFisaId(sheets[0].id)
+          }
+        } else {
+          // Selectează prima fișă dacă există și nu avem deja una selectată
+          if (sheets.length > 0 && !selectedFisaId) {
+            setSelectedFisaId(sheets[0].id)
+          }
+        }
+      } catch (error) {
+        console.error('Error loading service sheets:', error)
+        toast.error('Eroare la încărcarea fișelor')
+      } finally {
+        setLoadingSheets(false)
+      }
+    }
+    
+    loadData()
+  }, [getLeadId, getServiceFileId, getTrayId, (lead as any)?.isQuote, (lead as any)?.quoteId, (lead as any)?.type, loadServiceSheets, selectedFisaId])
 
   // incarca imaginile pentru lead
   useEffect(() => {
@@ -159,7 +496,7 @@ export function LeadDetailsPanel({
     
     const loadImages = async () => {
       try {
-        const loadedImages = await listLeadImages(lead.id)
+        const loadedImages = await listLeadImages(getLeadId())
         setImages(loadedImages)
       } catch (error) {
         console.error('Error loading images:', error)
@@ -168,6 +505,78 @@ export function LeadDetailsPanel({
     
     loadImages()
   }, [lead?.id])
+
+  // Încarcă tehnicienii
+  useEffect(() => {
+    const loadTechnicians = async () => {
+      try {
+        // Obține membrii din app_members pentru tehnicieni (folosim câmpul name)
+        const supabaseClient = supabaseBrowser()
+        const { data: membersData, error } = await supabaseClient
+          .from('app_members')
+          .select('user_id, name, email')
+          .order('created_at', { ascending: true })
+        
+        if (error) {
+          console.error('Error loading app_members:', error)
+          // Încearcă să încarce doar user_id și email dacă name nu există
+          try {
+            const { data: fallbackData } = await supabaseClient
+              .from('app_members')
+              .select('user_id, email')
+              .order('created_at', { ascending: true })
+            
+            if (fallbackData && fallbackData.length > 0) {
+              const techs: Technician[] = fallbackData.map((m: any) => {
+                let name = 'Necunoscut'
+                if (m.email) {
+                  name = m.email.split('@')[0]
+                }
+                return {
+                  id: m.user_id,
+                  name: name
+                }
+              })
+              techs.sort((a, b) => a.name.localeCompare(b.name))
+              setTechnicians(techs)
+              return
+            }
+          } catch (fallbackError) {
+            console.error('Error loading app_members with fallback:', fallbackError)
+          }
+          setTechnicians([])
+          return
+        }
+        
+        if (!membersData || membersData.length === 0) {
+          setTechnicians([])
+          return
+        }
+        
+        // Transformă membrii în tehnicieni folosind câmpul name
+        const techs: Technician[] = (membersData || []).map((m: any) => {
+          // Folosește câmpul name, cu fallback la email sau user_id
+          let name = m.name || m.Name || 'Necunoscut'
+          
+          if (name === 'Necunoscut' && m.email) {
+            name = m.email.split('@')[0]
+          }
+          
+          return {
+            id: m.user_id,
+            name: name
+          }
+        })
+        
+        // Sortează după nume
+        techs.sort((a, b) => a.name.localeCompare(b.name))
+        setTechnicians(techs)
+      } catch (error) {
+        console.error('Error loading technicians:', error)
+      }
+    }
+    loadTechnicians()
+  }, [])
 
   async function handleToggleTag(tagId: string) {
     if (!lead) return
@@ -198,7 +607,21 @@ export function LeadDetailsPanel({
   const handleStageChange = (newStage: string) => {
     setStage(newStage)                
   
-    onStageChange(lead.id, newStage)
+    onStageChange(getLeadId(), newStage)
+  }
+
+  // Funcție pentru gestionarea checkbox-ului "Nu raspunde"
+  const handleNuRaspundeChange = (checked: boolean) => {
+    setNuRaspunde(checked)
+    
+    // Dacă checkbox-ul este activat și suntem în pipeline-ul Vânzări
+    if (checked && isVanzariPipeline) {
+      // Verifică dacă stage-ul "NU RASPUNDE" există în lista de stages
+      const nuRaspundeStage = stages.find(stage => stage === 'NU RASPUNDE')
+      if (nuRaspundeStage) {
+        handleStageChange('NU RASPUNDE')
+      }
+    }
   }
 
   // functii pentru gestionarea imaginilor
@@ -226,8 +649,8 @@ export function LeadDetailsPanel({
     const toastId = toast.loading('Se încarcă imaginea...')
     
     try {
-      const { url, path } = await uploadLeadImage(lead.id, file)
-      const savedImage = await saveLeadImageReference(lead.id, url, path, file.name)
+      const { url, path } = await uploadLeadImage(getLeadId(), file)
+      const savedImage = await saveLeadImageReference(getLeadId(), url, path, file.name)
       setImages(prev => [savedImage, ...prev])
       toast.success('Imagine încărcată cu succes', { id: toastId })
     } catch (error: any) {
@@ -279,6 +702,286 @@ export function LeadDetailsPanel({
     const body = encodeURIComponent(`Va contactez in legatura cu comanda dvs facuta la Ascutzit.ro`)
     window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${email}&su=${subject}&body=${body}`, '_blank')
   }, [])
+
+  // Funcție pentru crearea unei fișe noi
+  const handleCreateServiceSheet = useCallback(async () => {
+    if (!lead?.id) {
+      console.warn('Cannot create service sheet: no lead ID')
+      return
+    }
+    
+    try {
+      setLoadingSheets(true)
+      console.log('Creating service sheet for lead:', getLeadId())
+      
+      const fisaId = await createServiceSheet(getLeadId())
+      console.log('Service sheet created with fisaId:', fisaId)
+      
+      // Reîncarcă fișele folosind funcția helper
+      const sheets = await loadServiceSheets(getLeadId())
+      console.log('Loaded service sheets:', sheets)
+      
+      setServiceSheets(sheets)
+      setSelectedFisaId(fisaId)
+      
+      // Verifică dacă fișa a fost adăugată în listă
+      const createdSheet = sheets.find(s => s.id === fisaId)
+      if (!createdSheet) {
+        console.warn('Created sheet not found in loaded sheets')
+      }
+      
+      toast.success('Fișă de serviciu creată cu succes')
+    } catch (error: any) {
+      console.error('Error creating service sheet:', error)
+      const errorMessage = error?.message || 'Te rog încearcă din nou'
+      
+      // Verifică dacă eroarea este legată de coloana lipsă
+      if (errorMessage.includes('fisa_id') || errorMessage.includes('column')) {
+        toast.error('Coloana fisa_id lipsește', {
+          description: 'Te rog adaugă coloana fisa_id (UUID, nullable) în tabelul service_files din Supabase'
+        })
+      } else {
+        toast.error('Eroare la crearea fișei', {
+          description: errorMessage
+        })
+      }
+    } finally {
+      setLoadingSheets(false)
+    }
+  }, [getLeadId, loadServiceSheets])
+
+  // Funcție pentru încărcarea detaliilor tăvițelor din fișă
+  const loadTraysDetails = useCallback(async (fisaId: string) => {
+    if (!fisaId) return
+    
+    setLoadingDetails(true)
+    try {
+      // Încarcă serviciile, instrumentele și pipeline-urile pentru a obține prețurile și departamentele
+      const supabaseClient = supabaseBrowser()
+      const [services, instrumentsResult, pipelinesResult] = await Promise.all([
+        listServices(),
+        supabaseClient.from('instruments').select('id,pipeline').then(({ data, error }) => {
+          if (error) {
+            console.error('Error loading instruments:', error)
+            return []
+          }
+          return data || []
+        }),
+        supabaseClient.from('pipelines').select('id,name').then(({ data, error }) => {
+          if (error) {
+            console.error('Error loading pipelines:', error)
+            return []
+          }
+          return data || []
+        })
+      ])
+      
+      // Creează un map pentru pipeline-uri (id -> name)
+      const pipelineMap = new Map(pipelinesResult.map((p: any) => [p.id, p.name]))
+      
+      // Creează un map pentru instrumente (id -> pipeline_id)
+      const instrumentPipelineMap = new Map(instrumentsResult.map((i: any) => [i.id, i.pipeline]))
+      
+      // Încarcă toate tăvițele din fișă
+      const trays = await listTraysForServiceSheet(fisaId)
+      
+      // Pentru fiecare tăviță, încarcă items-urile și calculează totalurile
+      // Folosim exact aceeași logică ca în preturi.tsx
+      const details = await Promise.all(
+        trays.map(async (tray) => {
+          const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap)
+          
+          // Exclude items-urile cu item_type: null (doar instrument, fără serviciu) din calculele de totaluri
+          const visibleItems = items.filter(it => it.item_type !== null)
+          
+          // Calculează totalurile folosind aceeași logică ca în preturi.tsx
+          const subtotal = visibleItems.reduce((acc, it) => acc + it.qty * it.price, 0)
+          
+          const totalDiscount = visibleItems.reduce(
+            (acc, it) => acc + it.qty * it.price * (Math.min(100, Math.max(0, it.discount_pct)) / 100),
+            0
+          )
+          
+          const urgentAmount = visibleItems.reduce((acc, it) => {
+            const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
+            return acc + (it.urgent ? afterDisc * (30 / 100) : 0) // 30% markup pentru urgent (URGENT_MARKUP_PCT)
+          }, 0)
+          
+          // Calculează reducerile pentru abonament (10% servicii, 5% piese) - exact ca în preturi.tsx PrintViewData
+          const subscriptionType = tray.subscription_type || null
+          
+          // Calculează totalul pentru servicii (afterDisc + urgent)
+          const servicesTotal = visibleItems
+            .filter(it => it.item_type === 'service')
+            .reduce((acc, it) => {
+              const base = it.qty * it.price
+              const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
+              const afterDisc = base - disc
+              const urgent = it.urgent ? afterDisc * (30 / 100) : 0
+              return acc + afterDisc + urgent
+            }, 0)
+          
+          // Calculează totalul pentru piese (afterDisc)
+          const partsTotal = visibleItems
+            .filter(it => it.item_type === 'part')
+            .reduce((acc, it) => {
+              const base = it.qty * it.price
+              const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
+              return acc + base - disc
+            }, 0)
+          
+          // Aplică reducerile pentru abonament
+          let subscriptionDiscount = 0
+          let subscriptionDiscountServices = 0
+          let subscriptionDiscountParts = 0
+          
+          if (subscriptionType === 'services' || subscriptionType === 'both') {
+            subscriptionDiscountServices = servicesTotal * 0.10
+            subscriptionDiscount += subscriptionDiscountServices
+          }
+          if (subscriptionType === 'parts' || subscriptionType === 'both') {
+            subscriptionDiscountParts = partsTotal * 0.05
+            subscriptionDiscount += subscriptionDiscountParts
+          }
+          
+          // Total folosind aceeași formulă ca în preturi.tsx: baseTotal - subscriptionDiscountAmount
+          const baseTotal = subtotal - totalDiscount + urgentAmount
+          const total = baseTotal - subscriptionDiscount
+          
+          return {
+            tray,
+            items,
+            subtotal,
+            discount: totalDiscount,
+            urgent: urgentAmount,
+            subscriptionDiscount,
+            subscriptionDiscountServices,
+            subscriptionDiscountParts,
+            subscriptionType,
+            total
+          }
+        })
+      )
+      
+      setTraysDetails(details)
+    } catch (error) {
+      console.error('Error loading trays details:', error)
+      toast.error('Eroare la încărcarea detaliilor')
+    } finally {
+      setLoadingDetails(false)
+    }
+  }, [])
+
+  // Funcție pentru calcularea sumei totale a tuturor tăvițelor din fișă
+  const calculateTotalFisaSum = useCallback(async (fisaId: string) => {
+    if (!fisaId) {
+      setTotalFisaSum(null)
+      return
+    }
+    
+    setLoadingTotalSum(true)
+    try {
+      // Încarcă serviciile, instrumentele și pipeline-urile
+      const supabaseClient = supabaseBrowser()
+      const [services, instrumentsResult, pipelinesResult] = await Promise.all([
+        listServices(),
+        supabaseClient.from('instruments').select('id,pipeline').then(({ data, error }) => {
+          if (error) {
+            console.error('Error loading instruments:', error)
+            return []
+          }
+          return data || []
+        }),
+        supabaseClient.from('pipelines').select('id,name').then(({ data, error }) => {
+          if (error) {
+            console.error('Error loading pipelines:', error)
+            return []
+          }
+          return data || []
+        })
+      ])
+      
+      // Creează un map pentru pipeline-uri (id -> name)
+      const pipelineMap = new Map(pipelinesResult.map((p: any) => [p.id, p.name]))
+      
+      // Creează un map pentru instrumente (id -> pipeline_id)
+      const instrumentPipelineMap = new Map(instrumentsResult.map((i: any) => [i.id, i.pipeline]))
+      
+      const trays = await listTraysForServiceSheet(fisaId)
+      
+      let totalSum = 0
+      
+      for (const tray of trays) {
+        const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap)
+        
+        // Exclude items-urile cu item_type: null (doar instrument, fără serviciu) din calculele de totaluri
+        const visibleItems = items.filter(it => it.item_type !== null)
+        
+        // Calculează totalurile folosind aceeași logică ca în loadTraysDetails
+        const subtotal = visibleItems.reduce((acc, it) => acc + it.qty * it.price, 0)
+        
+        const totalDiscount = visibleItems.reduce(
+          (acc, it) => acc + it.qty * it.price * (Math.min(100, Math.max(0, it.discount_pct)) / 100),
+          0
+        )
+        
+        const urgentAmount = visibleItems.reduce((acc, it) => {
+          const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
+          return acc + (it.urgent ? afterDisc * (30 / 100) : 0)
+        }, 0)
+        
+        const subscriptionType = tray.subscription_type || null
+        
+        const servicesTotal = visibleItems
+          .filter(it => it.item_type === 'service')
+          .reduce((acc, it) => {
+            const base = it.qty * it.price
+            const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
+            const afterDisc = base - disc
+            const urgent = it.urgent ? afterDisc * (30 / 100) : 0
+            return acc + afterDisc + urgent
+          }, 0)
+        
+        const partsTotal = visibleItems
+          .filter(it => it.item_type === 'part')
+          .reduce((acc, it) => {
+            const base = it.qty * it.price
+            const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
+            return acc + base - disc
+          }, 0)
+        
+        let subscriptionDiscount = 0
+        
+        if (subscriptionType === 'services' || subscriptionType === 'both') {
+          subscriptionDiscount += servicesTotal * 0.10
+        }
+        if (subscriptionType === 'parts' || subscriptionType === 'both') {
+          subscriptionDiscount += partsTotal * 0.05
+        }
+        
+        const baseTotal = subtotal - totalDiscount + urgentAmount
+        const total = baseTotal - subscriptionDiscount
+        
+        totalSum += total
+      }
+      
+      setTotalFisaSum(totalSum)
+    } catch (error) {
+      console.error('Error calculating total fisa sum:', error)
+      setTotalFisaSum(null)
+    } finally {
+      setLoadingTotalSum(false)
+    }
+  }, [])
+
+  // Calculează suma totală când se schimbă fișa selectată
+  useEffect(() => {
+    if (selectedFisaId) {
+      calculateTotalFisaSum(selectedFisaId)
+    } else {
+      setTotalFisaSum(null)
+    }
+  }, [selectedFisaId, calculateTotalFisaSum])
 
   // Blochează scroll-ul pe body când panelul este deschis
   useEffect(() => {
@@ -542,31 +1245,34 @@ export function LeadDetailsPanel({
                       <Checkbox
                         id="nu-raspunde"
                         checked={nuRaspunde}
-                        onCheckedChange={(c: any) => setNuRaspunde(!!c)}
+                        onCheckedChange={(c: any) => handleNuRaspundeChange(!!c)}
                       />
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setNuRaspunde(!nuRaspunde)}
+                        onClick={() => handleNuRaspundeChange(!nuRaspunde)}
                       >
                         Nu raspunde
                       </Button>
                     </div>
                     
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="no-deal"
-                        checked={noDeal}
-                        onCheckedChange={(c: any) => setNoDeal(!!c)}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setNoDeal(!noDeal)}
-                      >
-                        No deal
-                      </Button>
-                    </div>
+                    {/* "No deal" - doar pentru vânzători în pipeline-ul Vânzări */}
+                    {isVanzator && isVanzariPipeline && (
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="no-deal"
+                          checked={noDeal}
+                          onCheckedChange={(c: any) => setNoDeal(!!c)}
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setNoDeal(!noDeal)}
+                        >
+                          No deal
+                        </Button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -576,7 +1282,7 @@ export function LeadDetailsPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
         {/* LEFT column — identity & meta */}
         <div className="space-y-3">
           {/* Contact Info - Collapsible */}
@@ -591,99 +1297,124 @@ export function LeadDetailsPanel({
               </CollapsibleTrigger>
               
               <CollapsibleContent className="px-3 pb-3 space-y-3">
-                <div>
+          <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase">Nume</label>
                   <p className="text-sm font-medium">{lead.name}</p>
-                </div>
+          </div>
 
-                {lead.company && (
-                  <div>
+          {lead.company && (
+            <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase">Companie</label>
                     <p className="text-sm">{lead.company}</p>
-                  </div>
-                )}
+            </div>
+          )}
 
-                {lead.phone && (
-                  <div>
+          {lead.phone && (
+            <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase">Telefon</label>
                     <div className="flex items-center gap-2 group mt-1">
-                      <a
-                        href={`tel:${lead.phone}`}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          handlePhoneClick(lead.phone!)
-                        }}
+                <a
+                  href={`tel:${lead.phone}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    handlePhoneClick(lead.phone!)
+                  }}
                         className="flex-1 flex items-center gap-2 text-sm hover:text-primary transition-colors bg-background rounded px-2 py-1.5 border"
-                      >
+                >
                         <Phone className="h-3.5 w-3.5" />
-                        <span className="truncate">{lead.phone}</span>
-                      </a>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleCopy(lead.phone!, 'Telefon')}
-                        title="Copiază telefon"
-                      >
-                        {copiedField === 'Telefon' ? (
-                          <Check className="h-3.5 w-3.5 text-green-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                  <span className="truncate">{lead.phone}</span>
+                </a>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => handleCopy(lead.phone!, 'Telefon')}
+                  title="Copiază telefon"
+                >
+                  {copiedField === 'Telefon' ? (
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
 
-                {lead.email && (
-                  <div>
+          {lead.email && (
+            <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase">Email</label>
                     <div className="flex items-center gap-2 group mt-1">
-                      <a
-                        href={`mailto:${lead.email}`}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          handleEmailClick(lead.email!)
-                        }}
+                <a
+                  href={`mailto:${lead.email}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    handleEmailClick(lead.email!)
+                  }}
                         className="flex-1 flex items-center gap-2 text-sm hover:text-primary transition-colors bg-background rounded px-2 py-1.5 border truncate"
-                      >
+                >
                         <Mail className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span className="truncate">{lead.email}</span>
-                      </a>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                        onClick={() => handleCopy(lead.email!, 'Email')}
-                        title="Copiază email"
-                      >
-                        {copiedField === 'Email' ? (
-                          <Check className="h-3.5 w-3.5 text-green-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                  <span className="truncate">{lead.email}</span>
+                </a>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  onClick={() => handleCopy(lead.email!, 'Email')}
+                  title="Copiază email"
+                >
+                  {copiedField === 'Email' ? (
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
 
-                {lead.technician && (
-                  <div>
+          {(lead as any).address && (
+            <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase">Adresă</label>
+                    <div className="flex items-center gap-2 group mt-1">
+                <div className="flex-1 flex items-center gap-2 text-sm bg-background rounded px-2 py-1.5 border">
+                        <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">{(lead as any).address}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  onClick={() => handleCopy((lead as any).address, 'Adresă')}
+                  title="Copiază adresă"
+                >
+                  {copiedField === 'Adresă' ? (
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {lead.technician && (
+            <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase">Tehnician</label>
                     <p className="text-sm">{lead.technician}</p>
-                  </div>
-                )}
+            </div>
+          )}
 
-                {lead.notes && (
-                  <div>
+          {lead.notes && (
+            <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase">Notițe</label>
                     <p className="text-sm text-muted-foreground mt-1">{lead.notes}</p>
-                  </div>
-                )}
+            </div>
+          )}
 
                 <div className="grid grid-cols-2 gap-3 pt-2 border-t">
                   {lead?.createdAt && (
-                    <div>
+          <div>
                       <label className="text-xs font-medium text-muted-foreground uppercase">Creat</label>
                       <p className="text-xs">{format(lead.createdAt, "dd MMM yyyy")}</p>
                     </div>
@@ -711,18 +1442,18 @@ export function LeadDetailsPanel({
               </CollapsibleTrigger>
               
               <CollapsibleContent className="px-3 pb-3 space-y-3">
-                {/* buton pentru adaugare imagine */}
-                <div>
-                  <input
-                    type="file"
-                    id="image-upload"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                    disabled={uploading}
-                  />
-                  <label
-                    htmlFor="image-upload"
+              {/* buton pentru adaugare imagine */}
+              <div>
+                <input
+                  type="file"
+                  id="image-upload"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  disabled={uploading}
+                />
+                <label
+                  htmlFor="image-upload"
                     className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 cursor-pointer transition-all text-sm font-medium text-primary ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     {uploading ? (
@@ -732,149 +1463,150 @@ export function LeadDetailsPanel({
                       </>
                     ) : (
                       <>
-                        <ImagePlus className="h-4 w-4" />
+                  <ImagePlus className="h-4 w-4" />
                         <span>Instalează imagine</span>
                       </>
                     )}
-                  </label>
-                </div>
+                </label>
+              </div>
 
-                {/* Grid cu imaginile existente */}
-                {images.length > 0 && (
+              {/* Grid cu imaginile existente */}
+              {images.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    {images.map((image) => (
-                      <div key={image.id} className="relative group">
-                        <div 
-                          className="aspect-square rounded-lg overflow-hidden border border-border bg-muted cursor-pointer hover:ring-2 ring-primary transition-all"
-                          onClick={() => setLightboxImage(image.url)}
-                        >
-                          <img
-                            src={image.url}
-                            alt={image.filename}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                  {images.map((image) => (
+                    <div key={image.id} className="relative group">
+                      <div 
+                        className="aspect-square rounded-lg overflow-hidden border border-border bg-muted cursor-pointer hover:ring-2 ring-primary transition-all"
+                        onClick={() => setLightboxImage(image.url)}
+                      >
+                        <img
+                          src={image.url}
+                          alt={image.filename}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                             <Maximize2 className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                          </div>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleImageDelete(image.id, image.file_path)
-                          }}
-                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 shadow-lg border border-white/20"
-                          title="Șterge imagine"
-                        >
-                          <X className="h-4 w-4 text-white" strokeWidth={2.5} />
-                        </button>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleImageDelete(image.id, image.file_path)
+                        }}
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 shadow-lg border border-white/20"
+                        title="Șterge imagine"
+                      >
+                          <X className="h-4 w-4 text-white" strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-                {/* Lightbox pentru imagini */}
-                {lightboxImage && (
-                  <Dialog open={!!lightboxImage} onOpenChange={(open) => !open && setLightboxImage(null)}>
-                    <DialogContent className="max-w-4xl p-0">
-                      <img
-                        src={lightboxImage}
-                        alt="Preview"
-                        className="w-full h-auto max-h-[80vh] object-contain"
-                      />
-                    </DialogContent>
-                  </Dialog>
-                )}
+              {/* Lightbox pentru imagini */}
+              {lightboxImage && (
+                <Dialog open={!!lightboxImage} onOpenChange={(open) => !open && setLightboxImage(null)}>
+                  <DialogContent className="max-w-4xl p-0">
+                    <DialogTitle className="sr-only">Preview imagine</DialogTitle>
+                    <img
+                      src={lightboxImage}
+                      alt="Preview"
+                      className="w-full h-auto max-h-[80vh] object-contain"
+                    />
+                  </DialogContent>
+                </Dialog>
+              )}
 
-                {images.length === 0 && (
+              {images.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-6 text-muted-foreground border border-dashed rounded-lg">
                     <ImageIcon className="h-6 w-6 mb-2 opacity-50" />
                     <p className="text-xs">Nu există imagini</p>
-                  </div>
-                )}
+                </div>
+              )}
               </CollapsibleContent>
             </div>
           </Collapsible>
 
           {/* Acțiuni - Stage & Pipeline */}
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-            <div>
+              <div>
               <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">Schimbă Etapa</label>
-              <Select value={stage} onValueChange={handleStageChange}>
+            <Select value={stage} onValueChange={handleStageChange}>
                 <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {stages.map((stage) => (
-                    <SelectItem key={stage} value={stage}>{stage}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+              <SelectContent>
+                {stages.map((stage) => (
+                  <SelectItem key={stage} value={stage}>{stage}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
                 Mută în Pipeline
               </label>
-              <div className="flex items-center gap-2">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="h-8 text-xs">
                       {selectedPipes.length > 0 ? `Selectate: ${selectedPipes.length}` : "Alege"}
                       <ChevronsUpDown className="ml-1 h-3 w-3 opacity-60" />
-                    </Button>
-                  </DropdownMenuTrigger>
+                  </Button>
+                </DropdownMenuTrigger>
 
                   <DropdownMenuContent align="start" className="w-[220px] max-h-[280px] overflow-y-auto">
-                    <DropdownMenuCheckboxItem
-                      checked={selectedPipes.length === allPipeNames.length && allPipeNames.length > 0}
-                      onCheckedChange={(v) => (v ? pickAll() : clearAll())}
+                  <DropdownMenuCheckboxItem
+                    checked={selectedPipes.length === allPipeNames.length && allPipeNames.length > 0}
+                    onCheckedChange={(v) => (v ? pickAll() : clearAll())}
                       onSelect={(e) => e.preventDefault()}
-                    >
+                  >
                       Selectează toate
-                    </DropdownMenuCheckboxItem>
+                  </DropdownMenuCheckboxItem>
 
-                    <div className="my-1 h-px bg-border" />
+                  <div className="my-1 h-px bg-border" />
 
-                    {allPipeNames.map(name => (
-                      <DropdownMenuCheckboxItem
-                        key={name}
-                        checked={selectedPipes.includes(name)}
-                        onCheckedChange={() => togglePipe(name)}
+                  {allPipeNames.map(name => (
+                    <DropdownMenuCheckboxItem
+                      key={name}
+                      checked={selectedPipes.includes(name)}
+                      onCheckedChange={() => togglePipe(name)}
                         onSelect={(e) => e.preventDefault()}
-                      >
+                    >
                         <span className="truncate text-xs">{name}</span>
-                      </DropdownMenuCheckboxItem>
-                    ))}
+                    </DropdownMenuCheckboxItem>
+                  ))}
 
-                    {allPipeNames.length === 0 && (
-                      <div className="px-2 py-1 text-xs text-muted-foreground">
+                  {allPipeNames.length === 0 && (
+                    <div className="px-2 py-1 text-xs text-muted-foreground">
                         Nu există pipeline-uri.
-                      </div>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-                <Button
-                  size="sm"
+              <Button
+                size="sm"
                   className="h-8 text-xs"
-                  disabled={movingPipes || selectedPipes.length === 0}
-                  onClick={async () => {
-                    if (!lead?.id) return
-                    setMovingPipes(true)
-                    try {
-                      if (onBulkMoveToPipelines) {
-                        await onBulkMoveToPipelines(lead.id, selectedPipes)
-                      } else if (onMoveToPipeline) {
-                        for (const name of selectedPipes) {
-                          await onMoveToPipeline(lead.id, name)
-                        }
+                disabled={movingPipes || selectedPipes.length === 0}
+                onClick={async () => {
+                  if (!lead?.id) return
+                  setMovingPipes(true)
+                  try {
+                    if (onBulkMoveToPipelines) {
+                      await onBulkMoveToPipelines(getLeadId(), selectedPipes)
+                    } else if (onMoveToPipeline) {
+                      for (const name of selectedPipes) {
+                        await onMoveToPipeline(getLeadId(), name)
                       }
-                      setSelectedPipes([])
-                    } finally {
-                      setMovingPipes(false)
                     }
-                  }}
-                >
+                    setSelectedPipes([])
+                  } finally {
+                    setMovingPipes(false)
+                  }
+                }}
+              >
                   {movingPipes ? "Se mută…" : "Mută"}
-                </Button>
+              </Button>
               </div>
             </div>
           </div>
@@ -891,7 +1623,7 @@ export function LeadDetailsPanel({
               </CollapsibleTrigger>
               
               <CollapsibleContent className="px-3 pb-3">
-                <LeadMessenger leadId={lead.id} leadTechnician={lead.technician} />
+          <LeadMessenger leadId={getLeadId()} leadTechnician={lead.technician} />
               </CollapsibleContent>
             </div>
           </Collapsible>
@@ -900,17 +1632,12 @@ export function LeadDetailsPanel({
 
           {/* RIGHT — switchable content cu tabs */}
           <div className="min-w-0">
-            <Tabs value={section} onValueChange={(v) => setSection(v as "fisa" | "deconfirmat" | "istoric")} className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-4">
+            <Tabs value={section} onValueChange={(v) => setSection(v as "fisa" | "istoric")} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
                 <TabsTrigger value="fisa" className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
                   <span className="hidden sm:inline">Fișa de serviciu</span>
                   <span className="sm:hidden">Fișă</span>
-                </TabsTrigger>
-                <TabsTrigger value="deconfirmat" className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  <span className="hidden sm:inline">De confirmat</span>
-                  <span className="sm:hidden">Confirmat</span>
                 </TabsTrigger>
                 <TabsTrigger value="istoric" className="flex items-center gap-2">
                   <History className="h-4 w-4" />
@@ -919,21 +1646,347 @@ export function LeadDetailsPanel({
               </TabsList>
 
               <TabsContent value="fisa" className="mt-0">
-                <Preturi leadId={lead.id} lead={lead} />
-              </TabsContent>
-              <TabsContent value="deconfirmat" className="mt-0">
-                <DeConfirmat
-                  leadId={lead.id}
-                  onMoveStage={(s) => onStageChange(lead.id, s)}
-                />
+                {/* Selector de fișe de serviciu */}
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                      Selectează fișa de serviciu
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={selectedFisaId || ''}
+                        onValueChange={(value) => setSelectedFisaId(value)}
+                        disabled={loadingSheets}
+                      >
+                        <SelectTrigger className="w-full max-w-md">
+                          <SelectValue placeholder={loadingSheets ? "Se încarcă..." : "Selectează o fișă"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {serviceSheets.map((sheet) => {
+                            const createdDate = sheet.created_at 
+                              ? format(new Date(sheet.created_at), 'dd MMM yyyy')
+                              : '';
+                            const displayText = createdDate 
+                              ? `${sheet.number} - ${createdDate}`
+                              : sheet.number;
+                            return (
+                              <SelectItem key={sheet.id} value={sheet.id}>
+                                {displayText}
+                              </SelectItem>
+                            );
+                          })}
+                          {serviceSheets.length === 0 && !loadingSheets && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              Nu există fișe de serviciu
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      {/* Buton "Fișă nouă" - doar pentru vânzători în pipeline-ul Vânzări */}
+                      {isVanzator && isVanzariPipeline && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCreateServiceSheet}
+                          className="flex items-center gap-2"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Fișă nouă
+                        </Button>
+                      )}
+                      {selectedFisaId && (
+                        <div className="flex items-center gap-3">
+                          <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
+                            <DialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setDetailsModalOpen(true)
+                                  loadTraysDetails(selectedFisaId)
+                                }}
+                                className="flex items-center gap-2"
+                              >
+                                <Info className="h-5 w-5" />
+                                Detalii Fisa
+                              </Button>
+                            </DialogTrigger>
+                          <DialogContent 
+                            className="overflow-y-auto"
+                            style={{ 
+                              width: '95vw', 
+                              maxWidth: '3200px',
+                              height: '95vh',
+                              maxHeight: '95vh'
+                            }}
+                          >
+                            <DialogTitle className="sr-only">Detalii Fișă</DialogTitle>
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <h2 className="text-lg font-semibold">Detalii Fișă</h2>
+                              </div>
+                              
+                              {loadingDetails ? (
+                                <div className="flex items-center justify-center py-8">
+                                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                  <span className="ml-2 text-sm text-muted-foreground">Se încarcă...</span>
+                                </div>
+                              ) : traysDetails.length === 0 ? (
+                                <div className="text-center py-8 text-muted-foreground">
+                                  Nu există tăvițe în această fișă
+                                </div>
+                              ) : (
+                                <div className="space-y-6">
+                                  {traysDetails.map((detail, index) => {
+                                    // Filtrează items-urile vizibile (exclude item_type: null)
+                                    const visibleItems = detail.items.filter(item => item.item_type !== null)
+                                    
+                                    return (
+                                      <div key={detail.tray.id} className="border rounded-lg p-4">
+                                        <h3 className="font-medium mb-3">Tăviță {index + 1}: {detail.tray.name}</h3>
+                                        
+                                        {visibleItems.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">Nu există poziții în această tăviță</p>
+                                      ) : (
+                                        <>
+                                          <div className="overflow-x-auto">
+                                            <table className="w-full text-sm border-collapse min-w-full">
+                                              <thead>
+                                                <tr className="border-b bg-muted/50">
+                                                  <th className="text-left p-2 font-medium w-20">Tip</th>
+                                                  <th className="text-left p-2 font-medium min-w-[200px]">Nume</th>
+                                                  <th className="text-center p-2 font-medium w-16">Cant.</th>
+                                                  <th className="text-right p-2 font-medium w-24">Preț unitar</th>
+                                                  <th className="text-center p-2 font-medium w-16">Disc%</th>
+                                                  <th className="text-center p-2 font-medium w-20">Urgent</th>
+                                                  <th className="text-left p-2 font-medium w-28">Departament</th>
+                                                  <th className="text-left p-2 font-medium min-w-[120px]">Tehnician</th>
+                                                  <th className="text-left p-2 font-medium w-24">Brand</th>
+                                                  <th className="text-left p-2 font-medium w-32">Serial Number</th>
+                                                  <th className="text-center p-2 font-medium w-20">Garanție</th>
+                                                  <th className="text-right p-2 font-medium w-24">Total</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {visibleItems.map((item) => {
+                                                  const base = item.qty * item.price
+                                                  const disc = base * (Math.min(100, Math.max(0, item.discount_pct)) / 100)
+                                                  const afterDisc = base - disc
+                                                  const urgent = item.urgent ? afterDisc * 0.30 : 0
+                                                  const lineTotal = afterDisc + urgent
+                                                  
+                                                  return (
+                                                    <tr key={item.id} className="border-b">
+                                                      <td className="p-2">
+                                                        <span className={`px-2 py-1 rounded text-xs ${
+                                                          item.item_type === 'service' 
+                                                            ? 'bg-blue-100 text-blue-800' 
+                                                            : 'bg-amber-100 text-amber-800'
+                                                        }`}>
+                                                          {item.item_type === 'service' ? 'Serviciu' : 'Piesă'}
+                                                        </span>
+                                                      </td>
+                                                      <td className="p-2">{item.name_snapshot}</td>
+                                                      <td className="p-2 text-center">{item.qty}</td>
+                                                      <td className="p-2 text-right">{item.price.toFixed(2)}</td>
+                                                      <td className="p-2 text-center">{item.discount_pct.toFixed(0)}%</td>
+                                                      <td className="p-2 text-center">
+                                                        {item.urgent ? (
+                                                          <span className="text-amber-600 font-medium">Da</span>
+                                                        ) : (
+                                                          <span className="text-muted-foreground">—</span>
+                                                        )}
+                                                      </td>
+                                                      <td className="p-2">{item.department || '—'}</td>
+                                                      <td className="p-2">
+                                                        {item.technician_id 
+                                                          ? technicians.find(t => t.id === item.technician_id)?.name || '—'
+                                                          : '—'
+                                                        }
+                                                      </td>
+                                                      <td className="p-2">{item.brand || '—'}</td>
+                                                      <td className="p-2">{item.serial_number || '—'}</td>
+                                                      <td className="p-2 text-center">
+                                                        {item.garantie ? (
+                                                          <span className="text-green-600 font-medium">Da</span>
+                                                        ) : (
+                                                          <span className="text-muted-foreground">—</span>
+                                                        )}
+                                                      </td>
+                                                      <td className="p-2 text-right font-medium">{lineTotal.toFixed(2)}</td>
+                                                    </tr>
+                                                  )
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                          
+                                          <div className="mt-4 pt-4 border-t">
+                                            <div className="flex justify-end space-x-6 text-sm">
+                                              <div>
+                                                <span className="text-muted-foreground">Subtotal: </span>
+                                                <span className="font-medium">{detail.subtotal.toFixed(2)} RON</span>
+                                              </div>
+                                              <div>
+                                                <span className="text-muted-foreground">Discount: </span>
+                                                <span className="font-medium text-red-500">-{detail.discount.toFixed(2)} RON</span>
+                                              </div>
+                                              {detail.urgent > 0 && (
+                                                <div>
+                                                  <span className="text-muted-foreground">Urgent (+30%): </span>
+                                                  <span className="font-medium text-amber-600">+{detail.urgent.toFixed(2)} RON</span>
+                                                </div>
+                                              )}
+                                              {detail.subscriptionDiscount > 0 && (
+                                                <div className="flex flex-col items-end gap-1">
+                                                  {detail.subscriptionDiscountServices > 0 && (
+                                                    <div>
+                                                      <span className="text-muted-foreground">Abonament servicii (-10%): </span>
+                                                      <span className="font-medium text-green-600">-{detail.subscriptionDiscountServices.toFixed(2)} RON</span>
+                                                    </div>
+                                                  )}
+                                                  {detail.subscriptionDiscountParts > 0 && (
+                                                    <div>
+                                                      <span className="text-muted-foreground">Abonament piese (-5%): </span>
+                                                      <span className="font-medium text-green-600">-{detail.subscriptionDiscountParts.toFixed(2)} RON</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                              <div>
+                                                <span className="text-muted-foreground">Total: </span>
+                                                <span className="font-semibold text-lg">{detail.total.toFixed(2)} RON</span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </>
+                                      )}
+                                      </div>
+                                    )
+                                  })}
+                                  
+                                  {/* Total general pentru toate tăvițele */}
+                                  {traysDetails.length > 0 && (
+                                    <div className="mt-6 pt-4 border-t">
+                                      <div className="flex justify-end">
+                                        <div className="text-right space-y-1">
+                                          <div className="text-sm text-muted-foreground mb-2">Total toate tăvițele:</div>
+                                          {(() => {
+                                            // Calculează totalurile generale manual pentru a include corect reducerile pentru abonamente
+                                            const generalSubtotal = traysDetails.reduce((acc, d) => acc + d.subtotal, 0)
+                                            const generalDiscount = traysDetails.reduce((acc, d) => acc + d.discount, 0)
+                                            const generalUrgent = traysDetails.reduce((acc, d) => acc + d.urgent, 0)
+                                            const generalSubscriptionDiscountServices = traysDetails.reduce((acc, d) => acc + (d.subscriptionDiscountServices || 0), 0)
+                                            const generalSubscriptionDiscountParts = traysDetails.reduce((acc, d) => acc + (d.subscriptionDiscountParts || 0), 0)
+                                            const generalSubscriptionDiscount = generalSubscriptionDiscountServices + generalSubscriptionDiscountParts
+                                            
+                                            // Calculează totalul general: subtotal - discount + urgent - subscriptionDiscount
+                                            const generalTotal = generalSubtotal - generalDiscount + generalUrgent - generalSubscriptionDiscount
+                                            
+                                            return (
+                                              <div className="flex justify-end space-x-6 text-sm">
+                                                <div>
+                                                  <span className="text-muted-foreground">Subtotal: </span>
+                                                  <span className="font-medium">{generalSubtotal.toFixed(2)} RON</span>
+                                                </div>
+                                                <div>
+                                                  <span className="text-muted-foreground">Discount: </span>
+                                                  <span className="font-medium text-red-500">-{generalDiscount.toFixed(2)} RON</span>
+                                                </div>
+                                                {generalUrgent > 0 && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Urgent (+30%): </span>
+                                                    <span className="font-medium text-amber-600">+{generalUrgent.toFixed(2)} RON</span>
+                                                  </div>
+                                                )}
+                                                {generalSubscriptionDiscount > 0 && (
+                                                  <div className="flex flex-col items-end gap-1">
+                                                    {generalSubscriptionDiscountServices > 0 && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Abonament servicii (-10%): </span>
+                                                        <span className="font-medium text-green-600">-{generalSubscriptionDiscountServices.toFixed(2)} RON</span>
+                                                      </div>
+                                                    )}
+                                                    {generalSubscriptionDiscountParts > 0 && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Abonament piese (-5%): </span>
+                                                        <span className="font-medium text-green-600">-{generalSubscriptionDiscountParts.toFixed(2)} RON</span>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                )}
+                                                <div>
+                                                  <span className="text-muted-foreground">Total: </span>
+                                                  <span className="font-semibold text-lg">{generalTotal.toFixed(2)} RON</span>
+                                                </div>
+                                              </div>
+                                            )
+                                          })()}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                          {loadingTotalSum ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>Se calculează...</span>
+                            </div>
+                          ) : totalFisaSum !== null ? (
+                            <div className="text-sm font-semibold">
+                              <span className="text-muted-foreground">Suma totală: </span>
+                              <span className="text-lg">{totalFisaSum.toFixed(2)} RON</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Componenta Preturi cu fisaId selectată */}
+                {selectedFisaId ? (
+                  <Preturi 
+                    leadId={getLeadId()} 
+                    lead={lead} 
+                    fisaId={selectedFisaId}
+                    initialQuoteId={(lead as any)?.isQuote ? (lead as any)?.quoteId : getTrayId() || undefined}
+                    pipelineSlug={pipelineSlug}
+                  />
+                ) : serviceSheets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                    <p className="text-sm font-medium text-foreground mb-2">Nu există fișe de serviciu</p>
+                    <p className="text-xs text-muted-foreground mb-4">
+                      Creează o fișă nouă pentru a începe să adaugi servicii și piese
+                    </p>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleCreateServiceSheet}
+                      className="flex items-center gap-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Creează prima fișă
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center py-12">
+                    <p className="text-sm text-muted-foreground">Selectează o fișă de serviciu</p>
+                  </div>
+                )}
               </TabsContent>
               <TabsContent value="istoric" className="mt-0">
-                <LeadHistory leadId={lead.id} />
+                <LeadHistory leadId={getLeadId()} />
               </TabsContent>
             </Tabs>
           </div>
+          </div>
         </div>
-      </div>
     </section>
   )
 }
