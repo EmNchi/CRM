@@ -1,29 +1,346 @@
-ce am facut:
-am adaugat kanbanul si cardurile pentru pipeline ul saloane
-am schimbat din Tablita in tavita XD
-Am modificat leadurile (am adaugat gmailul+data+vechimea+suma totala, insigna pentru leaduri noi ce au vechimea mai putin de o zi) 
-Leadurile urgente vor fi mereu primilea
-Am adaugat Filtrari, sortari si cautare dupa Numele clientului
-Fisa de serviciu acm aparare ca overlay nu jos
-Am modificat UI ul
-Acum ledaurile din stage-urile In asteptare si De confirmat se afiseaza si pot fi manipulate in pipeline-ul receptie
-Fiecare lead are tagul deparatamentului respective
-Fiecare lead aflanduse in stage-urile confirmari, in asteptare, au acum timpul petrecut in acest stage
-Am adaugat tehnicianul
-Am imbunatatit UI [Taguri mai vizibile, Afisarea leadului]
-Am adaugat check boxurile CallBack, BuyBack, NuRaspunde, Nodeal [inca nu le-am adaugat si in baza de date inca]
-Am daugat metodele de plata Cash/Card [inca nu le-am adaugat si in baza de date inca]
-Am adaugat posibilitatea de a adauga imagini [inca nu le-am adaugat si in baza de date inca]
-Am adaugat Butonul de Print si Email{
-	la Print trebuie sa mai lucrez
-	Pentru email se deschide tab nou cu Gmail-ul adaugat automat si mesaj simplu
-}
-Am adaugat Abonamentele [inca nu le-am adaugat si in baza de date inca]
-Am adaugat Cheat-ul dintre Receptie-Tehnician [inca nu le-am adaugat si in baza de date inca/ Trebuie de revizuit]
-Am adaugat buton de Pin pentru lead, Acesta va fixa leadul pe primul loc daca este activat
-Am adaugat Selectarea multipla pentru leaduri si posibilitatea de a le muta in alt pipeline si stage
-Checkboxuri pentru curier, [Trebuiesc adaugte la baza de date si de vb cu Vlad mai in detaliat despre acest pipeline]
-Acum checkboxurie si tatistica pentru cash/card functioneaza
-Responsive pentru telefon dashboard
-Am optimizat codul astfel inca sa fie mai tine refreshuri
-Buton de adaugare lead nou din pipelineul vanzari
+Fluxul unui lead
+
+### ETAPA 1: Vanzari (Pipeline Vanzari)
+
+#### Acțiuni disponibile:
+
+- **Creare fișă de serviciu** (pentru a începe procesarea comenzii)
+- **Checkbox-uri speciale:**
+  - **"Nu raspunde"** → Mută automat în stage-ul "NU RASPUNDE"
+  - **"No deal"** → Marchează lead-ul ca neîncheiat
+  - **"Call back"** → Marchează pentru recontactare
+  - **"Office direct"** / **"Curier Trimis"** → Opțiuni de livrare
+
+---
+
+### ETAPA 2: Crearea Fișei de Serviciu
+
+#### Când se creează:
+- Din pipeline-ul **Vanzari** sau **Receptie**
+- Vânzătorul/operatorul creează o fișă de serviciu pentru lead
+
+#### Conținutul fișei:
+- **Tăvițe (Quotes)** - Una sau mai multe tăvițe
+- Fiecare tăviță poate conține:
+  - **Instrument** (obligatoriu pentru servicii)
+  - **Servicii** (legate de instrument)
+  - **Piese** (pentru reparații)
+  - **Tehnician** (atribuit pentru fiecare item)
+  - **Discount-uri** (procentual)
+  - **Urgent** (markup +30%)
+  - **Abonament** (reduceri: 10% servicii, 5% piese)
+
+---
+
+### ETAPA 3: Completarea Tăvițelor
+
+#### Proces:
+1. **Selectare instrument** (ex: MANDRINĂ MANICHIURĂ)
+   - Dacă instrumentul aparține departamentului **Reparatii**, se afișează câmpuri pentru:
+     - Brand
+     - Serial Number
+     - Garantie
+   - Dacă nu, aceste câmpuri sunt ascunse
+
+2. **Adăugare servicii**
+   - Se selectează serviciile disponibile pentru instrumentul ales
+   - Se setează discount-uri și urgent (opțional)
+   - Se atribuie tehnician (opțional)
+
+3. **Adăugare piese** (doar pentru pipeline-ul Reparatii)
+   - Se adaugă piese manual
+   - Se atribuie automat pipeline-ul "Reparatii"
+
+4. **Salvare în Istoric**
+   - Toate modificările se salvează în baza de date
+   - Se creează evenimente în istoric
+
+---
+
+### ETAPA 4: Trimiterea Tăvițelor în Departamente
+
+#### Când se trimite:
+- Din pipeline-ul **Curier** (butonul "Trimite tăvițele")
+- Se trimite toate tăvițele dintr-o fișă de serviciu
+
+#### Logica de determinare a pipeline-ului:
+1. Se colectează toate `instrument_id`-urile din items-urile tăviței
+2. Se încarcă instrumentele și se obține câmpul `pipeline` (UUID) pentru fiecare
+3. Se transformă UUID-urile în nume de pipeline folosind lista de pipeline-uri
+4. Se numără câte items aparțin fiecărui pipeline
+5. Se selectează pipeline-ul cu cele mai multe items
+
+#### Procesul de trimitere:
+- Fiecare tăviță se trimite în pipeline-ul departamentului determinat
+- Se adaugă în stage-ul **"Noua"** al pipeline-ului respectiv
+- Se creează o intrare în `pipeline_items` cu `type: 'tray'`
+
+#### Pipeline-uri posibile pentru tăvițe:
+- **Saloane** - pentru instrumente din departamentul Saloane
+- **Horeca** - pentru instrumente din departamentul Horeca
+- **Frizerii** - pentru instrumente din departamentul Frizerii
+- **Reparatii** - pentru instrumente din departamentul Reparatii sau pentru piese
+
+---
+
+### ETAPA 5: Procesarea în Pipeline-urile Departamentelor
+
+#### Stage-uri în pipeline-urile departamentelor:
+1. **Noua** - Tăvița primită, în așteptare
+2. **In Lucru** - Tăvița este procesată
+3. **In Asteptare** - Așteaptă acțiune (piese, confirmare, etc.)
+4. **De confirmat** - Așteaptă confirmare de la client
+5. **Finalizare** - Proces finalizat
+
+#### Fluxul în departamente:
+- **Tehnicianul** preia tăvița din stage-ul "Noua"
+- Mută tăvița în "In Lucru" când începe lucrul
+- Poate muta în "De confirmat" dacă are nevoie de confirmare
+- După confirmare, se mută înapoi în "In Lucru"
+- La finalizare, se mută în "Finalizare"
+
+---
+
+### ETAPA 6: Pipeline-ul Curier
+
+#### Când ajunge aici:
+- După finalizarea în departamente
+- Sau direct din Vanzari/Receptie dacă se bifează "Curier Trimis"
+
+#### Stage-uri:
+- **Noua** - Colet pregătit pentru expediere
+- **Colet ajuns** - Coletul a ajuns la destinație
+- **Curier retur** - Colet returnat
+- **Colet trimis** - Colet expediat
+- **Astept ridicarea** - Așteaptă ridicarea
+- **Ridic personal** - Ridicat personal
+
+#### Acțiuni:
+- **"Trimite tăvițele"** - Trimite toate tăvițele din fișă în pipeline-urile departamentelor
+- Se determină automat pipeline-ul pentru fiecare tăviță bazat pe instrumente
+
+---
+
+## 5. REGULI ȘI LOGICI SPECIALE
+
+### Mutare automată:
+- **"Nu raspunde"** în Vanzari → Mută automat în stage-ul "NU RASPUNDE"
+
+### Atribuire automată de tag-uri:
+- Când un lead este mutat într-un pipeline de departament (Saloane, Horeca, Frizerii, Reparatii), se atribuie automat tag-ul corespunzător
+
+### Pipeline pentru piese:
+- Piesele se atribuie automat pipeline-ului **"Reparatii"** când se adaugă
+
+### Pipeline pentru instrumente:
+- Instrumentele au un câmp `pipeline` (UUID) care determină în ce pipeline se trimite tăvița
+- Dacă instrumentul aparține departamentului "Reparatii", pipeline-ul este setat automat la "Reparatii"
+
+### Departamentul items-urilor:
+- Se preia din `instruments.pipeline` (transformat în nume de pipeline)
+- Pentru servicii, se obține `instrument_id` din serviciu
+- Pentru piese, se folosește `instrument_id` direct
+
+---
+
+## 6. STRUCTURA DATELOR
+
+### Lead
+- Informații de contact (nume, email, telefon, adresă)
+- Tag-uri (departamente, status)
+- Poate fi în mai multe pipeline-uri simultan
+
+### Service File (Fișă de serviciu)
+- Aparține unui lead
+- Conține una sau mai multe tăvițe
+- Status: noua, in_lucru, finalizata
+- Checkbox-uri: office_direct, curier_trimis
+
+### Tray (Tăviță)
+- Aparține unei fișe de serviciu
+- Conține items (servicii, piese, instrumente)
+- Poate fi trimisă în pipeline-uri departamente
+- Abonament: services, parts, both
+
+### Tray Item
+- Serviciu, piesă sau instrument
+- Conține: instrument_id, service_id, department_id, technician_id
+- Preț, discount, urgent, cantitate
+- Brand, serial_number, garantie (pentru Reparatii)
+
+---
+
+## 7. EVENIMENTE ȘI ISTORIC
+
+### Tipuri de evenimente:
+- **stage_change** - Schimbare de stage
+- **pipeline_move** - Mutare între pipeline-uri
+- **tag_added/removed** - Adăugare/eliminare tag
+- **service_sheet_created** - Creare fișă de serviciu
+- **tray_sent** - Trimitere tăviță în departament
+- **technician_assigned** - Atribuire tehnician
+
+### Istoricul:
+- Se păstrează în tabelul `items_events`
+- Tipuri: lead, service_file, tray
+- Include detalii despre modificări, mutări, atribuiri
+
+---
+
+## 8. FLUXUL TIPIC AL UNUI LEAD
+
+```
+1. CREARE LEAD
+   └─> Pipeline: Vanzari, Stage: Noua
+
+2. CONTACTARE CLIENT
+   ├─> Dacă răspunde → Continuă în Vanzari
+   └─> Dacă nu răspunde → Stage: NU RASPUNDE
+
+3. CREARE FIȘĂ DE SERVI CIU
+   └─> Se creează fișă cu tăvițe
+
+4. COMPLETARE TĂVIȚE
+   ├─> Selectare instrument
+   ├─> Adăugare servicii/piese
+   ├─> Atribuire tehnician
+   └─> Salvare în istoric
+
+5. TRIMITERE ÎN DEPARTAMENTE (din Curier)
+   ├─> Determinare pipeline bazat pe instrumente
+   ├─> Trimitere în pipeline-ul departamentului
+   └─> Stage: Noua în pipeline-ul departamentului
+
+6. PROCESARE ÎN DEPARTAMENT
+   ├─> Stage: In Lucru
+   ├─> Stage: De confirmat (dacă e nevoie)
+   └─> Stage: Finalizare
+
+7. LIVRARE (dacă e cazul)
+   └─> Pipeline: Curier
+       ├─> Colet trimis
+       └─> Colet ajuns
+```
+
+---
+
+## 9. PROCESE AUTOMATE
+
+Sistemul include mai multe procese automate care facilitează gestionarea lead-urilor și optimizarea workflow-ului:
+
+### 9.1. Atribuire Automată de Tehnician
+
+- **Tehnicianul se atribuie automat** pentru fiecare serviciu, piesă sau instrument adăugat într-o tăviță
+- Se folosește automat **user_id**-ul utilizatorului curent (din sesiunea curentă)
+- Dacă utilizatorul este autentificat, `technician_id` se setează automat la `currentUserTechnicianId`
+- Acest lucru permite urmărirea automată a responsabilității pentru fiecare item
+- Logica se aplică în:
+  - Adăugare servicii în tăviță
+  - Adăugare piese în tăviță
+  - Adăugare instrumente în tăviță
+  - Actualizare items existente (dacă nu au tehnician deja atribuit)
+
+### 9.2. Atribuire Automată de Departament
+
+- **Departamentul se atribuie automat** bazat pe:
+  - **Instrumentul selectat** - departamentul instrumentului se preia din `instruments.department_id`
+  - **Serviciul selectat** - dacă serviciul are `department_id`, se folosește acesta
+  - **Pipeline-ul instrumentului** - pentru determinarea departamentului la afișare, se folosește `instruments.pipeline` transformat în nume de departament
+- Logica de determinare:
+  1. Dacă item-ul are `instrument_id`, se caută departamentul instrumentului
+  2. Dacă item-ul este un serviciu cu `service_id`, se poate folosi `department_id` din serviciu
+  3. Pentru afișare în "Detalii Fisa", departamentul se derivează din `instruments.pipeline` (UUID transformat în nume)
+
+### 9.3. Atribuire Automată de Tag-uri de Departament
+
+- **Tag-urile de departament se atribuie automat** când un lead este mutat într-un pipeline de departament
+- Tag-urile disponibile: **Horeca**, **Saloane**, **Frizerii**, **Reparatii**
+- Logica:
+  - Când un lead este mutat în pipeline-ul "Horeca" → se atribuie tag-ul "Horeca"
+  - Când un lead este mutat în pipeline-ul "Saloane" → se atribuie tag-ul "Saloane"
+  - Similar pentru "Frizerii" și "Reparatii"
+  - **Un lead poate avea doar un singur tag de departament** - tag-urile vechi se elimină automat
+  - Tag-urile se creează automat dacă nu există în baza de date
+- Se aplică la:
+  - Crearea unui lead nou (dacă este creat direct într-un pipeline de departament)
+  - Mutarea unui lead într-un pipeline de departament
+
+### 9.4. Pipeline Automat pentru Piese
+
+- **Piesele se atribuie automat pipeline-ului "Reparatii"**
+- Când se adaugă o piesă într-o tăviță:
+  - Se setează automat `pipeline` la numele "Reparatii"
+  - Se setează `department_id` la departamentul "Reparatii"
+  - Nu este necesară selecție manuală de pipeline
+
+### 9.5. Pipeline Automat pentru Instrumente
+
+- **Pipeline-ul pentru instrumente se determină automat** bazat pe câmpul `pipeline` (UUID) din tabelul `instruments`
+- Fiecare instrument are un câmp `pipeline` care indică în ce pipeline de departament ar trebui să fie trimis
+- La trimiterea tăvițelor în departamente:
+  - Se analizează toate instrumentele din tăviță
+  - Se transformă UUID-urile pipeline-urilor în nume
+  - Se numără items-urile per pipeline
+  - Se selectează pipeline-ul cu cele mai multe items
+  - Tăvița se trimite automat în acel pipeline
+
+### 9.6. Creare Automată în Pipeline-ul "Vanzari"
+
+- **Lead-urile noi se creează automat în pipeline-ul "Vanzari"**
+- Se atribuie automat primul stage activ din pipeline-ul "Vanzari" (de obicei "Noua")
+- Se aplică automat tag-ul de departament bazat pe pipeline (dacă este un pipeline de departament)
+
+### 9.7. Stage Automat "Noua" la Trimitere Tăvițe
+
+- **Când se trimite o tăviță în departamente**, se atribuie automat stage-ul "Noua"
+- Dacă stage-ul "Noua" nu există în pipeline-ul țintă, se folosește primul stage activ din pipeline
+- Acest lucru asigură că tăvițele ajung întotdeauna într-un stage valid
+
+### 9.8. Mutare Automată în Stage "NU RASPUNDE"
+
+- **Când se bifează checkbox-ul "Nu raspunde"** în pipeline-ul "Vanzari":
+  - Lead-ul se mută automat în stage-ul "NU RASPUNDE"
+  - Se aplică doar dacă lead-ul se află în pipeline-ul "Vanzari"
+  - Stage-ul "NU RASPUNDE" trebuie să existe în pipeline-ul "Vanzari"
+
+
+### 9.10. Determinare Automată a Pipeline-ului pentru Tăvițe
+
+- **La trimiterea tăvițelor** (butonul "Trimite tăvițele" din pipeline-ul Curier):
+  1. Se colectează toate `instrument_id`-urile din items-urile tăviței
+  2. Se încarcă instrumentele și se obține câmpul `pipeline` (UUID) pentru fiecare
+  3. Se transformă UUID-urile în nume de pipeline folosind lista de pipeline-uri disponibile
+  4. Se numără câte items aparțin fiecărui pipeline
+  5. Se selectează pipeline-ul cu cele mai multe items
+  6. Tăvița se trimite automat în pipeline-ul determinat, în stage-ul "Noua"
+
+### 9.11. Pipeline Automat pentru Instrumente din Departamentul "Reparatii"
+
+- **Dacă un instrument aparține departamentului "Reparatii"** (determinat prin `department_id`):
+  - Se setează automat `pipeline` la "Reparatii" când se adaugă servicii
+  - Se verifică atât `instrument.department_id` cât și `service.department_id`
+  - Dacă oricare dintre ele este "Reparatii", pipeline-ul se setează automat
+
+### 9.12. Afișare Condițională de Câmpuri
+
+- **Câmpurile Brand, Serial Number, Garantie se afișează automat doar pentru instrumente din departamentul "Reparatii"**
+- Logica:
+  - Se verifică dacă instrumentul curent (`currentInstrumentId`) aparține unui departament al cărui nume include "reparat" (case-insensitive)
+  - Dacă DA → se afișează câmpurile Brand, Serial Number, Garantie
+  - Dacă NU → câmpurile sunt ascunse
+
+### 9.13. Actualizare Optimistică a UI
+
+- **Mutările de lead-uri/tăvițe/fișe se reflectă imediat în interfață** înainte de confirmarea serverului
+- Dacă operația eșuează pe server, UI-ul se revine automat la starea anterioară
+- Permite feedback vizual instant și experiență utilizator îmbunătățită
+
+### 9.14. Real-time Updates prin Supabase Subscriptions
+
+- **Modificările se sincronizează automat între utilizatori** prin Supabase real-time subscriptions
+- Când un utilizator mută un lead sau modifică o tăviță, toți utilizatorii conectați văd modificările instant
+- Nu este necesar refresh manual al paginii
+
+---
+
+

@@ -12,13 +12,22 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus, Settings2, Filter, X, Search } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
-import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, bulkMoveLeadToPipelinesByNames, logLeadEvent } from "@/lib/supabase/leadOperations"
+import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, logLeadEvent } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
 import { Tag } from "@/lib/supabase/tagOperations"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { createLeadWithPipeline } from "@/lib/supabase/leadOperations"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+type Technician = {
+  id: string // user_id din app_members
+  name: string
+}
+
+const supabase = supabaseBrowser()
 
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -63,7 +72,7 @@ export default function CRMPage() {
   const [leadPosition, setLeadPosition] = useState<{ x: number; y: number; side: 'left' | 'right' } | null>(null)
   const [pipelineOptions, setPipelineOptions] = useState<{ name: string; activeStages: number }[]>([])
 
-  // Filtru pentru dată și căutare
+  // Filtru pentru dată, căutare și tehnician
   const [filters, setFilters] = useState<{
     dateFilter: {
       startDate: string | null
@@ -71,14 +80,20 @@ export default function CRMPage() {
       enabled: boolean
     }
     searchQuery: string
+    technicianId: string | null
   }>({
     dateFilter: {
       startDate: null,
       endDate: null,
       enabled: false
     },
-    searchQuery: ''
+    searchQuery: '',
+    technicianId: null
   })
+
+  // State pentru lista de tehnicieni
+  const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [loadingTechnicians, setLoadingTechnicians] = useState(false)
 
   const { leads, stages, pipelines, loading, error, handleLeadMove, refresh, patchLeadTags, handlePinToggle } = useKanbanData(pipelineSlug)
 
@@ -102,17 +117,122 @@ export default function CRMPage() {
       })
     }
 
-    // Filtrare după numele persoanei
+    // Căutare universală - caută în toate câmpurile disponibile
     if (filters.searchQuery.trim()) {
       const query = filters.searchQuery.toLowerCase().trim()
-      result = result.filter(lead => 
-        lead.name?.toLowerCase().includes(query) ||
-        lead.email?.toLowerCase().includes(query)
-      )
+      result = result.filter(lead => {
+        const leadAny = lead as any
+        
+        // Caută în câmpurile de bază
+        if (lead.name?.toLowerCase().includes(query)) return true
+        if (lead.email?.toLowerCase().includes(query)) return true
+        if (lead.phone?.toLowerCase().includes(query)) return true
+        
+        // Caută în câmpurile de campanie/ad/form
+        if (lead.campaignName?.toLowerCase().includes(query)) return true
+        if (lead.adName?.toLowerCase().includes(query)) return true
+        if (lead.formName?.toLowerCase().includes(query)) return true
+        
+        // Caută în tag-uri
+        if (lead.tags && lead.tags.some((tag: any) => tag.name?.toLowerCase().includes(query))) return true
+        
+        // Caută în tehnician
+        if (lead.technician?.toLowerCase().includes(query)) return true
+        
+        // Caută în stage
+        if (lead.stage?.toLowerCase().includes(query)) return true
+        
+        // Pentru service files
+        if (leadAny.serviceFileNumber?.toLowerCase().includes(query)) return true
+        if (leadAny.serviceFileStatus?.toLowerCase().includes(query)) return true
+        
+        // Pentru trays/quotes
+        if (leadAny.trayNumber?.toLowerCase().includes(query)) return true
+        if (leadAny.traySize?.toLowerCase().includes(query)) return true
+        if (leadAny.trayStatus?.toLowerCase().includes(query)) return true
+        if (leadAny.leadName?.toLowerCase().includes(query)) return true
+        if (leadAny.department?.toLowerCase().includes(query)) return true
+        
+        // Caută în total (convertit la string)
+        if (leadAny.total !== undefined && String(leadAny.total).includes(query)) return true
+        
+        // Caută în ID-uri (dacă utilizatorul caută după ID)
+        if (lead.id?.toLowerCase().includes(query)) return true
+        if (lead.leadId?.toLowerCase().includes(query)) return true
+        
+        return false
+      })
+    }
+
+    // Filtrare după tehnician
+    if (filters.technicianId) {
+      const selectedTechnician = technicians.find(t => t.id === filters.technicianId)
+      if (selectedTechnician) {
+        result = result.filter(lead => {
+          if (!lead.technician) return false
+          return lead.technician === selectedTechnician.name
+        })
+      }
     }
 
     return result
-  }, [leads, filters])
+  }, [leads, filters, technicians])
+
+  // Încarcă lista de tehnicieni din app_members
+  useEffect(() => {
+    const loadTechnicians = async () => {
+      setLoadingTechnicians(true)
+      try {
+        const { data: membersData, error } = await supabase
+          .from('app_members')
+          .select('user_id')
+          .order('created_at', { ascending: true })
+        
+        if (error) {
+          console.error('Error loading app_members:', error)
+          setTechnicians([])
+          return
+        }
+        
+        if (!membersData || membersData.length === 0) {
+          setTechnicians([])
+          return
+        }
+        
+        // Obține numele din auth.users pentru fiecare membru
+        const techs: Technician[] = []
+        for (const member of membersData) {
+          try {
+            const { data: { user } } = await supabase.auth.getUser(member.user_id)
+            const name = 
+              (user?.user_metadata as any)?.name ||
+              (user?.user_metadata as any)?.full_name ||
+              user?.email?.split('@')[0] ||
+              'Necunoscut'
+            techs.push({
+              id: member.user_id,
+              name: name
+            })
+          } catch (userError) {
+            techs.push({
+              id: member.user_id,
+              name: 'Necunoscut'
+            })
+          }
+        }
+        
+        // Sortează după nume
+        techs.sort((a, b) => a.name.localeCompare(b.name))
+        setTechnicians(techs)
+      } catch (error) {
+        console.error('Error loading technicians:', error)
+        setTechnicians([])
+      } finally {
+        setLoadingTechnicians(false)
+      }
+    }
+    loadTechnicians()
+  }, [])
 
   useEffect(() => {
     const setupSaloaneStages = async () => {
@@ -184,7 +304,9 @@ export default function CRMPage() {
 
   const handleBulkMoveToPipelines = async (leadId: string, pipelineNames: string[]) => {
     try {
-      const res = await bulkMoveLeadToPipelinesByNames(leadId, pipelineNames)
+      // Mutarea în mai multe pipeline-uri trebuie implementată folosind pipeline_items
+      // Pentru moment, funcționalitatea nu este disponibilă
+      throw new Error('Bulk move to multiple pipelines is not yet implemented')
       toast({ description: `Moved to ${res.length} pipeline${res.length === 1 ? "" : "s"}` })
       router.refresh() // re-render board, details, and history in one shot
     } catch (e: any) {
@@ -393,10 +515,12 @@ export default function CRMPage() {
     }
   }
 
-  const handleLeadClick = (lead: KanbanLead, event?: React.MouseEvent) => {
-    setSelectedLead(lead)
+  const handleLeadClick = async (lead: KanbanLead, event?: React.MouseEvent) => {
+    // Pentru quotes, folosim direct datele disponibile
+    // LeadDetailsPanel va gestiona obținerea datelor necesare folosind leadId și quoteId
+    setSelectedLead(lead as any)
     
-    if (event) {
+    if (event && event.currentTarget) {
       // Calculează poziția lead-ului pe ecran
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
       const viewportWidth = window.innerWidth
@@ -446,14 +570,38 @@ export default function CRMPage() {
                 <Filter className="h-4 w-4" />
                 Filtru dată
               </Button>
+
+              {/* Filtru după tehnician */}
+              <Select
+                value={filters.technicianId || undefined}
+                onValueChange={(value) => setFilters(prev => ({ ...prev, technicianId: value || null }))}
+                disabled={loadingTechnicians}
+              >
+                <SelectTrigger className="w-[200px] h-8">
+                  <SelectValue placeholder={loadingTechnicians ? "Se încarcă..." : "Filtrează după tehnician"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {technicians.map((tech) => (
+                    <SelectItem key={tech.id} value={tech.id}>
+                      {tech.name}
+                    </SelectItem>
+                  ))}
+                  {technicians.length === 0 && !loadingTechnicians && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      Nu există tehnicieni
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
               
-              {(filters.dateFilter.enabled || filters.searchQuery) && (
+              {(filters.dateFilter.enabled || filters.searchQuery || filters.technicianId) && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setFilters({
                     dateFilter: { startDate: null, endDate: null, enabled: false },
-                    searchQuery: ''
+                    searchQuery: '',
+                    technicianId: null
                   })}
                   className="h-8 gap-1"
                 >
@@ -502,10 +650,16 @@ export default function CRMPage() {
           )}
 
           {/* Afișare statistici filtre active */}
-          {(filters.searchQuery || (filters.dateFilter.enabled && (filters.dateFilter.startDate || filters.dateFilter.endDate))) && (
+          {(filters.searchQuery || filters.technicianId || (filters.dateFilter.enabled && (filters.dateFilter.startDate || filters.dateFilter.endDate))) && (
             <div className="mt-2 text-sm text-muted-foreground">
               {filteredLeads.length} din {leads.length} lead-uri
               {filters.searchQuery && ` • Căutare: "${filters.searchQuery}"`}
+              {filters.technicianId && (
+                <>
+                  {' • '}
+                  Tehnician: {technicians.find(t => t.id === filters.technicianId)?.name || 'Necunoscut'}
+                </>
+              )}
             </div>
           )}
 
@@ -611,12 +765,11 @@ export default function CRMPage() {
                     onClick={handleCloseModal}
                   />
                   
-                  {/* Panel de detalii - ocupă tot spațiul în afară de header și sidebar */}
+                  {/* Panel de detalii - ocupă tot spațiul vertical de sus până jos */}
                   <div 
-                    className="fixed right-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
+                    className="fixed right-0 top-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
                     style={{
-                      left: '200px',  // w-50 = 200px (50 * 4px)
-                      top: '73px'     // înălțimea header-ului (p-4 + text + mt-2 + buttons)
+                      left: '200px'  // w-50 = 200px (50 * 4px)
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >

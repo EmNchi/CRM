@@ -7,6 +7,7 @@ export type Service = {
   name: string;
   base_price: number;      
   department: string | null;
+  instrument: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -17,7 +18,7 @@ const supabase = supabaseBrowser();
 export async function listServices(): Promise<Service[]> {
   const { data, error } = await supabase
     .from('services')
-    .select('id,name,base_price,department,active,created_at,updated_at')
+    .select('id,name,base_price,department,instrument,active,created_at,updated_at')
     .order('name', { ascending: true });
 
   if (error) throw error;
@@ -26,6 +27,7 @@ export async function listServices(): Promise<Service[]> {
   return (data ?? []).map((s: any) => ({
     ...s,
     base_price: Number(s.base_price),
+    instrument: s.instrument ?? null,
   }));
 }
 

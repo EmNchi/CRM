@@ -2,13 +2,36 @@
 
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getReceptieKanbanLeads, getKanbanLeads, moveLeadToStage, getSingleKanbanLead } from '@/lib/supabase/leadOperations'
+import { getKanbanItems, getSingleKanbanItem, moveItemToStage } from '@/lib/supabase/pipelineOperations'
+import type { PipelineItemType } from '@/lib/supabase/pipelineOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
 import type { Tag } from '@/lib/supabase/tagOperations'
 
 const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
+
+// Helper pentru a determina tipul item-ului pe baza proprietăților lead-ului
+function getItemType(lead: KanbanLead): PipelineItemType {
+  const leadAny = lead as any
+  if (leadAny.type) return leadAny.type as PipelineItemType
+  if (leadAny.isFisa || leadAny.fisaId) return 'service_file'
+  if (leadAny.isQuote || leadAny.quoteId) return 'tray'
+  return 'lead'
+}
+
+// Helper pentru a obține item_id-ul corect
+function getItemId(lead: KanbanLead): string {
+  const leadAny = lead as any
+  // Pentru service_file sau tray, item_id este id-ul propriu-zis (lead.id)
+  // Pentru lead, item_id este leadId (sau id dacă leadId nu există)
+  if (leadAny.type === 'service_file' || leadAny.type === 'tray') {
+    return lead.id // Pentru service_file/tray, folosim id-ul cardului
+  }
+  if (leadAny.isFisa) return lead.id // service_file id
+  if (leadAny.isQuote) return lead.id // tray id
+  return lead.leadId || lead.id
+}
 
 export function useKanbanData(pipelineSlug?: string) {
   const [leads, setLeads] = useState<KanbanLead[]>([])
@@ -72,53 +95,43 @@ export function useKanbanData(pipelineSlug?: string) {
       const currentPipeline = pipelineSlug
         ? pipelinesData.find((p: any) => toSlug(p.name) === pipelineSlug)
         : pipelinesData?.[0]
+      
+      console.log('🔍 useKanbanData - Pipeline loading:', {
+        pipelineSlug,
+        allPipelines: pipelinesData.map((p: any) => ({ name: p.name, slug: toSlug(p.name), id: p.id })),
+        currentPipeline: currentPipeline ? { name: currentPipeline.name, id: currentPipeline.id } : null
+      })
+      
         if (currentPipeline) {
           setCurrentPipelineId(currentPipeline.id)
           setStages(currentPipeline.stages.map((s: any) => s.name))
           
           const isReceptie = toSlug(currentPipeline.name) === 'receptie'
+          const departmentPipelines = ['Saloane', 'Horeca', 'Frizerii', 'Reparatii']
+          const isDepartmentPipeline = departmentPipelines.some(dept => 
+            toSlug(currentPipeline.name) === toSlug(dept)
+          )
           let allLeads: KanbanLead[] = []
         
-          if (isReceptie) {
-            // Get stage IDs for mapping
-            const confirmariStage = currentPipeline.stages.find((s: any) => 
-              toSlug(s.name) === 'confirmari'
-            )
-            const inLucruStage = currentPipeline.stages.find((s: any) => {
-              const stageName = toSlug(s.name)
-              return stageName.includes('lucru') || stageName.includes('work') || stageName.includes('progress')
-            })
-            const asteptareStage = currentPipeline.stages.find((s: any) => {
-              const stageName = toSlug(s.name)
-              return stageName.includes('asteptare') || stageName.includes('waiting')
-            })
+          // Toate pipeline-urile folosesc acum getKanbanItems care suportă leads, service_files și trays
+          // Pipeline-uri departament (Saloane, Horeca, Frizerii, Reparatii) - afișează trays
+          // Pipeline Receptie - afișează service_files
+          // Pipeline Curier - afișează service_files
+          // Alte pipeline-uri (Vanzari etc) - afișează leads
+          const { data: itemsData, error: itemsError } = await getKanbanItems(currentPipeline.id)
+          if (itemsError) throw itemsError
+          allLeads = (itemsData || []) as any[]
         
-            // Get source pipeline IDs
-            const sourcePipelineNames = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
-            const sourcePipelineIds = sourcePipelineNames
-              .map(name => pipelinesData.find((p: any) => toSlug(p.name) === toSlug(name)))
-              .filter(Boolean)
-              .map((p: any) => p.id)
-        
-            // Single database call for everything
-            const { data: receptieLeads, error: receptieError } = await getReceptieKanbanLeads(
-              currentPipeline.id,
-              sourcePipelineIds,
-              {
-                confirmari: confirmariStage?.id || null,
-                inLucru: inLucruStage?.id || null,
-                asteptare: asteptareStage?.id || null,
-              }
-            )
-        
-            if (receptieError) throw receptieError
-            allLeads = receptieLeads || []
-          } else {
-            // Normal pipeline loading
-            const { data: leadsData, error: leadsError } = await getKanbanLeads(currentPipeline.id)
-            if (leadsError) throw leadsError
-            allLeads = leadsData || []
+          if (isDepartmentPipeline) {
+            console.log('📦 Department pipeline - loaded trays:', allLeads.length)
+          } else if (isReceptie) {
+            console.log('📋 Receptie pipeline - loaded items:', allLeads.length)
           }
+        
+        console.log('🔍 useKanbanData - Items încărcate:', {
+          count: allLeads.length,
+          items: allLeads.map((l: any) => ({ id: l.id, type: l.type, name: l.name, stage: l.stage }))
+        })
         
         setLeads(allLeads)
       } else {
@@ -173,28 +186,30 @@ export function useKanbanData(pipelineSlug?: string) {
       () => debouncedRefresh()
     )
 
-    // INCREMENTAL UPDATES pentru lead_pipelines
+    // INCREMENTAL UPDATES pentru pipeline_items (noua arhitectură)
     ch.on(
       'postgres_changes',
       { 
         event: 'INSERT', 
         schema: 'public', 
-        table: 'lead_pipelines',
+        table: 'pipeline_items',
         filter: `pipeline_id=eq.${currentPipelineId}`
       },
       async (payload) => {
-        // Adaugă doar lead-ul nou
+        // Adaugă item-ul nou (lead, service_file sau tray)
         try {
-          const { data: newLead, error } = await getSingleKanbanLead(payload.new.lead_id, currentPipelineId)
-          if (!error && newLead) {
+          const newItem = payload.new as any
+          const itemType = newItem.type as PipelineItemType
+          const { data: newKanbanItem, error } = await getSingleKanbanItem(itemType, newItem.item_id, currentPipelineId)
+          if (!error && newKanbanItem) {
             setLeads(prev => {
-              // Verifică dacă lead-ul nu există deja
-              if (prev.find(l => l.id === newLead.id)) return prev
-              return [...prev, newLead]
+              // Verifică dacă item-ul nu există deja
+              if (prev.find(l => l.id === newKanbanItem.id)) return prev
+              return [...prev, newKanbanItem as any]
             })
           }
         } catch (err) {
-          console.error('Error fetching new lead:', err)
+          console.error('Error fetching new pipeline item:', err)
           debouncedRefresh()
         }
       }
@@ -205,22 +220,23 @@ export function useKanbanData(pipelineSlug?: string) {
       { 
         event: 'UPDATE', 
         schema: 'public', 
-        table: 'lead_pipelines',
+        table: 'pipeline_items',
         filter: `pipeline_id=eq.${currentPipelineId}`
       },
       async (payload) => {
-        // Actualizează doar lead-ul modificat
+        // Actualizează item-ul modificat
         try {
-          const { data: updatedLead, error } = await getSingleKanbanLead(payload.new.lead_id, currentPipelineId)
-          if (!error && updatedLead) {
-            setLeads(prev => prev.map(l => l.id === updatedLead.id ? updatedLead : l))
+          const updatedItem = payload.new as any
+          const itemType = updatedItem.type as PipelineItemType
+          const { data: updatedKanbanItem, error } = await getSingleKanbanItem(itemType, updatedItem.item_id, currentPipelineId)
+          if (!error && updatedKanbanItem) {
+            setLeads(prev => prev.map(l => l.id === updatedKanbanItem.id ? (updatedKanbanItem as any) : l))
           } else {
-            // Dacă lead-ul nu mai e în pipeline-ul curent, îl eliminăm
-            setLeads(prev => prev.filter(l => l.id !== payload.new.lead_id))
+            // Dacă item-ul nu mai e în pipeline-ul curent, îl eliminăm
+            setLeads(prev => prev.filter(l => l.id !== updatedItem.item_id))
           }
         } catch (err) {
-          console.error('Error fetching updated lead:', err)
-          // Nu mai face refresh - doar loghează eroarea
+          console.error('Error fetching updated pipeline item:', err)
         }
       }
     )
@@ -230,11 +246,12 @@ export function useKanbanData(pipelineSlug?: string) {
       { 
         event: 'DELETE', 
         schema: 'public', 
-        table: 'lead_pipelines'
+        table: 'pipeline_items'
       },
       (payload) => {
-        // Elimină doar lead-ul șters
-        setLeads(prev => prev.filter(l => l.id !== payload.old.lead_id))
+        // Elimină item-ul șters
+        const deletedItem = payload.old as any
+        setLeads(prev => prev.filter(l => l.id !== deletedItem.item_id))
       }
     )
 
@@ -248,7 +265,8 @@ export function useKanbanData(pipelineSlug?: string) {
 
         // Re-fetch lead-ul pentru a obține stage-ul actualizat
         try {
-          const { data: updatedLead, error } = await getSingleKanbanLead(payloadNew.lead_id, currentPipelineId)
+          // TODO: Trebuie determinat tipul item-ului și item_id corect
+          const { data: updatedLead, error } = await getSingleKanbanItem('lead', payloadNew.lead_id, currentPipelineId)
           if (!error && updatedLead) {
             // Actualizează lead-ul cu stage-ul nou și stageMovedAt
             setLeads(prev => {
@@ -310,12 +328,17 @@ export function useKanbanData(pipelineSlug?: string) {
 
         // Re-fetch lead-ul actualizat
         try {
-          const { data: updatedLead, error } = await getSingleKanbanLead(leadId, currentPipelineId)
+          // TODO: Trebuie determinat tipul item-ului pe baza lead-ului existent
+          // Pentru moment, căutăm lead-ul în lista curentă pentru a determina tipul
+          const existingLead = leads.find(l => l.id === leadId)
+          const itemType = existingLead ? getItemType(existingLead) : 'lead'
+          const itemId = existingLead ? getItemId(existingLead) : leadId
+          const { data: updatedLead, error } = await getSingleKanbanItem(itemType, itemId, currentPipelineId)
           if (!error && updatedLead) {
             setLeads(prev => {
               const exists = prev.find(l => l.id === updatedLead.id)
               if (!exists) return prev
-              return prev.map(l => l.id === updatedLead.id ? updatedLead : l)
+              return prev.map(l => l.id === updatedLead.id ? (updatedLead as any) : l)
             })
           }
         } catch (err) {
@@ -349,6 +372,24 @@ export function useKanbanData(pipelineSlug?: string) {
     const currentStageName = lead.stage?.toLowerCase() || ''
     const newStageNameLower = newStageName.toLowerCase()
     
+    // Pentru carduri de tip tray sau service_file, actualizăm UI-ul pentru feedback vizual
+    if (leadAny.isQuote || leadAny.isFisa) {
+      // Găsește pipeline-ul curent
+      const currentPipeline = pipelinesDataToUse.find((p: any) => p.id === lead.pipelineId)
+      if (!currentPipeline) return
+      
+      const newStage = currentPipeline.stages.find((s: any) => s.name === newStageName)
+      if (!newStage) return
+
+      // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
+      setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
+      
+      // Pentru tăvițe/service_files, mutarea se face prin pipeline_items
+      // Pentru moment, mutarea este doar vizuală și se va reseta la refresh
+      console.log('Quote/Fisa card moved locally (no DB update):', leadId, newStageName)
+      return
+    }
+    
     // Dacă suntem în Receptie, lead-ul vine din alt departament, și se mută din "Confirmari" în "In Lucru"
     if (isInReceptie && hasOriginalPipeline && 
         currentStageName.includes('confirmari') && 
@@ -367,7 +408,9 @@ export function useKanbanData(pipelineSlug?: string) {
         
         if (inLucruStage) {
           // Mută lead-ul în pipeline-ul original în stage-ul "In Lucru"
-          const { error: originalError } = await moveLeadToStage(lead.leadId, originalPipelineId, inLucruStage.id)
+          const itemType = getItemType(lead)
+          const itemId = getItemId(lead)
+          const { error: originalError } = await moveItemToStage(itemType, itemId, originalPipelineId, inLucruStage.id)
           if (originalError) {
             console.error('Eroare la mutarea lead-ului în pipeline-ul original:', originalError)
             // REVERT optimistic update
@@ -393,7 +436,20 @@ export function useKanbanData(pipelineSlug?: string) {
     setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
     
     try {
-      const { error } = await moveLeadToStage(lead.leadId, targetPipelineId, newStage.id)
+      const itemType = getItemType(lead)
+      const itemId = getItemId(lead)
+      
+      console.log('🔄 handleLeadMove:', {
+        leadId,
+        newStageName,
+        itemType,
+        itemId,
+        targetPipelineId,
+        newStageId: newStage.id,
+        leadData: { id: lead.id, type: leadAny.type, pipelineId: lead.pipelineId }
+      })
+      
+      const { error } = await moveItemToStage(itemType, itemId, targetPipelineId, newStage.id)
       if (error) {
         // REVERT dacă eșuează
         setLeads(prev => prev.map(l => (l.id === leadId ? previousLead : l)))
