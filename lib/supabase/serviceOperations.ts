@@ -5,9 +5,10 @@ import { supabaseBrowser } from '@/lib/supabase/supabaseClient';
 export type Service = {
   id: string;
   name: string;
-  base_price: number;      
-  department: string | null;
-  instrument: string | null;
+  price: number;      
+  instrument_id: string | null;
+  department_id: string | null;
+  time: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -18,23 +19,23 @@ const supabase = supabaseBrowser();
 export async function listServices(): Promise<Service[]> {
   const { data, error } = await supabase
     .from('services')
-    .select('id,name,base_price,department,instrument,active,created_at,updated_at')
+    .select('id,name,price,instrument_id,department_id,active,created_at,updated_at')
     .order('name', { ascending: true });
 
   if (error) throw error;
 
-  // base_price is numeric in PG and may come as string; cast to number for UI
+  // price este numeric în PG și poate veni ca string; cast la number pentru UI
   return (data ?? []).map((s: any) => ({
     ...s,
-    base_price: Number(s.base_price),
-    instrument: s.instrument ?? null,
+    price: Number(s.price),
+    instrument_id: s.instrument_id ?? null,
+    department_id: s.department_id ?? null,
   }));
 }
 
 export async function createService(input: {
   name: string;
-  base_price: number;
-  department?: string;
+  price: number;
 }) {
   // created_by has no default in your SQL; include it
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -42,10 +43,9 @@ export async function createService(input: {
 
   const { error } = await supabase.from('services').insert({
     name: input.name.trim(),
-    base_price: input.base_price,
-    department: input.department?.trim() || null,
+    price: input.price,
     created_by: userRes.user.id,
-  });
+  } as any);
   if (error) throw error;
 }
 

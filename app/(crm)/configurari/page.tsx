@@ -23,7 +23,7 @@ export default function ServiciiPage() {
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [form, setForm] = useState({ name: '', base_price: ''})
+  const [form, setForm] = useState({ name: '', price: ''})
 
     // technicians
   const [techs, setTechs] = useState<Technician[]>([])
@@ -35,7 +35,7 @@ export default function ServiciiPage() {
   const [parts, setParts] = useState<Part[]>([])
   const [partLoading, setPartLoading] = useState(true)
   const [partSubmitting, setPartSubmitting] = useState(false)
-  const [partForm, setPartForm] = useState({ name: '', base_price: '' })
+  const [partForm, setPartForm] = useState({ name: '', price: '' })
 
   //tags
   const [tags, setTags] = useState<Tag[]>([])
@@ -122,12 +122,12 @@ export default function ServiciiPage() {
   async function onAddPart(e: React.FormEvent) {
     e.preventDefault()
     if (!canManage) return
-    const price = Number(partForm.base_price)
+    const price = Number(partForm.price)
     if (!partForm.name.trim() || isNaN(price) || price < 0) return
     setPartSubmitting(true)
     try {
-      await createPart({ name: partForm.name, base_price: price })
-      setPartForm({ name: '', base_price: '' })
+      await createPart({ name: partForm.name, price: price })
+      setPartForm({ name: '', price: '' })
       await refreshParts()
     } finally { setPartSubmitting(false) }
   }
@@ -141,12 +141,12 @@ export default function ServiciiPage() {
   async function onAdd(e: React.FormEvent) {
     e.preventDefault()
     if (!canManage) return
-    const price = Number(form.base_price)
+    const price = Number(form.price)
     if (!form.name.trim() || isNaN(price) || price < 0) return
     setSubmitting(true)
     try {
-      await createService({ name: form.name, base_price: price})
-      setForm({ name: '', base_price: ''})
+      await createService({ name: form.name, price: price})
+      setForm({ name: '', price: ''})
       await refresh()
     } finally { setSubmitting(false) }
   }
@@ -178,7 +178,7 @@ export default function ServiciiPage() {
               </div>
               <div>
                 <Label htmlFor="price">Preț (RON)</Label>
-                <Input id="price" inputMode="decimal" value={form.base_price} onChange={e => setForm(f => ({ ...f, base_price: e.target.value }))} placeholder="250" required />
+                <Input id="price" inputMode="decimal" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="250" required />
               </div>
               <div className="flex items-end">
                 <Button type="submit" disabled={submitting}>Adaugă</Button>
@@ -200,7 +200,7 @@ export default function ServiciiPage() {
               {services.map(s => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">{s.name}</TableCell>
-                  <TableCell>{s.base_price.toFixed(2)}</TableCell>
+                  <TableCell>{s.price.toFixed(2)}</TableCell>
                   {canManage && (
                     <TableCell className="text-right">
                       <Button variant="destructive" size="sm" onClick={() => onDelete(s.id)}>Șterge</Button>
@@ -304,7 +304,7 @@ export default function ServiciiPage() {
               </div>
               <div>
                 <Label htmlFor="part-price">Preț (RON)</Label>
-                <Input id="part-price" inputMode="decimal" value={partForm.base_price} onChange={e => setPartForm(f => ({ ...f, base_price: e.target.value }))} placeholder="50" required />
+                <Input id="part-price" inputMode="decimal" value={partForm.price} onChange={e => setPartForm(f => ({ ...f, price: e.target.value }))} placeholder="50" required />
               </div>
               <div className="flex items-end">
                 <Button type="submit" disabled={partSubmitting}>Adaugă</Button>
@@ -326,7 +326,7 @@ export default function ServiciiPage() {
               {parts.map(p => (
                 <TableRow key={p.id}>
                   <TableCell className="font-medium">{p.name}</TableCell>
-                  <TableCell>{p.base_price.toFixed(2)}</TableCell>
+                  <TableCell>{p.price.toFixed(2)}</TableCell>
                   {canManage && (
                     <TableCell className="text-right">
                       <Button variant="destructive" size="sm" onClick={() => onDeletePart(p.id)}>Șterge</Button>

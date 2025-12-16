@@ -124,6 +124,24 @@
   }
 }
 
+/* Scroll orizontal pentru tabs pe mobil - ascunde scrollbar */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE și Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari, Opera */
+  }
+  
+  /* Smooth scroll pentru mobil */
+  .scroll-smooth-horizontal {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 @keyframes border-strobe {
   0%, 100% {
     border-color: rgba(255, 255, 255, 0.8); /* alb cu 80% opacity */

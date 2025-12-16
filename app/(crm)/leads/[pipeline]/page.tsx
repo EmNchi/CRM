@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { KanbanBoard } from "@/components/kanban-board"
+import { MobileBoardLayout } from "@/components/mobile/mobile-board-layout"
 import dynamic from "next/dynamic"
 import { useToast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus, Settings2, Filter, X, Search } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
+import { Sidebar } from '@/components/sidebar'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, logLeadEvent } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
 import { Tag } from "@/lib/supabase/tagOperations"
@@ -46,6 +48,19 @@ export default function CRMPage() {
 
   const { toast } = useToast()
   const router = useRouter()
+  
+  // Detectare dimensiune ecran pentru layout responsive
+  const [isMobile, setIsMobile] = useState(false)
+  
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768) // md breakpoint
+    }
+    
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorData, setEditorData] = useState<{
@@ -54,7 +69,30 @@ export default function CRMPage() {
     stages: { id: string; name: string }[]
   } | null>(null)
 
-  const { isOwner} = useRole()
+  const { isOwner, role } = useRole()
+  const [isTechnician, setIsTechnician] = useState(false)
+  
+  // Verifică dacă utilizatorul este tehnician
+  useEffect(() => {
+    async function checkTechnician() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user?.id) {
+        setIsTechnician(false)
+        return
+      }
+      // Verifică dacă utilizatorul există în app_members
+      const { data } = await supabase
+        .from('app_members')
+        .select('user_id, role')
+        .eq('user_id', user.id)
+        .single()
+      
+      // Dacă există în app_members și nu este owner/admin, considerăm că este tehnician
+      setIsTechnician(!!data && data.role !== 'owner' && data.role !== 'admin')
+    }
+    checkTechnician()
+  }, [])
+  
   const [createStageOpen, setCreateStageOpen] = useState(false)
   const [stageName, setStageName] = useState("")
   const [creatingStage, setCreatingStage] = useState(false)
@@ -95,7 +133,32 @@ export default function CRMPage() {
   const [technicians, setTechnicians] = useState<Technician[]>([])
   const [loadingTechnicians, setLoadingTechnicians] = useState(false)
 
-  const { leads, stages, pipelines, loading, error, handleLeadMove, refresh, patchLeadTags, handlePinToggle } = useKanbanData(pipelineSlug)
+  const { leads, stages, pipelines: allPipelines, loading, error, handleLeadMove, refresh, patchLeadTags, handlePinToggle } = useKanbanData(pipelineSlug)
+  
+  // Filtrează pipeline-urile pentru tehnicieni
+  const pipelines = useMemo(() => {
+    if (!isTechnician) return allPipelines
+    
+    const departmentPipelines = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
+    return allPipelines.filter(p => 
+      departmentPipelines.some(dept => 
+        p.toLowerCase() === dept.toLowerCase()
+      )
+    )
+  }, [allPipelines, isTechnician])
+  
+  // Redirectează tehnicienii dacă încearcă să acceseze un pipeline nepermis
+  useEffect(() => {
+    if (isTechnician && pipelineSlug) {
+      const departmentSlugs = ['saloane', 'frizerii', 'horeca', 'reparatii']
+      const currentSlug = pipelineSlug.toLowerCase()
+      
+      if (!departmentSlugs.includes(currentSlug)) {
+        // Redirectează la primul pipeline permis
+        router.replace('/leads/saloane')
+      }
+    }
+  }, [isTechnician, pipelineSlug, router])
 
   // Filtrează lead-urile
   const filteredLeads = useMemo(() => {
@@ -183,10 +246,11 @@ export default function CRMPage() {
     const loadTechnicians = async () => {
       setLoadingTechnicians(true)
       try {
+        // ✅ Selectăm direct name și email din app_members
         const { data: membersData, error } = await supabase
           .from('app_members')
-          .select('user_id')
-          .order('created_at', { ascending: true })
+          .select('user_id, name, email')
+          .order('name', { ascending: true })
         
         if (error) {
           console.error('Error loading app_members:', error)
@@ -199,27 +263,11 @@ export default function CRMPage() {
           return
         }
         
-        // Obține numele din auth.users pentru fiecare membru
-        const techs: Technician[] = []
-        for (const member of membersData) {
-          try {
-            const { data: { user } } = await supabase.auth.getUser(member.user_id)
-            const name = 
-              (user?.user_metadata as any)?.name ||
-              (user?.user_metadata as any)?.full_name ||
-              user?.email?.split('@')[0] ||
-              'Necunoscut'
-            techs.push({
-              id: member.user_id,
-              name: name
-            })
-          } catch (userError) {
-            techs.push({
-              id: member.user_id,
-              name: 'Necunoscut'
-            })
-          }
-        }
+        // ✅ Folosim datele direct din app_members (fără apeluri la auth API)
+        const techs: Technician[] = membersData.map((member: any) => ({
+          id: member.user_id,
+          name: member.name || member.email?.split('@')[0] || `User ${member.user_id.slice(0, 8)}`
+        }))
         
         // Sortează după nume
         techs.sort((a, b) => a.name.localeCompare(b.name))
@@ -541,7 +589,8 @@ export default function CRMPage() {
     <div className="flex min-h-dvh bg-background overflow-hidden">
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-        <header className="border-b border-border p-4">
+        {/* Header desktop - ascuns pe mobil */}
+        <header className="hidden md:block border-b border-border p-4">
           <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-foreground">{activePipelineName}</h1>
             
@@ -718,82 +767,119 @@ export default function CRMPage() {
           />
         )}
 
-        <div className="flex-1 p-6 overflow-auto">
-          {stages.length === 0 && !loading ? (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-              <div className="text-lg font-medium text-muted-foreground mb-2">
-                Pipeline-ul se configurează...
-              </div>
-              <div className="text-sm text-muted-foreground mb-4">
-                {pipelineSlug === 'saloane' 
-                  ? 'Se creează stage-urile pentru pipeline-ul Saloane...'
-                  : `Pipeline-ul "${activePipelineName}" nu are stage-uri configurate.`
-                }
-              </div>
-              {isOwner && pipelineSlug !== 'saloane' && (
-                <Button
-                  variant="outline"
-                  onClick={() => setCreateStageOpen(true)}
-                  className="gap-2"
-                >
-                  <Plus className="h-4 w-4" />
-                  Adaugă primul stage
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="relative">
-              <KanbanBoard 
-                leads={filteredLeads} 
-                stages={stages} 
-                onLeadMove={handleMove} 
-                onLeadClick={handleLeadClick} 
-                onDeleteStage={handleDeleteStage}
-                currentPipelineName={activePipelineName}
-                onPinToggle={handlePinToggle}
-                pipelines={pipelines}
-                onBulkMoveToStage={handleBulkMoveToStage}
-                onBulkMoveToPipeline={handleBulkMoveToPipeline}
-              />
-              
-              {/* Panel de detalii cu poziționare dinamică */}
-              {selectedLead && leadPosition && (
-                <>
-                  {/* Backdrop pentru închidere - transparent */}
-                  <div 
-                    className="fixed inset-0 bg-transparent z-40"
-                    onClick={handleCloseModal}
-                  />
-                  
-                  {/* Panel de detalii - ocupă tot spațiul vertical de sus până jos */}
-                  <div 
-                    className="fixed right-0 top-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
-                    style={{
-                      left: '200px'  // w-50 = 200px (50 * 4px)
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="h-full overflow-y-auto">
-            <LeadDetailsPanel
-              key={selectedLead.id}              
-              lead={selectedLead}
-              onClose={handleCloseModal}
-              onStageChange={handleMove}
+        {/* Layout mobil */}
+        {isMobile ? (
+          <div className="flex-1 overflow-hidden">
+            <MobileBoardLayout
+              leads={filteredLeads}
               stages={stages}
+              currentPipelineName={activePipelineName}
               pipelines={pipelines}
-              pipelineSlug={pipelineSlug}
-              onMoveToPipeline={handleMoveToPipeline}
-              onBulkMoveToPipelines={handleBulkMoveToPipelines}
-              pipelineOptions={pipelineOptions}
-              onTagsChange={(leadId: string, tags: Tag[]) => patchLeadTags(leadId, tags)}
+              onPipelineChange={(pipelineName) => {
+                const slug = toSlug(pipelineName)
+                router.push(`/leads/${slug}`)
+              }}
+              onLeadMove={handleMove}
+              onLeadClick={handleLeadClick}
+              onAddLead={() => setCreateLeadOpen(true)}
+              onSearchClick={() => {
+                // Implementare căutare mobil - poate deschide un dialog
+                const searchQuery = prompt('Caută lead...')
+                if (searchQuery) {
+                  setFilters(prev => ({ ...prev, searchQuery }))
+                }
+              }}
+              onFilterClick={() => {
+                // Implementare filtre mobil - poate deschide un bottom sheet
+                // Pentru moment, doar logăm
+                console.log('Filtre mobil')
+              }}
+              sidebarContent={
+                <div className="p-4">
+                  {/* Sidebar content pentru mobil */}
+                  <Sidebar canManagePipelines={isOwner} />
+                </div>
+              }
             />
+          </div>
+        ) : (
+          <div className="flex-1 p-6 overflow-auto">
+            {stages.length === 0 && !loading ? (
+              <div className="flex flex-col items-center justify-center h-64 text-center">
+                <div className="text-lg font-medium text-muted-foreground mb-2">
+                  Pipeline-ul se configurează...
+                </div>
+                <div className="text-sm text-muted-foreground mb-4">
+                  {pipelineSlug === 'saloane' 
+                    ? 'Se creează stage-urile pentru pipeline-ul Saloane...'
+                    : `Pipeline-ul "${activePipelineName}" nu are stage-uri configurate.`
+                  }
+                </div>
+                {isOwner && pipelineSlug !== 'saloane' && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setCreateStageOpen(true)}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Adaugă primul stage
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="relative">
+                <KanbanBoard 
+                  leads={filteredLeads} 
+                  stages={stages} 
+                  onLeadMove={handleMove} 
+                  onLeadClick={handleLeadClick} 
+                  onDeleteStage={handleDeleteStage}
+                  currentPipelineName={activePipelineName}
+                  onPinToggle={handlePinToggle}
+                  pipelines={pipelines}
+                  onBulkMoveToStage={handleBulkMoveToStage}
+                  onBulkMoveToPipeline={handleBulkMoveToPipeline}
+                />
+                
+                {/* Panel de detalii cu poziționare dinamică */}
+                {selectedLead && leadPosition && (
+                  <>
+                    {/* Backdrop pentru închidere - transparent */}
+                    <div 
+                      className="fixed inset-0 bg-transparent z-40"
+                      onClick={handleCloseModal}
+                    />
+                    
+                    {/* Panel de detalii - ocupă tot spațiul vertical de sus până jos */}
+                    <div 
+                      className="fixed right-0 top-0 bottom-0 z-50 bg-white border-l border-gray-200 shadow-xl overflow-hidden"
+                      style={{
+                        left: '200px'  // w-50 = 200px (50 * 4px)
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="h-full overflow-y-auto">
+              <LeadDetailsPanel
+                key={selectedLead.id}              
+                lead={selectedLead}
+                onClose={handleCloseModal}
+                onStageChange={handleMove}
+                stages={stages}
+                pipelines={pipelines}
+                pipelineSlug={pipelineSlug}
+                onMoveToPipeline={handleMoveToPipeline}
+                onBulkMoveToPipelines={handleBulkMoveToPipelines}
+                pipelineOptions={pipelineOptions}
+                onTagsChange={(leadId: string, tags: Tag[]) => patchLeadTags(leadId, tags)}
+              />
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       <Toaster />

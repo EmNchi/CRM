@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/sidebar'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+import { Toaster } from '@/components/ui/sonner'
 
 export default function CrmShell({ children }: { children: React.ReactNode }) {
   const supabase = useMemo(() => supabaseBrowser(), [])
@@ -31,8 +32,12 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex">
-      <Sidebar />
+      {/* Sidebar ascuns pe mobil - va fi în drawer */}
+      <div className="hidden md:block">
+        <Sidebar />
+      </div>
       <main className="flex-1 overflow-auto">{children}</main>
+      <Toaster />
     </div>
   )
 }

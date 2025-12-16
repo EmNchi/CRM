@@ -2,7 +2,7 @@
 
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getKanbanItems, getSingleKanbanItem, moveItemToStage } from '@/lib/supabase/pipelineOperations'
+import { getKanbanItems, getSingleKanbanItem, moveItemToStage, addTrayToPipeline, getPipelineItemForItem } from '@/lib/supabase/pipelineOperations'
 import type { PipelineItemType } from '@/lib/supabase/pipelineOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
@@ -372,7 +372,7 @@ export function useKanbanData(pipelineSlug?: string) {
     const currentStageName = lead.stage?.toLowerCase() || ''
     const newStageNameLower = newStageName.toLowerCase()
     
-    // Pentru carduri de tip tray sau service_file, actualizăm UI-ul pentru feedback vizual
+    // Pentru carduri de tip tray sau service_file
     if (leadAny.isQuote || leadAny.isFisa) {
       // Găsește pipeline-ul curent
       const currentPipeline = pipelinesDataToUse.find((p: any) => p.id === lead.pipelineId)
@@ -381,11 +381,62 @@ export function useKanbanData(pipelineSlug?: string) {
       const newStage = currentPipeline.stages.find((s: any) => s.name === newStageName)
       if (!newStage) return
 
+      // Verifică dacă este o tăviță în pipeline-urile Saloane, Frizerii sau Horeca
+      const isTrayInDeptPipeline = leadAny.type === 'tray' && 
+        ['Saloane', 'Frizerii', 'Horeca'].includes(currentPipeline.name)
+      
+      // Dacă este tăviță în pipeline-urile departamentelor, permite mutarea efectivă
+      if (isTrayInDeptPipeline) {
+        // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
+        setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
+        
+        try {
+          const itemType = getItemType(lead)
+          const itemId = getItemId(lead)
+          
+          console.log('🔄 Mutare tăviță în pipeline departament:', {
+            leadId,
+            newStageName,
+            itemType,
+            itemId,
+            pipelineId: lead.pipelineId,
+            newStageId: newStage.id
+          })
+          
+          // Verifică dacă există deja un pipeline_item în pipeline-ul curent
+          const { data: existingPipelineItem } = await getPipelineItemForItem(itemType, itemId, lead.pipelineId)
+          
+          if (!existingPipelineItem) {
+            // Dacă nu există, creează un pipeline_item nou în pipeline-ul curent
+            console.log('📝 Creare pipeline_item pentru tăviță în pipeline-ul curent')
+            const { data: newPipelineItem, error: addError } = await addTrayToPipeline(itemId, lead.pipelineId, newStage.id)
+            if (addError) {
+              throw addError
+            }
+            console.log('✅ Pipeline_item creat:', newPipelineItem)
+          } else {
+            // Dacă există, actualizează stage-ul
+            const { error } = await moveItemToStage(itemType, itemId, lead.pipelineId, newStage.id)
+            if (error) {
+              throw error
+            }
+          }
+          
+          // Real-time subscription va actualiza automat când se salvează în baza de date
+        } catch (err) {
+          // REVERT dacă eșuează
+          setLeads(prev => prev.map(l => (l.id === leadId ? previousLead : l)))
+          setError('Failed to move tray')
+          console.error('Eroare la mutarea tăviței:', err)
+        }
+        return
+      }
+      
+      // Pentru alte cazuri (service_files sau tăvițe în alte pipeline-uri), doar update vizual
       // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
       setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
       
-      // Pentru tăvițe/service_files, mutarea se face prin pipeline_items
-      // Pentru moment, mutarea este doar vizuală și se va reseta la refresh
+      // Pentru tăvițe/service_files în alte pipeline-uri, mutarea este doar vizuală
       console.log('Quote/Fisa card moved locally (no DB update):', leadId, newStageName)
       return
     }

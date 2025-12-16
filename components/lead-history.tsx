@@ -77,11 +77,12 @@ export default function LeadHistory({ leadId }: { leadId: string }) {
     let cancelled = false
     setLoading(true)
 
-    // initial fetch
+    // initial fetch - folosește items_events polimorf
     supabase
-      .from("lead_events")
+      .from("items_events")
       .select("*")
-      .eq("lead_id", leadId)
+      .eq("type", "lead")
+      .eq("item_id", leadId)
       .order("created_at", { ascending: false })
       .limit(200)
       .then(({ data, error }: any) => {
@@ -90,7 +91,11 @@ export default function LeadHistory({ leadId }: { leadId: string }) {
           setError(error.message)
           setItems([])
         } else {
-          setItems(data ?? [])
+          // Transformă items_events în format LeadEvent pentru UI
+          setItems((data ?? []).map((item: any) => ({
+            ...item,
+            lead_id: item.item_id, // Mapare pentru LeadEvent type
+          })))
           setError(null)
         }
         setLoading(false)
@@ -101,8 +106,15 @@ export default function LeadHistory({ leadId }: { leadId: string }) {
       .channel(`lead_events_${leadId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "lead_events", filter: `lead_id=eq.${leadId}` },
-        (payload: any) => setItems((prev) => [payload.new as LeadEvent, ...(prev ?? [])])
+        { event: "INSERT", schema: "public", table: "items_events", filter: `type=eq.lead&item_id=eq.${leadId}` },
+        (payload: any) => {
+          // Transformă pentru UI
+          const event = {
+            ...payload.new,
+            lead_id: payload.new.item_id,
+          } as LeadEvent
+          setItems((prev) => [event, ...(prev ?? [])])
+        }
       )
       .subscribe()
 

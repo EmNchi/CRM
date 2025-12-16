@@ -7,17 +7,16 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { format } from "date-fns"
-import type { Lead } from "@/app/page" 
+import type { Lead } from "@/app/(crm)/dashboard/page" 
 import Preturi from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { PrintView } from '@/components/print-view'
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import LeadMessenger from "@/components/lead-messenger"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
-import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, Maximize2, ChevronDown, ChevronRight, User, Building, Info, MapPin } from "lucide-react"
+import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, ChevronDown, ChevronRight, User, Building, Info, MapPin } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
-import { uploadLeadImage, deleteLeadImage, listLeadImages, saveLeadImageReference, deleteLeadImageReference, type LeadImage } from "@/lib/supabase/imageOperations"
 import { useRole } from "@/hooks/useRole"
 import { useAuth } from "@/hooks/useAuth"
 import { 
@@ -26,7 +25,8 @@ import {
   listTraysForServiceFile,
   listTrayItemsForTray,
   type ServiceFile,
-  type TrayItem
+  type TrayItem,
+  type Tray
 } from "@/lib/supabase/serviceFileOperations"
 
 // Tipuri pentru UI (alias-uri pentru claritate)
@@ -176,7 +176,6 @@ type Technician = {
 }
 import { listServices } from "@/lib/supabase/serviceOperations"
 import { Plus } from "lucide-react"
-import { ImagePlus, X, Image as ImageIcon } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -228,10 +227,16 @@ export function LeadDetailsPanel({
     return pipelineSlug.toLowerCase().includes('vanzari') || pipelineSlug.toLowerCase().includes('sales')
   }, [pipelineSlug])
 
+
   // Verifică dacă suntem în pipeline-ul Reparații
   const isReparatiiPipeline = useMemo(() => {
     if (!pipelineSlug) return false
     return pipelineSlug.toLowerCase().includes('reparatii') || pipelineSlug.toLowerCase().includes('repair')
+  }, [pipelineSlug])
+
+  const isReceptiePipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    return pipelineSlug.toLowerCase().includes('receptie') || pipelineSlug.toLowerCase().includes('reception')
   }, [pipelineSlug])
 
   // Obține rolul utilizatorului curent
@@ -263,7 +268,6 @@ export function LeadDetailsPanel({
   const [section, setSection] = useState<"fisa" | "istoric">("fisa")
   const [stage, setStage] = useState(lead.stage)
   const [copiedField, setCopiedField] = useState<string | null>(null)
-  const [lightboxImage, setLightboxImage] = useState<string | null>(null)
   const panelRef = useRef<HTMLElement>(null)
   
   // State pentru fișe de serviciu
@@ -333,13 +337,8 @@ export function LeadDetailsPanel({
   const [asteptRidicarea, setAsteptRidicarea] = useState(false)
   const [ridicPersonal, setRidicPersonal] = useState(false)
 
-  // State pentru imagini
-  const [images, setImages] = useState<LeadImage[]>([])
-  const [uploading, setUploading] = useState(false)
-
   // State pentru collapsible sections
   const [isContactOpen, setIsContactOpen] = useState(true)
-  const [isImagesOpen, setIsImagesOpen] = useState(false)
   const [isMessengerOpen, setIsMessengerOpen] = useState(false)
 
   const allPipeNames = pipelines ?? []
@@ -490,22 +489,6 @@ export function LeadDetailsPanel({
     loadData()
   }, [getLeadId, getServiceFileId, getTrayId, (lead as any)?.isQuote, (lead as any)?.quoteId, (lead as any)?.type, loadServiceSheets, selectedFisaId])
 
-  // incarca imaginile pentru lead
-  useEffect(() => {
-    if (!lead?.id) return
-    
-    const loadImages = async () => {
-      try {
-        const loadedImages = await listLeadImages(getLeadId())
-        setImages(loadedImages)
-      } catch (error) {
-        console.error('Error loading images:', error)
-      }
-    }
-    
-    loadImages()
-  }, [lead?.id])
-
   // Încarcă tehnicienii
   useEffect(() => {
     const loadTechnicians = async () => {
@@ -521,16 +504,24 @@ export function LeadDetailsPanel({
           console.error('Error loading app_members:', error)
           // Încearcă să încarce doar user_id și email dacă name nu există
           try {
-            const { data: fallbackData } = await supabaseClient
+            const { data: fallbackData, error: fallbackError } = await supabaseClient
               .from('app_members')
               .select('user_id, email')
               .order('created_at', { ascending: true })
+            
+            if (fallbackError) {
+              console.error('Error loading app_members with fallback:', fallbackError)
+              setTechnicians([])
+              return
+            }
             
             if (fallbackData && fallbackData.length > 0) {
               const techs: Technician[] = fallbackData.map((m: any) => {
                 let name = 'Necunoscut'
                 if (m.email) {
                   name = m.email.split('@')[0]
+                } else if (m.user_id) {
+                  name = `User ${m.user_id.slice(0, 8)}`
                 }
                 return {
                   id: m.user_id,
@@ -556,7 +547,16 @@ export function LeadDetailsPanel({
         // Transformă membrii în tehnicieni folosind câmpul name
         const techs: Technician[] = (membersData || []).map((m: any) => {
           // Folosește câmpul name, cu fallback la email sau user_id
-          let name = m.name || m.Name || 'Necunoscut'
+          let name = m.name || m.Name || null
+          if (!name && m.email) {
+            name = m.email.split('@')[0]
+          }
+          if (!name && m.user_id) {
+            name = `User ${m.user_id.slice(0, 8)}`
+          }
+          if (!name) {
+            name = 'Necunoscut'
+          }
           
           if (name === 'Necunoscut' && m.email) {
             name = m.email.split('@')[0]
@@ -624,60 +624,6 @@ export function LeadDetailsPanel({
     }
   }
 
-  // functii pentru gestionarea imaginilor
-  const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file || !lead?.id) return
-
-    // validare tip fisier
-    if (!file.type.startsWith('image/')) {
-      toast.error('Tip de fișier invalid', {
-        description: 'Te rog selectează o imagine validă (JPG, PNG, etc.)'
-      })
-      return
-    }
-
-    // Validare dimensiune (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Fișier prea mare', {
-        description: 'Dimensiunea maximă este 5MB'
-      })
-      return
-    }
-
-    setUploading(true)
-    const toastId = toast.loading('Se încarcă imaginea...')
-    
-    try {
-      const { url, path } = await uploadLeadImage(getLeadId(), file)
-      const savedImage = await saveLeadImageReference(getLeadId(), url, path, file.name)
-      setImages(prev => [savedImage, ...prev])
-      toast.success('Imagine încărcată cu succes', { id: toastId })
-    } catch (error: any) {
-      console.error('Error uploading image:', error)
-      toast.error('Eroare la încărcarea imaginii', {
-        id: toastId,
-        description: error?.message || 'Te rog încearcă din nou'
-      })
-    } finally {
-      setUploading(false)
-      event.target.value = ''
-    }
-  }, [lead?.id])
-
-  const handleImageDelete = useCallback(async (imageId: string, filePath: string) => {
-    try {
-      await deleteLeadImage(filePath)
-      await deleteLeadImageReference(imageId)
-      setImages(prev => prev.filter(img => img.id !== imageId))
-      toast.success('Imagine ștearsă cu succes')
-    } catch (error: any) {
-      console.error('Error deleting image:', error)
-      toast.error('Eroare la ștergerea imaginii', {
-        description: error?.message || 'Te rog încearcă din nou'
-      })
-    }
-  }, [])
 
   // functii pentru contacte
   const handleCopy = useCallback(async (text: string, field: string) => {
@@ -1430,103 +1376,6 @@ export function LeadDetailsPanel({
             </div>
           </Collapsible>
 
-          {/* Imagini - Collapsible */}
-          <Collapsible open={isImagesOpen} onOpenChange={setIsImagesOpen}>
-            <div className="rounded-lg border bg-muted/30">
-              <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="h-4 w-4 text-primary" />
-                  <span className="font-medium text-sm">Imagini {images.length > 0 && `(${images.length})`}</span>
-                </div>
-                {isImagesOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </CollapsibleTrigger>
-              
-              <CollapsibleContent className="px-3 pb-3 space-y-3">
-              {/* buton pentru adaugare imagine */}
-              <div>
-                <input
-                  type="file"
-                  id="image-upload"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                  disabled={uploading}
-                />
-                <label
-                  htmlFor="image-upload"
-                    className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 cursor-pointer transition-all text-sm font-medium text-primary ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    {uploading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Se încarcă...</span>
-                      </>
-                    ) : (
-                      <>
-                  <ImagePlus className="h-4 w-4" />
-                        <span>Instalează imagine</span>
-                      </>
-                    )}
-                </label>
-              </div>
-
-              {/* Grid cu imaginile existente */}
-              {images.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2">
-                  {images.map((image) => (
-                    <div key={image.id} className="relative group">
-                      <div 
-                        className="aspect-square rounded-lg overflow-hidden border border-border bg-muted cursor-pointer hover:ring-2 ring-primary transition-all"
-                        onClick={() => setLightboxImage(image.url)}
-                      >
-                        <img
-                          src={image.url}
-                          alt={image.filename}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                            <Maximize2 className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleImageDelete(image.id, image.file_path)
-                        }}
-                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 shadow-lg border border-white/20"
-                        title="Șterge imagine"
-                      >
-                          <X className="h-4 w-4 text-white" strokeWidth={2.5} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Lightbox pentru imagini */}
-              {lightboxImage && (
-                <Dialog open={!!lightboxImage} onOpenChange={(open) => !open && setLightboxImage(null)}>
-                  <DialogContent className="max-w-4xl p-0">
-                    <DialogTitle className="sr-only">Preview imagine</DialogTitle>
-                    <img
-                      src={lightboxImage}
-                      alt="Preview"
-                      className="w-full h-auto max-h-[80vh] object-contain"
-                    />
-                  </DialogContent>
-                </Dialog>
-              )}
-
-              {images.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground border border-dashed rounded-lg">
-                    <ImageIcon className="h-6 w-6 mb-2 opacity-50" />
-                    <p className="text-xs">Nu există imagini</p>
-                </div>
-              )}
-              </CollapsibleContent>
-            </div>
-          </Collapsible>
-
           {/* Acțiuni - Stage & Pipeline */}
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
               <div>
@@ -1682,8 +1531,8 @@ export function LeadDetailsPanel({
                           )}
                         </SelectContent>
                       </Select>
-                      {/* Buton "Fișă nouă" - doar pentru vânzători în pipeline-ul Vânzări */}
-                      {isVanzator && isVanzariPipeline && (
+                      {/* Buton "Fișă nouă" - pentru pipeline-urile Vânzări și Receptie */}
+                      {(isVanzariPipeline || isReceptiePipeline) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -1691,7 +1540,7 @@ export function LeadDetailsPanel({
                           className="flex items-center gap-2"
                         >
                           <Plus className="h-4 w-4" />
-                          Fișă nouă
+                          Adaugă Fișă Serviciu
                         </Button>
                       )}
                       {selectedFisaId && (

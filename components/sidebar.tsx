@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors, Wrench, Building, Target, Briefcase, Phone, Package, Sparkles } from "lucide-react"
+import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors, Wrench, Building, Target, Briefcase, Phone, Package, Sparkles, Shield, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { useRole } from "@/hooks/useRole"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+import { useAuth } from "@/hooks/useAuth"
 
 interface SidebarProps {
   canManagePipelines?: boolean
@@ -44,9 +46,32 @@ const getPipelineIcon = (pipelineName: string) => {
 export function Sidebar({ canManagePipelines }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const { isOwner } = useRole()
+  const { isOwner, role: userRole } = useRole()
+  const { user } = useAuth()
+  const supabase = supabaseBrowser()
 
   const [pipeNames, setPipeNames] = useState<string[]>([])
+  const [isTechnician, setIsTechnician] = useState(false)
+
+  // Verifică dacă utilizatorul este tehnician
+  useEffect(() => {
+    async function checkTechnician() {
+      if (!user?.id) {
+        setIsTechnician(false)
+        return
+      }
+      // Verifică dacă utilizatorul există în app_members (tehnicienii sunt în app_members)
+      const { data } = await supabase
+        .from('app_members')
+        .select('user_id, role')
+        .eq('user_id', user.id)
+        .single()
+      
+      // Dacă există în app_members și nu este owner/admin, considerăm că este tehnician
+      setIsTechnician(!!data && data.role !== 'owner' && data.role !== 'admin')
+    }
+    checkTechnician()
+  }, [user, supabase])
 
   // create pipeline dialog state
   const [createOpen, setCreateOpen] = useState(false)
@@ -71,8 +96,22 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
 
   const reloadPipes = useCallback(async () => {
     const { data, error } = await getPipelinesWithStages()
-    if (!error && data) setPipeNames(data.map((p: any) => p.name))
-  }, [])
+    if (!error && data) {
+      let allPipelines = data.map((p: any) => p.name)
+      
+      // Pentru tehnicieni, filtrează doar pipeline-urile departamentelor
+      if (isTechnician) {
+        const departmentPipelines = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
+        allPipelines = allPipelines.filter(p => 
+          departmentPipelines.some(dept => 
+            p.toLowerCase() === dept.toLowerCase()
+          )
+        )
+      }
+      
+      setPipeNames(allPipelines)
+    }
+  }, [isTechnician])
 
   // Single unified effect: mount/route-change + custom event from editor/sidebar actions
   useEffect(() => {
@@ -181,15 +220,44 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
         {/* Main nav */}
         <nav className="space-y-2 mb-6">
           <Link
-            href="/"
+            href="/dashboard"
             className={cn(
               "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
-              pathname === "/" && "bg-sidebar-accent"
+              pathname === "/dashboard" && "bg-sidebar-accent"
             )}
           >
             <LayoutDashboard className="h-4 w-4" />
             <span>Dashboard</span>
           </Link>
+
+          {/* Link accesibil pentru owner și admin */}
+          {(isOwner || userRole === 'admin') && (
+            <Link
+              href="/configurari/catalog"
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
+                pathname === "/configurari/catalog" && "bg-sidebar-accent"
+              )}
+            >
+              <Settings className="h-4 w-4" />
+              <span>Catalog</span>
+            </Link>
+          )}
+
+          {isOwner && (
+            <>
+              <Link
+                href="/admins"
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
+                  pathname === "/admins" && "bg-sidebar-accent"
+                )}
+              >
+                <Shield className="h-4 w-4" />
+                <span>Admins</span>
+              </Link>
+            </>
+          )}
 
           <div className="mt-4">
             <div className="flex items-center justify-between px-2 text-xs uppercase tracking-wide text-muted-foreground mb-2">
