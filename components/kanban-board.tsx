@@ -266,7 +266,7 @@ export function KanbanBoard({
             if (isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())) {
               newTotals[stage] = 0
             } else {
-              newTotals[stage] = 0
+            newTotals[stage] = 0
             }
             newLoadingStates[stage] = false
           })
@@ -470,24 +470,24 @@ export function KanbanBoard({
                   }
                   
                   return (
-                    <div className="text-right flex-shrink-0">
-                      {isLoading ? (
-                        <div className="space-y-1">
-                          <Skeleton className="h-4 w-16" />
-                          <Skeleton className="h-3 w-12" />
+                  <div className="text-right flex-shrink-0">
+                    {isLoading ? (
+                      <div className="space-y-1">
+                        <Skeleton className="h-4 w-16" />
+                        <Skeleton className="h-3 w-12" />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-end">
+                        <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
+                          <TrendingUp className="h-3.5 w-3.5" />
+                          {total.toFixed(2)} RON
                         </div>
-                      ) : (
-                        <div className="flex flex-col items-end">
-                          <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
-                            <TrendingUp className="h-3.5 w-3.5" />
-                            {total.toFixed(2)} RON
-                          </div>
-                          {total > 0 && (
-                            <span className="text-[10px] text-muted-foreground">Total</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                        {total > 0 && (
+                          <span className="text-[10px] text-muted-foreground">Total</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   )
                 })()}
 

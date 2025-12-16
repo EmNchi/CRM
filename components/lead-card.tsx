@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import type { Lead } from "@/app/page"
+import type { Lead } from "@/app/(crm)/dashboard/page"
 import type { TagColor } from "@/lib/supabase/tagOperations"
 import { getOrCreatePinnedTag, toggleLeadTag } from "@/lib/supabase/tagOperations"
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns"
@@ -28,9 +28,10 @@ interface LeadCardProps {
   isSelected?: boolean
   onSelectChange?: (isSelected: boolean) => void
   leadTotal?: number
+  pipelineName?: string
 }
 
-export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDragging, stages, onPinToggle, isSelected = false, onSelectChange, leadTotal = 0 }: LeadCardProps) {
+export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDragging, stages, onPinToggle, isSelected = false, onSelectChange, leadTotal = 0, pipelineName }: LeadCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [isPinning, setIsPinning] = useState(false)
@@ -222,51 +223,117 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
     }
   }
 
+  const isTrayOrServiceFile = (lead as any).type === 'tray' || (lead as any).type === 'service_file' || lead.isQuote
+  const isReadOnly = (lead as any).isReadOnly || false
+  
   return (
     <div
       className={cn(
-        "bg-background border rounded-lg p-3 shadow-sm cursor-pointer transition-all hover:shadow-md",
-        isDragging && "opacity-50 rotate-2 scale-105",
+        "bg-background border rounded-lg shadow-sm transition-all hover:shadow-md",
+        isTrayOrServiceFile ? "p-2" : "p-3", // Padding mai mic pentru tăvițe
+        isDragging && !isReadOnly && "opacity-50 rotate-2 scale-105",
         isSelected && "border-primary border-2 bg-primary/5",
+        isReadOnly && "opacity-75 cursor-not-allowed",
       )}
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      draggable={!isReadOnly}
+      onDragStart={!isReadOnly ? onDragStart : undefined}
+      onDragEnd={!isReadOnly ? onDragEnd : undefined}
       onClick={handleCardClick}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h4 className="font-medium text-foreground truncate">{lead.name}</h4>
-            {leadAge?.isNew && (
-              <span 
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-sm animate-pulse border border-red-300 cursor-help"
-                title={`Lead creat acum ${leadAge.timeText}`}
-              >
-                NOU
-              </span>
-            )}
-          </div>
-          
-          {lead.email && (
-            <div className="flex items-center gap-1 mt-1">
-              <Mail className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-              <p className="text-xs text-muted-foreground truncate">{lead.email}</p>
-            </div>
-          )}
-          
-          {lead.phone && (
-            <div className="flex items-center gap-1 mt-1">
-              <Phone className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-              <p className="text-xs text-muted-foreground truncate">{lead.phone}</p>
-            </div>
-          )}
-          
-          {lead.technician && (
-            <div className="flex items-center gap-1 mt-1">
-              <User className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-              <p className="text-xs text-muted-foreground truncate">Tehnician: {lead.technician}</p>
-            </div>
+          {(lead.isQuote || (lead as any).type === 'tray') ? (
+            // Afișare minimalistă pentru tăviță (tray)
+            <>
+              {/* Header: Client + Total */}
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-medium text-foreground truncate text-sm">{lead.name}</h4>
+                {(lead as any).total !== undefined && (lead as any).total > 0 && (
+                  <span className="text-sm font-bold text-green-600 dark:text-green-400 whitespace-nowrap">
+                    {((lead as any).total as number).toFixed(2)} RON
+                  </span>
+                )}
+              </div>
+              
+              {/* Info row: Tehnician + Status */}
+              <div className="flex items-center justify-between gap-2 mt-1">
+                {lead.technician ? (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <User className="h-3 w-3" />
+                    <span className="truncate">{lead.technician}</span>
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground/50 italic">Neatribuit</span>
+                )}
+                
+                {(lead as any).trayStatus && (
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                    (lead as any).trayStatus === 'gata' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                    (lead as any).trayStatus === 'in_lucru' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
+                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }`}>
+                    {(lead as any).trayStatus === 'gata' ? '✓ Gata' : 
+                     (lead as any).trayStatus === 'in_lucru' ? '⏳ Lucru' : 
+                     (lead as any).trayStatus}
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (lead as any).type === 'service_file' ? (
+            // Afișare minimalistă pentru fișă de serviciu
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-medium text-foreground truncate text-sm">{lead.name}</h4>
+                {(lead as any).serviceFileNumber && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    #{(lead as any).serviceFileNumber}
+                  </span>
+                )}
+              </div>
+              
+              {lead.phone && (
+                <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+                  <Phone className="h-3 w-3" />
+                  <span className="truncate">{lead.phone}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            // Afișare pentru lead (comportament normal)
+            <>
+              <div className="flex items-center gap-2 mb-1">
+                <h4 className="font-medium text-foreground truncate">{lead.name}</h4>
+                {leadAge?.isNew && (
+                  <span 
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-sm animate-pulse border border-red-300 cursor-help"
+                    title={`Lead creat acum ${leadAge.timeText}`}
+                  >
+                    NOU
+                  </span>
+                )}
+              </div>
+              
+              {lead.email && (
+                <div className="flex items-center gap-1 mt-1">
+                  <Mail className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground truncate">{lead.email}</p>
+                </div>
+              )}
+              
+              {lead.phone && (
+                <div className="flex items-center gap-1 mt-1">
+                  <Phone className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground truncate">{lead.phone}</p>
+                </div>
+              )}
+              
+              {lead.technician && (
+                <div className="flex items-center gap-1 mt-1">
+                  <User className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground truncate">Tehnician: {lead.technician}</p>
+                </div>
+              )}
+            </>
           )}
           
           {lead.createdAt && (
@@ -384,6 +451,7 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
         </div>
       </div>
       
+      {pipelineName && !pipelineName.toLowerCase().includes('vanzari') && (
       <div className="flex justify-end mt-2">
       <div className="text-xs font-medium text-muted-foreground">
           {leadTotal > 0 ? (
@@ -397,6 +465,7 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

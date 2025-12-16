@@ -2,8 +2,10 @@
 
 import React from 'react'
 import { format } from 'date-fns'
-import type { Lead } from '@/app/page'
-import type { LeadQuoteItem, LeadQuote } from '@/lib/supabase/quoteOperations'
+import type { Lead } from '@/app/(crm)/dashboard/page'
+// Tipuri pentru print view
+type LeadQuoteItem = any
+type LeadQuote = any
 import type { Service } from '@/lib/supabase/serviceOperations'
 
 interface SheetData {
@@ -32,7 +34,7 @@ interface PrintViewProps {
 // Calculează totalul pentru un item
 function calculateItemTotal(item: LeadQuoteItem, urgentMarkupPct: number): number {
   const disc = Math.min(100, Math.max(0, item.discount_pct))
-  const base = item.qty * item.unit_price_snapshot
+  const base = item.qty * item.price
   const afterDisc = base * (1 - disc / 100)
   return item.urgent ? afterDisc * (1 + urgentMarkupPct / 100) : afterDisc
 }
@@ -191,7 +193,7 @@ export function PrintView({
                       <td style={cellStyle}>{item.qty}</td>
                       <td style={cellStyle}>{item.department || '-'}</td>
                       <td style={cellStyle}>{item.technician || '-'}</td>
-                      <td style={cellStyle}>{item.unit_price_snapshot.toFixed(2)}</td>
+                      <td style={cellStyle}>{item.price.toFixed(2)}</td>
                       <td style={{ ...cellStyle, fontWeight: 'bold' }}>{lineTotal.toFixed(2)}</td>
                     </tr>
                   )
@@ -209,7 +211,7 @@ export function PrintView({
                       <td style={cellStyle}>{item.qty}</td>
                       <td style={cellStyle}>{item.department || '-'}</td>
                       <td style={cellStyle}>-</td>
-                      <td style={cellStyle}>{item.unit_price_snapshot.toFixed(2)}</td>
+                      <td style={cellStyle}>{item.price.toFixed(2)}</td>
                       <td style={{ ...cellStyle, fontWeight: 'bold' }}>{lineTotal.toFixed(2)}</td>
                     </tr>
                   )

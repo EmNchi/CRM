@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { format } from "date-fns"
-import type { Lead } from "@/app/page"
+import type { Lead } from "@/app/(crm)/dashboard/page"
 
 interface LeadModalProps {
   lead: Lead | null

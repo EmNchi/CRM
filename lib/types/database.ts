@@ -96,6 +96,30 @@ export interface KanbanLead {
     tags?: { id: string; name: string; color: 'green' | 'yellow' | 'red' }[]
     stageMovedAt?: string // data cand lead-ul a fost mutat in stage-ul curent
     technician?: string | null // Tehnicianul atribuit lead-ului
+    // Câmpuri pentru quotes (când isQuote = true)
+    isQuote?: boolean // true dacă acest card reprezintă o tăviță, nu un lead
+    quoteId?: string // ID-ul tăviței (când isQuote = true)
+    department?: string // Departamentul tăviței
+    leadName?: string // Numele clientului (când isQuote = true)
+    // Câmpuri pentru fișe (când isFisa = true)
+    isFisa?: boolean // true dacă acest card reprezintă o fișă de serviciu
+    fisaId?: string // ID-ul fișei (când isFisa = true)
+}
+
+export interface KanbanQuote {
+    id: string // quote id
+    name: string // quote name (ex: "Tăbliță 1")
+    leadId: string
+    leadName: string // lead full_name
+    leadEmail: string | null
+    leadPhone: string | null
+    stage: string
+    stageId: string
+    pipelineId: string
+    createdAt: string
+    department: string // departamentul tăviței
+    technician_id: string | null // Tehnicianul atribuit tăviței (din items)
+    technician?: string | null // Numele tehnicianului
 }
 
 export const STAGE_COLORS: Record<string, string> = {

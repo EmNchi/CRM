@@ -7,6 +7,15 @@ type Role = 'owner' | 'admin' | 'member'
 
 export async function POST(req: Request) {
   try {
+    // Verifică variabilele de mediu necesare
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('Missing env vars: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+      return NextResponse.json({ 
+        ok: false, 
+        error: 'Server configuration error: Missing Supabase credentials. Contact administrator.' 
+      }, { status: 500 })
+    }
+
     const { email, password, role }: { email?: string; password?: string; role?: Role } = await req.json()
     if (!email || !password) {
       return NextResponse.json({ ok: false, error: 'email and password are required' }, { status: 400 })
@@ -17,19 +26,21 @@ export async function POST(req: Request) {
     const { data: { user: me } } = await supaUser.auth.getUser()
     if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
-    // 2) MVP allowlist: only these emails can add users
-    const admins = (process.env.ADMIN_EMAILS || '')
-      .split(',')
-      .map(s => s.trim().toLowerCase())
-      .filter(Boolean)
-    if (admins.length && !admins.includes((me.email || '').toLowerCase())) {
-      return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
+    // 2) Check if caller is owner (nu mai folosim ADMIN_EMAILS)
+    const { data: callerMembership } = await supaUser
+      .from('app_members')
+      .select('role')
+      .eq('user_id', me.id)
+      .single()
+    
+    if (!callerMembership || callerMembership.role !== 'owner') {
+      return NextResponse.json({ ok: false, error: 'forbidden - only owners can add members' }, { status: 403 })
     }
 
     // 3) Admin client (service role) to manage users & bypass RLS for admin ops
     const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY! // NEVER expose to client
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
     )
 
     // 4) Create (or find) the auth user
@@ -61,10 +72,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'no user id' }, { status: 500 })
     }
 
-    // 5) ✅ Insert membership so RLS allows data access
+    // 5) ✅ Insert membership so RLS allows data access (include email)
     const { error: memErr } = await admin
       .from('app_members')
-      .upsert({ user_id: newUserId, role: role ?? 'admin' }) // default admin for MVP
+      .upsert({ user_id: newUserId, role: role ?? 'admin', email: email.toLowerCase() }) // default admin for MVP
     if (memErr) {
       return NextResponse.json({ ok: false, error: `membership: ${memErr.message}` }, { status: 500 })
     }

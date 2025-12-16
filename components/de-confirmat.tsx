@@ -46,15 +46,16 @@ export default function DeConfirmat({ leadId, onMoveStage }: Props) {
     return (data ?? []) as Array<any>
   }
 
-  // Load only the confirmation conversation from lead_events
+  // Load only the confirmation conversation from items_events
   useEffect(() => {
     let cancelled = false
     setLoading(true)
 
     supabase
-      .from("lead_events")
+      .from("items_events")
       .select("id,actor_name,event_type,message,created_at")
-      .eq("lead_id", leadId)
+      .eq("type", "lead")
+      .eq("item_id", leadId)
       .in("event_type", ["confirm_request", "confirm_reply", "confirm_done"])
       .order("created_at", { ascending: false })
       .then(({ data }: any) => {
@@ -70,7 +71,7 @@ export default function DeConfirmat({ leadId, onMoveStage }: Props) {
       .channel(`lead_conf_${leadId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "lead_events", filter: `lead_id=eq.${leadId}` },
+        { event: "INSERT", schema: "public", table: "items_events", filter: `type=eq.lead&item_id=eq.${leadId}` },
         (p: any) => {
           if (!["confirm_request", "confirm_reply", "confirm_done"].includes(p.new.event_type)) return
           setItems(prev => pushUnique(prev, p.new as Ev))
