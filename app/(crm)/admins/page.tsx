@@ -5,8 +5,14 @@ import { useRole } from "@/hooks/useRole"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Trash2, Shield, UserPlus, Loader2, Crown } from "lucide-react"
+import { Label } from "@/components/ui/label"
+import { Trash2, Shield, UserPlus, Loader2, Crown, ChevronDown, ChevronUp, Save } from "lucide-react"
 import { toast } from "sonner"
+import { Checkbox } from "@/components/ui/checkbox"
+import { grantPipelineAccess, revokePipelineAccess } from "@/lib/supabase/pipelinePermissions"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+
+const supabase = supabaseBrowser()
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,9 +60,111 @@ export default function AdminsPage() {
   // Role update
   const [updatingRole, setUpdatingRole] = useState<string | null>(null)
 
+  // Sync all members
+  const [syncing, setSyncing] = useState(false)
+
+  // Permissions management
+  const [expandedMember, setExpandedMember] = useState<string | null>(null)
+  const [pipelines, setPipelines] = useState<Array<{ id: string; name: string }>>([])
+  const [memberPermissions, setMemberPermissions] = useState<{ [userId: string]: string[] }>({})
+  const [savingPermissions, setSavingPermissions] = useState(false)
+  const [invalidMembers, setInvalidMembers] = useState<string[]>([]) // user_ids invalide
+
   useEffect(() => {
     loadMembers()
+    loadPipelines()
   }, [])
+
+  async function loadPipelines() {
+    try {
+      const { data, error } = await supabase
+        .from('pipelines')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('position')
+      
+      if (error) throw error
+      setPipelines(data || [])
+    } catch (error) {
+      console.error('Error loading pipelines:', error)
+    }
+  }
+
+  async function loadMemberPermissions(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('user_pipeline_permissions')
+        .select('pipeline_id')
+        .eq('user_id', userId)
+      
+      if (error) throw error
+      
+      const pipelineIds = (data || []).map(p => p.pipeline_id)
+      setMemberPermissions(prev => ({ ...prev, [userId]: pipelineIds }))
+    } catch (error) {
+      console.error('Error loading member permissions:', error)
+    }
+  }
+
+  async function toggleMemberExpanded(userId: string) {
+    if (expandedMember === userId) {
+      setExpandedMember(null)
+    } else {
+      setExpandedMember(userId)
+      // Încarcă permisiunile pentru acest membru dacă nu sunt deja încărcate
+      if (!memberPermissions[userId]) {
+        await loadMemberPermissions(userId)
+      }
+    }
+  }
+
+  function togglePermission(userId: string, pipelineId: string) {
+    setMemberPermissions(prev => {
+      const current = prev[userId] || []
+      if (current.includes(pipelineId)) {
+        return { ...prev, [userId]: current.filter(id => id !== pipelineId) }
+      } else {
+        return { ...prev, [userId]: [...current, pipelineId] }
+      }
+    })
+  }
+
+  async function saveMemberPermissions(userId: string) {
+    setSavingPermissions(true)
+    try {
+      const newPerms = memberPermissions[userId] || []
+      
+      // Obține permisiunile actuale din DB
+      const { data: currentData } = await supabase
+        .from('user_pipeline_permissions')
+        .select('pipeline_id')
+        .eq('user_id', userId)
+      
+      const currentPerms = (currentData || []).map(p => p.pipeline_id)
+      
+      // Ce trebuie adăugat și ce trebuie șters
+      const toAdd = newPerms.filter(id => !currentPerms.includes(id))
+      const toRemove = currentPerms.filter(id => !newPerms.includes(id))
+      
+      // Acordă permisiuni noi
+      for (const pipelineId of toAdd) {
+        await grantPipelineAccess(userId, pipelineId)
+      }
+      
+      // Revocă permisiuni
+      for (const pipelineId of toRemove) {
+        await revokePipelineAccess(userId, pipelineId)
+      }
+      
+      toast.success('Permisiuni actualizate')
+      await loadMemberPermissions(userId)
+    } catch (error: any) {
+      console.error('Error saving permissions:', error)
+      toast.error(error.message || 'Eroare la salvarea permisiunilor')
+    } finally {
+      setSavingPermissions(false)
+    }
+  }
 
   async function loadMembers() {
     setLoading(true)
@@ -69,12 +177,45 @@ export default function AdminsPage() {
         throw new Error(data.error || "Eroare la încărcare")
       }
 
-      setMembers(data.members || [])
+      const loadedMembers = data.members || []
+      setMembers(loadedMembers)
+      
+      // Identifică membri invalizi (fără email sau cu email generic)
+      const invalid = loadedMembers
+        .filter((m: AppMember) => !m.email || m.email.startsWith('User ') || !m.email.includes('@'))
+        .map((m: AppMember) => m.user_id)
+      
+      setInvalidMembers(invalid)
+      
     } catch (error) {
       console.error("Error loading members:", error)
       toast.error("Eroare la încărcarea membrilor")
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function syncAllMembers() {
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/admin/sync-all-members', {
+        method: 'POST'
+      })
+
+      const data = await res.json()
+
+      if (!data.ok) {
+        throw new Error(data.error || 'Eroare la sincronizare')
+      }
+
+      toast.success(data.message || 'Membrii au fost sincronizați!')
+      await loadMembers()
+      
+    } catch (error: any) {
+      console.error('Sync error:', error)
+      toast.error(error.message || 'Eroare la sincronizare')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -219,6 +360,25 @@ export default function AdminsPage() {
         </CardHeader>
         <CardContent className="pt-6 space-y-8">
           
+          {/* Buton Sincronizare Toți Membrii */}
+          <div className="flex items-center justify-between p-3 bg-primary/5 border border-primary/20 rounded-lg">
+            <div>
+              <p className="text-sm font-medium">Probleme cu salvarea permisiunilor?</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Sincronizează user_id-urile cu auth.users
+              </p>
+            </div>
+            <Button
+              onClick={syncAllMembers}
+              disabled={syncing}
+              variant="default"
+              size="sm"
+            >
+              {syncing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {syncing ? 'Sincronizare...' : 'Sincronizează Membrii'}
+            </Button>
+          </div>
+
           {/* Adaugă membru - inline form */}
           <div className="space-y-2">
             <form onSubmit={handleAddMember} className="flex items-center gap-2 p-3 border rounded-lg">
@@ -327,38 +487,112 @@ export default function AdminsPage() {
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold tracking-wide text-muted-foreground">MEMBRI</h3>
                 <div className="border rounded-lg divide-y">
-                  {regularMembers.map((member) => (
-                    <div key={getMemberKey(member)} className="flex items-center justify-between p-3">
-                      <span className="font-mono text-sm">{member.email}</span>
-                      <div className="flex items-center gap-2">
-                        <Select 
-                          value={member.role} 
-                          onValueChange={(v) => handleRoleChange(member, v as any)}
-                          disabled={updatingRole === getMemberKey(member)}
-                        >
-                          <SelectTrigger className="w-[100px] h-8">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="member">member</SelectItem>
-                            <SelectItem value="admin">admin</SelectItem>
-                            <SelectItem value="owner">owner</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setMemberToDelete(member)
-                            setDeleteDialogOpen(true)
-                          }}
-                          className="text-muted-foreground hover:text-destructive"
-                        >
-                          [Sterge]
-                        </Button>
+                  {regularMembers.map((member) => {
+                    const isInvalid = invalidMembers.includes(member.user_id)
+                    
+                    return (
+                    <div key={getMemberKey(member)} className={`border rounded-lg overflow-hidden mb-2 ${isInvalid ? 'border-destructive/50 bg-destructive/5' : ''}`}>
+                      <div className="flex items-center justify-between p-3 bg-background">
+                        <div className="flex items-center gap-3 flex-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleMemberExpanded(member.user_id)}
+                            className="p-1 h-8 w-8"
+                            disabled={isInvalid}
+                          >
+                            {expandedMember === member.user_id ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <div className="flex-1">
+                            <span className="font-mono text-sm">{member.email}</span>
+                            {isInvalid && (
+                              <span className="text-xs text-destructive ml-2">(User ID invalid - șterge)</span>
+                            )}
+                          </div>
+                          {!isInvalid && (
+                            <span className="text-xs text-muted-foreground">
+                              {memberPermissions[member.user_id]?.length || 0} pipeline-uri
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={member.role}
+                            onValueChange={(v) => handleRoleChange(member, v as any)}
+                            disabled={updatingRole === getMemberKey(member)}
+                          >
+                            <SelectTrigger className="w-[100px] h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="member">member</SelectItem>
+                              <SelectItem value="admin">admin</SelectItem>
+                              <SelectItem value="owner">owner</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setMemberToDelete(member)
+                              setDeleteDialogOpen(true)
+                            }}
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            [Sterge]
+                          </Button>
+                        </div>
                       </div>
+                      
+                      {/* Panel expandabil pentru permisiuni */}
+                      {expandedMember === member.user_id && (
+                        <div className="p-4 bg-muted/30 border-t space-y-4">
+                          <div className="flex items-center gap-2 text-sm font-medium">
+                            <Shield className="h-4 w-4" />
+                            <span>Permisiuni Pipeline-uri pentru {member.email}</span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3">
+                            {pipelines.map(pipeline => {
+                              const hasAccess = (memberPermissions[member.user_id] || []).includes(pipeline.id)
+                              
+                              return (
+                                <div key={pipeline.id} className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`${member.user_id}-${pipeline.id}`}
+                                    checked={hasAccess}
+                                    onCheckedChange={() => togglePermission(member.user_id, pipeline.id)}
+                                  />
+                                  <Label
+                                    htmlFor={`${member.user_id}-${pipeline.id}`}
+                                    className="text-sm font-normal cursor-pointer"
+                                  >
+                                    {pipeline.name}
+                                  </Label>
+                                </div>
+                              )
+                            })}
+                          </div>
+                          
+                          <Button
+                            onClick={() => saveMemberPermissions(member.user_id)}
+                            disabled={savingPermissions}
+                            size="sm"
+                            className="w-full"
+                          >
+                            {savingPermissions && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            <Save className="h-4 w-4 mr-2" />
+                            Salvează Permisiuni
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    )
+                  })}
                   {regularMembers.length === 0 && (
                     <div className="p-3 text-sm text-muted-foreground text-center">
                       Niciun membru

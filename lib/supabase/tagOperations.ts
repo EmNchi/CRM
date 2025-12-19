@@ -38,7 +38,16 @@ export async function toggleLeadTag(leadId: string, tagId: string) {
     const { error } = await supabase
       .from('lead_tags')
       .insert([{ lead_id: leadId, tag_id: tagId }] as any)
-    if (error) throw error
+      .select('lead_id, tag_id')
+      .single()
+
+    // Dacă primim eroare de tip duplicate key (23505), înseamnă că în paralel
+    // a fost deja inserată aceeași pereche (lead_id, tag_id). O putem ignora
+    // și considerăm că tag-ul este deja adăugat.
+    if (error && (error as any).code !== '23505') {
+      throw error
+    }
+
     return { added: true }
   }
 }

@@ -8,6 +8,7 @@ import {
   getTrayItem,
   type TrayItem
 } from "@/lib/supabase/serviceFileOperations"
+import { addTrayToPipeline } from "@/lib/supabase/pipelineOperations"
 import type { Service } from "@/lib/supabase/serviceOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 
@@ -158,9 +159,15 @@ export async function persistAndLogServiceSheet(params: {
 
   // === 1) APPLY CHANGES TO DB (delete, update, add) ===
 
-  // Obține technician_id pentru utilizatorul curent (pentru atribuire automată)
+  // Verifică dacă suntem într-un pipeline departament (Saloane, Frizerii, Horeca, Reparatii)
+  // Pentru aceste pipeline-uri, NU se face atribuire automată a tehnicianului
+  const departmentPipelineNames = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
+  const isDepartmentPipeline = pipelinesWithIds.some(p => departmentPipelineNames.includes(p.name))
+  
+  // Obține technician_id pentru utilizatorul curent
+  // NOTĂ: Pentru pipeline-urile departament, NU se va folosi pentru atribuire automată
   const currentUserTechnicianId = await getCurrentUserTechnicianId()
-  console.log('🔧 Current user technician_id:', currentUserTechnicianId)
+  console.log('🔧 Current user technician_id:', currentUserTechnicianId, '| isDepartmentPipeline:', isDepartmentPipeline)
 
   // Deletes: anything that existed before (real DB id) but not anymore in current items
   const currentDbIds = new Set(items.filter(it => !isLocalId(it.id)).map(it => String(it.id)))
@@ -287,8 +294,9 @@ export async function persistAndLogServiceSheet(params: {
         }
       }
       if (patch.technician_id !== undefined) {
-        // Dacă technician_id este setat, folosește-l; altfel folosește cel din utilizatorul curent
-        trayItemPatch.technician_id = patch.technician_id || currentUserTechnicianId
+        // Dacă technician_id este setat explicit, folosește-l
+        // Pentru pipeline-urile departament, NU se face atribuire automată
+        trayItemPatch.technician_id = patch.technician_id || (isDepartmentPipeline ? null : currentUserTechnicianId)
         
         // Loghează atribuirea tehnicianului
         try {
@@ -379,10 +387,11 @@ export async function persistAndLogServiceSheet(params: {
         console.warn('Serviciu fără nume valid:', svcDef)
         continue
       }
-      // Setează technician_id: dacă este setat manual, folosește-l; altfel folosește cel din utilizatorul curent
-      const technicianId = it.technician_id && String(it.technician_id).trim() 
-        ? String(it.technician_id).trim() 
-        : currentUserTechnicianId
+      // Setează technician_id: dacă este setat manual, folosește-l
+      // Pentru pipeline-urile departament, NU se face atribuire automată - păstrează null
+      const technicianId = it.technician_id && String(it.technician_id).trim()
+        ? String(it.technician_id).trim()
+        : (isDepartmentPipeline ? null : currentUserTechnicianId)
       
       const serviceItemOpts = {
         qty: Number(it.qty ?? 1),
@@ -545,7 +554,8 @@ export async function persistAndLogServiceSheet(params: {
           }
         }
         
-        const technicianIdForInstrument = it.technician_id || currentUserTechnicianId
+        // Pentru pipeline-urile departament, NU se face atribuire automată
+        const technicianIdForInstrument = it.technician_id || (isDepartmentPipeline ? null : currentUserTechnicianId)
         const { data: createdInstrumentItem, error } = await createTrayItem({
           tray_id: quoteId,
           instrument_id: instrumentId,
@@ -620,10 +630,16 @@ export async function persistAndLogServiceSheet(params: {
           instrument_id: instrumentId,
           department_id: departmentId,
           service_id: null,
-          technician_id: it.technician_id || currentUserTechnicianId,
+          technician_id: it.technician_id || (isDepartmentPipeline ? null : currentUserTechnicianId),
           qty: Number(it.qty ?? 1),
           notes: JSON.stringify(notesData),
           pipeline: pipelineNameForInstrumentAlt,
+          // Brand și serial_number se salvează în tabelul tray_item_brand_serials
+          brandSerialGroups: it.brand || it.serial_number ? [{
+            brand: it.brand || null,
+            serialNumbers: it.serial_number ? [it.serial_number] : [],
+            garantie: it.garantie || false
+          }] : undefined,
         })
         if (error) {
           console.error('Error creating instrument tray item:', error)
@@ -666,6 +682,21 @@ export async function persistAndLogServiceSheet(params: {
         }
       }
       
+      // Fallback pentru department_id: folosește departamentul "Reparatii" pentru piese
+      if (!departmentId) {
+        const supabase = supabaseBrowser()
+        const { data: reparatiiDept } = await supabase
+          .from('departments')
+          .select('id')
+          .eq('name', 'Reparatii')
+          .single()
+        
+        if (reparatiiDept?.id) {
+          departmentId = reparatiiDept.id
+          console.log('Part fallback to Reparatii department:', departmentId)
+        }
+      }
+      
       console.log('Part department lookup:', {
         partName,
         itemDeptId: (it as any).department_id,
@@ -689,12 +720,18 @@ export async function persistAndLogServiceSheet(params: {
         }
       }
       
-      const technicianIdForPart = it.technician_id && String(it.technician_id).trim() 
-        ? String(it.technician_id).trim() 
-        : currentUserTechnicianId
+      // Pentru pipeline-urile departament, NU se face atribuire automată
+      const technicianIdForPart = it.technician_id && String(it.technician_id).trim()
+        ? String(it.technician_id).trim()
+        : (isDepartmentPipeline ? null : currentUserTechnicianId)
+      
+      // Obține part_id din item dacă există
+      const partId = (it as any).part_id || null
+      
       const { data: createdPartItem, error } = await createTrayItem({
         tray_id: quoteId,
         service_id: null, // Piese nu au service_id
+        part_id: partId,
         instrument_id: instrumentId,
         department_id: departmentId,
         technician_id: technicianIdForPart,
@@ -827,6 +864,42 @@ export async function persistAndLogServiceSheet(params: {
   })
   
   const freshSnap = (fresh ?? []).map(toSnap)
+
+  // === 2.5) AUTO-ADD TRAY TO DEPARTMENT PIPELINE ===
+  // Verifică dacă există items cu pipeline_id setat și adaugă tăvița în pipeline-ul corespunzător
+  if (pipelinesWithIds.length > 0) {
+    const supabase = supabaseBrowser()
+    
+    // Colectează toate pipeline_id-urile unice din items
+    const pipelineIdsFromItems = new Set<string>()
+    for (const item of fresh) {
+      if (item.pipeline_id) {
+        pipelineIdsFromItems.add(item.pipeline_id)
+      }
+    }
+    
+    // TODO: Auto-adaugarea tăvițelor în pipeline-urile departamentelor a fost dezactivată
+    // Tăvițele vor fi adăugate în departamente doar când se apasă butonul "Trimite tăvițele"
+    // din pipeline-ul Curier sau Receptie, nu automat la salvare
+    // 
+    // Logica veche (comentată):
+    // Pentru fiecare pipeline_id unic, verifică dacă tăvița trebuie adăugată
+    // for (const pipelineId of pipelineIdsFromItems) {
+    //   // Verifică dacă este un pipeline departament (Saloane, Frizerii, Horeca, Reparatii)
+    //   const pipeline = pipelinesWithIds.find(p => p.id === pipelineId)
+    //   if (!pipeline) continue
+    //   
+    //   const departmentPipelines = ['saloane', 'frizerii', 'horeca', 'reparatii']
+    //   const isDepartmentPipeline = departmentPipelines.some(dept => 
+    //     pipeline.name.toLowerCase() === dept.toLowerCase()
+    //   )
+    //   
+    //   if (isDepartmentPipeline) {
+    //     // Adaugă tăvița în pipeline doar când se apasă "Trimite tăvițele"
+    //     // Nu se mai adaugă automat la salvare
+    //   }
+    // }
+  }
 
   // === 3) Compose message + payload and log ===
   const d = diffSnapshots(prevSnapshot, freshSnap)

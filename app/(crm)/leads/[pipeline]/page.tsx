@@ -11,8 +11,9 @@ import type { KanbanLead } from '@/lib/types/database'
 import { useParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Plus, Settings2, Filter, X, Search } from "lucide-react"
+import { Plus, Settings2, Filter, X, Search, GripVertical, ArrowUp, ArrowDown } from "lucide-react"
 import { useRole } from '@/hooks/useRole'
+import { useAuthContext } from '@/lib/contexts/AuthContext'
 import { Sidebar } from '@/components/sidebar'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, logLeadEvent } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"
@@ -23,6 +24,15 @@ import { Textarea } from "@/components/ui/textarea"
 import { createLeadWithPipeline } from "@/lib/supabase/leadOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useUserPreferences } from "@/hooks/useUserPreferences"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet"
+import { Badge } from "@/components/ui/badge"
 
 type Technician = {
   id: string // user_id din app_members
@@ -69,29 +79,11 @@ export default function CRMPage() {
     stages: { id: string; name: string }[]
   } | null>(null)
 
+  // State pentru dialog-ul de customizare mobil
+  const [customizeOpen, setCustomizeOpen] = useState(false)
+
   const { isOwner, role } = useRole()
-  const [isTechnician, setIsTechnician] = useState(false)
-  
-  // Verifică dacă utilizatorul este tehnician
-  useEffect(() => {
-    async function checkTechnician() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user?.id) {
-        setIsTechnician(false)
-        return
-      }
-      // Verifică dacă utilizatorul există în app_members
-      const { data } = await supabase
-        .from('app_members')
-        .select('user_id, role')
-        .eq('user_id', user.id)
-        .single()
-      
-      // Dacă există în app_members și nu este owner/admin, considerăm că este tehnician
-      setIsTechnician(!!data && data.role !== 'owner' && data.role !== 'admin')
-    }
-    checkTechnician()
-  }, [])
+  const { hasAccess, isMember, loading: authLoading } = useAuthContext()
   
   const [createStageOpen, setCreateStageOpen] = useState(false)
   const [stageName, setStageName] = useState("")
@@ -135,30 +127,59 @@ export default function CRMPage() {
 
   const { leads, stages, pipelines: allPipelines, loading, error, handleLeadMove, refresh, patchLeadTags, handlePinToggle } = useKanbanData(pipelineSlug)
   
-  // Filtrează pipeline-urile pentru tehnicieni
-  const pipelines = useMemo(() => {
-    if (!isTechnician) return allPipelines
-    
-    const departmentPipelines = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
-    return allPipelines.filter(p => 
-      departmentPipelines.some(dept => 
-        p.toLowerCase() === dept.toLowerCase()
-      )
-    )
-  }, [allPipelines, isTechnician])
+  // Preferințe utilizator pentru customizare
+  const { getStageOrder, setStageOrder } = useUserPreferences()
   
-  // Redirectează tehnicienii dacă încearcă să acceseze un pipeline nepermis
+  // Ordinea customizată a stage-urilor
+  const orderedStages = useMemo(() => {
+    if (!pipelineSlug) return stages
+    return getStageOrder(pipelineSlug, stages)
+  }, [pipelineSlug, stages, getStageOrder])
+  
+  // State pentru pipeline-uri cu ID-uri (pentru verificarea permisiunilor)
+  const [pipelinesWithIds, setPipelinesWithIds] = useState<Array<{ id: string; name: string }>>([])
+  
+  // Încarcă pipeline-urile cu ID-uri pentru verificarea permisiunilor
   useEffect(() => {
-    if (isTechnician && pipelineSlug) {
-      const departmentSlugs = ['saloane', 'frizerii', 'horeca', 'reparatii']
-      const currentSlug = pipelineSlug.toLowerCase()
+    async function loadPipelinesWithIds() {
+      if (authLoading) return
       
-      if (!departmentSlugs.includes(currentSlug)) {
-        // Redirectează la primul pipeline permis
-        router.replace('/leads/saloane')
+      const { data, error } = await getPipelinesWithStages()
+      if (!error && data) {
+        setPipelinesWithIds(data.map((p: any) => ({ id: p.id, name: p.name })))
       }
     }
-  }, [isTechnician, pipelineSlug, router])
+    loadPipelinesWithIds()
+  }, [authLoading])
+  
+  // Filtrează pipeline-urile bazat pe permisiuni reale
+  const pipelines = useMemo(() => {
+    if (!isMember()) return allPipelines
+    
+    // Pentru membri, filtrează doar pipeline-urile pentru care au permisiune
+    return allPipelines.filter(p => {
+      const pipelineWithId = pipelinesWithIds.find(pid => pid.name === p)
+      return pipelineWithId ? hasAccess(pipelineWithId.id) : false
+    })
+  }, [allPipelines, pipelinesWithIds, hasAccess, isMember])
+  
+  // Redirectează membrii dacă încearcă să acceseze un pipeline nepermis
+  useEffect(() => {
+    if (authLoading || !isMember() || !pipelineSlug || pipelinesWithIds.length === 0) return
+    
+    const currentPipeline = pipelinesWithIds.find(p => toSlug(p.name) === pipelineSlug.toLowerCase())
+    
+    if (currentPipeline && !hasAccess(currentPipeline.id)) {
+      // Găsește primul pipeline permis
+      const firstAllowed = pipelinesWithIds.find(p => hasAccess(p.id))
+      if (firstAllowed) {
+        router.replace(`/leads/${toSlug(firstAllowed.name)}`)
+      } else {
+        // Dacă nu are niciun pipeline permis, redirectează la dashboard
+        router.replace('/dashboard')
+      }
+    }
+  }, [isMember, pipelineSlug, pipelinesWithIds, hasAccess, authLoading, router])
 
   // Filtrează lead-urile
   const filteredLeads = useMemo(() => {
@@ -355,8 +376,6 @@ export default function CRMPage() {
       // Mutarea în mai multe pipeline-uri trebuie implementată folosind pipeline_items
       // Pentru moment, funcționalitatea nu este disponibilă
       throw new Error('Bulk move to multiple pipelines is not yet implemented')
-      toast({ description: `Moved to ${res.length} pipeline${res.length === 1 ? "" : "s"}` })
-      router.refresh() // re-render board, details, and history in one shot
     } catch (e: any) {
       toast({ variant: "destructive", description: e?.message ?? "Move failed" })
     }
@@ -772,8 +791,8 @@ export default function CRMPage() {
           <div className="flex-1 overflow-hidden">
             <MobileBoardLayout
               leads={filteredLeads}
-              stages={stages}
-              currentPipelineName={activePipelineName}
+              stages={orderedStages}
+              currentPipelineName={activePipelineName || ''}
               pipelines={pipelines}
               onPipelineChange={(pipelineName) => {
                 const slug = toSlug(pipelineName)
@@ -781,7 +800,7 @@ export default function CRMPage() {
               }}
               onLeadMove={handleMove}
               onLeadClick={handleLeadClick}
-              onAddLead={() => setCreateLeadOpen(true)}
+              onAddLead={pipelineSlug?.toLowerCase() === 'vanzari' ? () => setCreateLeadOpen(true) : undefined}
               onSearchClick={() => {
                 // Implementare căutare mobil - poate deschide un dialog
                 const searchQuery = prompt('Caută lead...')
@@ -794,6 +813,7 @@ export default function CRMPage() {
                 // Pentru moment, doar logăm
                 console.log('Filtre mobil')
               }}
+              onCustomizeClick={() => setCustomizeOpen(true)}
               sidebarContent={
                 <div className="p-4">
                   {/* Sidebar content pentru mobil */}
@@ -1059,6 +1079,102 @@ export default function CRMPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog pentru customizare mobil - poziții stage-uri */}
+      <Sheet open={customizeOpen} onOpenChange={setCustomizeOpen}>
+        <SheetContent side="bottom" className="h-auto max-h-[80vh] overflow-y-auto">
+          <SheetTitle className="sr-only">Customizare Layout</SheetTitle>
+          <SheetHeader>
+            <SheetTitle className="text-lg font-semibold">Customizare Layout</SheetTitle>
+            <SheetDescription>
+              Reordonează pozițiile stage-urilor pentru {activePipelineName}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-3">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Ordinea stage-urilor</Label>
+              <p className="text-xs text-muted-foreground">
+                Apasă pe săgeți pentru a muta stage-urile sus/jos
+              </p>
+              <div className="space-y-2">
+                {orderedStages.map((stage, index) => (
+                  <div
+                    key={stage}
+                    className="flex items-center justify-between p-3 border rounded-lg bg-background"
+                  >
+                    <div className="flex items-center gap-3">
+                      <GripVertical className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium">{stage}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {leads.filter(l => l.stage === stage).length} lead-uri
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          if (index > 0) {
+                            const newOrder = [...orderedStages]
+                            const temp = newOrder[index]
+                            newOrder[index] = newOrder[index - 1]
+                            newOrder[index - 1] = temp
+                            if (pipelineSlug) {
+                              setStageOrder(pipelineSlug, newOrder)
+                            }
+                          }
+                        }}
+                        disabled={index === 0}
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          if (index < orderedStages.length - 1) {
+                            const newOrder = [...orderedStages]
+                            const temp = newOrder[index]
+                            newOrder[index] = newOrder[index + 1]
+                            newOrder[index + 1] = temp
+                            if (pipelineSlug) {
+                              setStageOrder(pipelineSlug, newOrder)
+                            }
+                          }
+                        }}
+                        disabled={index === orderedStages.length - 1}
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 pt-4">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  if (pipelineSlug) {
+                    setStageOrder(pipelineSlug, stages) // Resetează la ordinea default
+                  }
+                }}
+              >
+                Resetează
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => setCustomizeOpen(false)}
+              >
+                Salvează
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

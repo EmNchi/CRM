@@ -152,9 +152,10 @@ export async function getTrayWithItems(trayId: string) {
       .from('tray_items')
       .select(`
         id, tray_id, instrument_id, service_id, technician_id, 
-        qty, notes, name_snapshot, created_at,
+        qty, notes, created_at,
         service:services(id, name, price),
-        department:departments(id, name)
+        department:departments(id, name),
+        tray_item_brands(id, brand, garantie, tray_item_brand_serials(id, serial_number))
       `)
       .eq('tray_id', trayId)
       .order('created_at'),

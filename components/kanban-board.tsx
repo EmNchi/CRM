@@ -75,6 +75,8 @@ export function KanbanBoard({
   const [selectedTargetStage, setSelectedTargetStage] = useState<string>('')
   const [selectedTargetPipeline, setSelectedTargetPipeline] = useState<string>('')
   const [isMoving, setIsMoving] = useState(false)
+  const [layout, setLayout] = useState<'vertical' | 'horizontal' | 'compact' | 'focus'>('vertical')
+  const [focusedStage, setFocusedStage] = useState<string | null>(null)
 
   async function handleConfirmDelete() {
     if (!targetStage) return
@@ -386,6 +388,43 @@ export function KanbanBoard({
 
   return (
     <>
+      {/* Toggle layout: mai multe variante de afișare a stage-urilor */}
+      <div className="mb-3 flex flex-wrap justify-end gap-2">
+        <Button
+          size="sm"
+          variant={layout === 'vertical' ? 'default' : 'outline'}
+          onClick={() => setLayout('vertical')}
+        >
+          Stages verticale
+        </Button>
+        <Button
+          size="sm"
+          variant={layout === 'horizontal' ? 'default' : 'outline'}
+          onClick={() => setLayout('horizontal')}
+        >
+          Stages orizontale
+        </Button>
+        <Button
+          size="sm"
+          variant={layout === 'compact' ? 'default' : 'outline'}
+          onClick={() => setLayout('compact')}
+        >
+          Vizualizare compactă
+        </Button>
+        <Button
+          size="sm"
+          variant={layout === 'focus' ? 'default' : 'outline'}
+          onClick={() => {
+            setLayout('focus')
+            // dacă nu este deja ales un stage focus, folosește primul
+            if (!focusedStage && stages.length > 0) {
+              setFocusedStage(stages[0])
+            }
+          }}
+        >
+          Focus pe un stage
+        </Button>
+      </div>
       {/* Toolbar pentru selectie multipla */}
       {selectedLeads.size > 0 && (
         <div className="sticky top-0 z-50 bg-primary text-primary-foreground px-4 py-2 rounded-lg mb-4 flex items-center justify-between shadow-lg">
@@ -425,138 +464,434 @@ export function KanbanBoard({
         </div>
       )}
 
-      <div className="flex gap-3 overflow-x-auto overflow-y-hidden pb-2 scroll-smooth">
-        {stages.map((stage) => {
-        const stageLeads = getLeadsByStage(stage)
-        const isDragOver = dragOverStage === stage
-        const total = stageTotals[stage] || 0
-        const isLoading = loadingTotals[stage]
+      {layout === 'vertical' || layout === 'compact' ? (
+        <div className="flex gap-3 overflow-x-auto overflow-y-hidden pb-2 scroll-smooth">
+          {stages.map((stage) => {
+            const stageLeads = getLeadsByStage(stage)
+            const isDragOver = dragOverStage === stage
+            const total = stageTotals[stage] || 0
+            const isLoading = loadingTotals[stage]
 
-        return (
-          <div
-            key={stage}
-            className={cn(
-              "flex-shrink-0 w-80 bg-card rounded-lg border border-border transition-all duration-200",
-              isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.02] shadow-lg",
-            )}
-            onDragOver={(e) => handleDragOver(e, stage)}
-            onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, stage)}
-          >
-            
-            <div className="p-4 border-b border-border bg-muted/30 group">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-semibold text-card-foreground truncate">{stage}</h3>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Inbox className="h-3.5 w-3.5" />
-                      {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
-                    </span>
+            return (
+              <div
+                key={stage}
+                className={cn(
+                  "flex-shrink-0 bg-card rounded-lg border border-border transition-all duration-200",
+                  layout === 'vertical' ? "w-80" : "w-64",
+                  layout === 'compact' && "text-xs",
+                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.02] shadow-lg",
+                )}
+                onDragOver={(e) => handleDragOver(e, stage)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, stage)}
+              >
+                {/* Header stage */}
+                <div className="p-4 border-b border-border bg-muted/30 group">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-semibold text-card-foreground truncate">{stage}</h3>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Inbox className="h-3.5 w-3.5" />
+                          {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* suma totala a stage-ului - ascunsă pentru Vânzări și stage-urile excluse din Receptie */}
+                    {(() => {
+                      const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
+                      const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+                      const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
+                      const isExcludedStage = isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())
+                      
+                      if (isVanzariPipeline || isExcludedStage) {
+                        return null
+                      }
+                      
+                      return (
+                        <div className="text-right flex-shrink-0">
+                          {isLoading ? (
+                            <div className="space-y-1">
+                              <Skeleton className="h-4 w-16" />
+                              <Skeleton className="h-3 w-12" />
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-end">
+                              <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
+                                <TrendingUp className="h-3.5 w-3.5" />
+                                {total.toFixed(2)} RON
+                              </div>
+                              {total > 0 && (
+                                <span className="text-[10px] text-muted-foreground">Total</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    {isOwner && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => { setTargetStage(stage); setConfirmOpen(true) }}
+                        aria-label={`Delete stage ${stage}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                {/* suma totala a stage-ului - ascunsă pentru Vânzări și stage-urile excluse din Receptie */}
-                {(() => {
-                  const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
-                  const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
-                  const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
-                  const isExcludedStage = isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())
-                  
-                  if (isVanzariPipeline || isExcludedStage) {
-                    return null
-                  }
-                  
-                  return (
-                  <div className="text-right flex-shrink-0">
-                    {isLoading ? (
-                      <div className="space-y-1">
-                        <Skeleton className="h-4 w-16" />
-                        <Skeleton className="h-3 w-12" />
+                {/* content area cu empty state */}
+                <div
+                  className={cn(
+                    "p-4 space-y-3 overflow-y-auto scroll-smooth",
+                    layout === 'vertical'
+                      ? "h-[calc(100vh-280px)] min-h-[400px]"
+                      : "h-[calc(100vh-320px)] min-h-[320px]"
+                  )}
+                >
+                  {stageLeads.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
+                      <div className="rounded-full bg-muted p-4 mb-3">
+                        <Inbox className="h-8 w-8 text-muted-foreground" />
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-end">
-                        <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
-                          <TrendingUp className="h-3.5 w-3.5" />
-                          {total.toFixed(2)} RON
+                      <p className="text-sm font-medium text-foreground mb-1">Nu există lead-uri</p>
+                      <p className="text-xs text-muted-foreground">
+                        Trage un lead aici pentru a-l muta în acest stage
+                      </p>
+                      {isDragOver && (
+                        <div className="mt-4 px-3 py-2 rounded-md bg-primary/10 text-primary text-xs font-medium animate-in fade-in">
+                          Eliberează pentru a muta
                         </div>
-                        {total > 0 && (
-                          <span className="text-[10px] text-muted-foreground">Total</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  )
-                })()}
-
-                {isOwner && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => { setTargetStage(stage); setConfirmOpen(true) }}
-                    aria-label={`Delete stage ${stage}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {/* content area cu emty state */}
-            <div className="p-4 space-y-3 h-[calc(100vh-280px)] min-h-[400px] overflow-y-auto scroll-smooth">
-              {stageLeads.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
-                  <div className="rounded-full bg-muted p-4 mb-3">
-                    <Inbox className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                  <p className="text-sm font-medium text-foreground mb-1">Nu există lead-uri</p>
-                  <p className="text-xs text-muted-foreground">
-                    Trage un lead aici pentru a-l muta în acest stage
-                  </p>
-                  {isDragOver && (
-                    <div className="mt-4 px-3 py-2 rounded-md bg-primary/10 text-primary text-xs font-medium animate-in fade-in">
-                      Eliberează pentru a muta
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {stageLeads.map((lead, index) => (
+                        <div
+                          key={lead.id}
+                          className={cn(
+                            "animate-in fade-in slide-in-from-bottom-2",
+                            `duration-300 delay-[${index * 50}ms]`
+                          )}
+                          style={{ animationDelay: `${index * 50}ms` }}
+                        >
+                          <LeadCard
+                            key={lead.id}
+                            lead={lead}
+                            onMove={onLeadMove}
+                            onClick={(e) => onLeadClick(lead, e)}
+                            onDragStart={() => handleDragStart(lead.id)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedLead === lead.id}
+                            stages={stages}
+                            onPinToggle={onPinToggle}
+                            isSelected={selectedLeads.has(lead.id)}
+                            onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
+                            leadTotal={leadTotals[lead.id] || 0}
+                            pipelineName={currentPipelineName}
+                          />
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {stageLeads.map((lead, index) => (
-                    <div
-                      key={lead.id}
-                      className={cn(
-                        "animate-in fade-in slide-in-from-bottom-2",
-                        `duration-300 delay-[${index * 50}ms]`
-                      )}
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                    <LeadCard
-                      key={lead.id}
-                      lead={lead}
-                      onMove={onLeadMove}
-                      onClick={(e) => onLeadClick(lead, e)}
-                      onDragStart={() => handleDragStart(lead.id)}
-                      onDragEnd={handleDragEnd}
-                      isDragging={draggedLead === lead.id}
-                      stages={stages}
-                      onPinToggle={onPinToggle}
-                      isSelected={selectedLeads.has(lead.id)}
-                      onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
-                      leadTotal={leadTotals[lead.id] || 0}
-                      pipelineName={currentPipelineName}
-                    />
+              </div>
+            )
+          })}
+        </div>
+      ) : layout === 'horizontal' ? (
+        <div className="flex flex-col gap-3 overflow-y-auto max-h-[calc(100vh-260px)] pb-2 scroll-smooth">
+          {stages.map((stage) => {
+            const stageLeads = getLeadsByStage(stage)
+            const isDragOver = dragOverStage === stage
+            const total = stageTotals[stage] || 0
+            const isLoading = loadingTotals[stage]
+
+            return (
+              <div
+                key={stage}
+                className={cn(
+                  "bg-card rounded-lg border border-border transition-all duration-200",
+                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                )}
+                onDragOver={(e) => handleDragOver(e, stage)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, stage)}
+              >
+                {/* header reutilizat */}
+                <div className="p-4 border-b border-border bg-muted/30 group">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-semibold text-card-foreground truncate">{stage}</h3>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Inbox className="h-3.5 w-3.5" />
+                          {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
+                        </span>
+                      </div>
                     </div>
-                  ))}
+
+                    {(() => {
+                      const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
+                      const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+                      const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
+                      const isExcludedStage = isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())
+                      
+                      if (isVanzariPipeline || isExcludedStage) {
+                        return null
+                      }
+                      
+                      return (
+                        <div className="text-right flex-shrink-0">
+                          {isLoading ? (
+                            <div className="space-y-1">
+                              <Skeleton className="h-4 w-16" />
+                              <Skeleton className="h-3 w-12" />
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-end">
+                              <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
+                                <TrendingUp className="h-3.5 w-3.5" />
+                                {total.toFixed(2)} RON
+                              </div>
+                              {total > 0 && (
+                                <span className="text-[10px] text-muted-foreground">Total</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    {isOwner && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => { setTargetStage(stage); setConfirmOpen(true) }}
+                        aria-label={`Delete stage ${stage}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              )}
+
+                <div className="p-4 space-y-3">
+                  {stageLeads.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-32 text-center">
+                      <div className="rounded-full bg-muted p-3 mb-2">
+                        <Inbox className="h-6 w-6 text-muted-foreground" />
+                      </div>
+                      <p className="text-sm font-medium text-foreground mb-1">Nu există lead-uri</p>
+                      <p className="text-xs text-muted-foreground">
+                        Trage un lead aici pentru a-l muta în acest stage
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <button
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                          onClick={handleSelectAll}
+                        >
+                          Selectează {selectedLeads.size === leads.length ? "niciunul" : "toate"}
+                        </button>
+                        {isLoading && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>Se calculează totalurile...</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-3 overflow-x-auto pb-1">
+                        {stageLeads.map((lead) => (
+                          <div key={lead.id} className="w-80 flex-shrink-0">
+                            <LeadCard
+                              lead={lead}
+                              onMove={onLeadMove}
+                              onClick={(e) => onLeadClick(lead, e)}
+                              onDragStart={() => handleDragStart(lead.id)}
+                              onDragEnd={handleDragEnd}
+                              isDragging={draggedLead === lead.id}
+                              stages={stages}
+                              onPinToggle={onPinToggle}
+                              isSelected={selectedLeads.has(lead.id)}
+                              onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
+                              leadTotal={leadTotals[lead.id] || 0}
+                              pipelineName={currentPipelineName}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        /* Layout "focus": afișează doar un stage selectat, pe toată lățimea */
+        <div className="flex flex-col gap-3 overflow-y-auto max-h-[calc(100vh-260px)] pb-2 scroll-smooth">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <div className="text-sm text-muted-foreground">
+              Vezi un singur stage o dată – util pentru lucru concentrat.
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Stage focus:</span>
+              <select
+                className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+                value={focusedStage || ''}
+                onChange={(e) => setFocusedStage(e.target.value || null)}
+              >
+                {stages.map(stage => (
+                  <option key={stage} value={stage}>{stage}</option>
+                ))}
+              </select>
             </div>
           </div>
-        )
-      })}
-      </div>
+
+          {stages.filter(s => !focusedStage || s === focusedStage).map((stage) => {
+            const stageLeads = getLeadsByStage(stage)
+            const isDragOver = dragOverStage === stage
+            const total = stageTotals[stage] || 0
+            const isLoading = loadingTotals[stage]
+
+            return (
+              <div
+                key={stage}
+                className={cn(
+                  "bg-card rounded-lg border border-border transition-all duration-200",
+                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                )}
+                onDragOver={(e) => handleDragOver(e, stage)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, stage)}
+              >
+                {/* header reutilizat */}
+                <div className="p-4 border-b border-border bg-muted/30 group">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-semibold text-card-foreground truncate">{stage}</h3>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Inbox className="h-3.5 w-3.5" />
+                          {stageLeads.length} {stageLeads.length === 1 ? "lead" : "leads"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const isVanzariPipeline = currentPipelineName?.toLowerCase().includes('vanzari') || false
+                      const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+                      const excludedReceptieStages = ['messages', 'de trimis', 'ridic personal', 'de confirmat'].map(s => s.toLowerCase())
+                      const isExcludedStage = isReceptiePipeline && excludedReceptieStages.includes(stage.toLowerCase())
+                      
+                      if (isVanzariPipeline || isExcludedStage) {
+                        return null
+                      }
+                      
+                      return (
+                        <div className="text-right flex-shrink-0">
+                          {isLoading ? (
+                            <div className="space-y-1">
+                              <Skeleton className="h-4 w-16" />
+                              <Skeleton className="h-3 w-12" />
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-end">
+                              <div className="flex items-center gap-1 text-sm font-semibold text-emerald-600 dark:text-emerald-500">
+                                <TrendingUp className="h-3.5 w-3.5" />
+                                {total.toFixed(2)} RON
+                              </div>
+                              {total > 0 && (
+                                <span className="text-[10px] text-muted-foreground">Total</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    {isOwner && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => { setTargetStage(stage); setConfirmOpen(true) }}
+                        aria-label={`Delete stage ${stage}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3 min-h-[400px] max-h-[calc(100vh-260px)] overflow-y-auto scroll-smooth">
+                  {stageLeads.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
+                      <div className="rounded-full bg-muted p-4 mb-3">
+                        <Inbox className="h-8 w-8 text-muted-foreground" />
+                      </div>
+                      <p className="text-sm font-medium text-foreground mb-1">Nu există lead-uri</p>
+                      <p className="text-xs text-muted-foreground">
+                        Trage un lead aici pentru a-l muta în acest stage
+                      </p>
+                      {isDragOver && (
+                        <div className="mt-4 px-3 py-2 rounded-md bg-primary/10 text-primary text-xs font-medium animate-in fade-in">
+                          Eliberează pentru a muta
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {stageLeads.map((lead, index) => (
+                        <div
+                          key={lead.id}
+                          className={cn(
+                            "animate-in fade-in slide-in-from-bottom-2",
+                            `duration-300 delay-[${index * 50}ms]`
+                          )}
+                          style={{ animationDelay: `${index * 50}ms` }}
+                        >
+                          <LeadCard
+                            key={lead.id}
+                            lead={lead}
+                            onMove={onLeadMove}
+                            onClick={(e) => onLeadClick(lead, e)}
+                            onDragStart={() => handleDragStart(lead.id)}
+                            onDragEnd={handleDragEnd}
+                            isDragging={draggedLead === lead.id}
+                            stages={stages}
+                            onPinToggle={onPinToggle}
+                            isSelected={selectedLeads.has(lead.id)}
+                            onSelectChange={(selected) => handleLeadSelect(lead.id, selected)}
+                            leadTotal={leadTotals[lead.id] || 0}
+                            pipelineName={currentPipelineName}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
       
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>

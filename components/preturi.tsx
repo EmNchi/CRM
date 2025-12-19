@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { listServices, type Service } from '@/lib/supabase/serviceOperations';
 import { 
   listTraysForServiceFile,
@@ -10,6 +10,7 @@ import {
   createTrayItem,
   updateTrayItem,
   deleteTrayItem,
+  deleteTray,
   updateTray,
   updateServiceFile,
   getServiceFile,
@@ -22,7 +23,7 @@ import { addServiceFileToPipeline, addTrayToPipeline } from "@/lib/supabase/pipe
 import { useRole } from "@/hooks/useRole"
 import { useAuth } from "@/hooks/useAuth"
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from "@/lib/supabase/imageOperations"
-import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp } from "lucide-react"
+import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp, Package } from "lucide-react"
 import { toast } from "sonner"
 
 // Tipuri pentru UI (alias-uri pentru claritate)
@@ -84,7 +85,7 @@ const listQuotesForLead = async (leadId: string): Promise<LeadQuote[]> => {
   return (trays || []) as LeadQuote[]
 }
 
-const createQuoteForLead = async (leadId: string, name?: string, fisaId?: string | null): Promise<LeadQuote> => {
+const createQuoteForLead = async (leadId: string, name?: string, fisaId?: string | null, size?: string): Promise<LeadQuote> => {
   if (!fisaId) {
     throw new Error('fisaId is required for creating trays in new architecture')
   }
@@ -92,7 +93,7 @@ const createQuoteForLead = async (leadId: string, name?: string, fisaId?: string
   // Creează o tavă nouă pentru fișa de serviciu
   const trayData = {
     number: name || '1',
-    size: 'medium',
+    size: size || 'medium',
     service_file_id: fisaId,
     status: 'in_receptie' as const,
   }
@@ -123,6 +124,7 @@ const updateQuote = async (quoteId: string, updates: Partial<LeadQuote>) => {
   if (updates.number !== undefined) trayUpdates.number = updates.number
   if (updates.size !== undefined) trayUpdates.size = updates.size
   if (updates.status !== undefined) trayUpdates.status = updates.status
+  if (updates.urgent !== undefined) trayUpdates.urgent = updates.urgent
   
   // Dacă există actualizări pentru tray, le aplicăm
   if (Object.keys(trayUpdates).length > 0) {
@@ -216,20 +218,38 @@ const listQuoteItems = async (
       }
     }
     
+    // Obține brand-urile și serial numbers din noua structură: tray_item_brands -> tray_item_brand_serials
+    const brands = (item as any).tray_item_brands || []
+    
+    // Transformă în formatul pentru UI: Array<{ brand, serialNumbers[], garantie }>
+    const brandGroups = brands.map((b: any) => ({
+      id: b.id,
+      brand: b.brand || '',
+      garantie: b.garantie || false,
+      serialNumbers: (b.tray_item_brand_serials || []).map((s: any) => s.serial_number || '')
+    }))
+    
+    // Pentru compatibilitate, primul brand
+    const firstBrand = brands.length > 0 ? brands[0] : null
+    const firstSerial = firstBrand?.tray_item_brand_serials?.[0]?.serial_number || null
+    
     return {
       ...item,
       item_type,
-      price: price || 0, // Asigură-te că price este întotdeauna un număr
+      price: price || 0,
       discount_pct: notesData.discount_pct || 0,
       urgent: notesData.urgent || false,
       name_snapshot: notesData.name_snapshot || notesData.name || '',
-      brand: notesData.brand || null,
-      serial_number: notesData.serial_number || null,
-      garantie: notesData.garantie || false,
+      // Compatibilitate cu câmpurile vechi
+      brand: firstBrand?.brand || item.brand || notesData.brand || null,
+      serial_number: firstSerial || item.serial_number || notesData.serial_number || null,
+      garantie: firstBrand?.garantie || notesData.garantie || false,
+      // Include toate brand-urile cu serial numbers pentru popularea formularului
+      brand_groups: brandGroups,
       pipeline_id: notesData.pipeline_id || null,
-      department, // Departament preluat din instruments.pipeline
+      department,
       qty: item.qty || 1,
-    } as LeadQuoteItem & { price: number; department?: string | null } // Forțează TypeScript să vadă price ca fiind întotdeauna definit
+    } as LeadQuoteItem & { price: number; department?: string | null; brand_groups?: Array<{ id: string; brand: string; serialNumbers: string[]; garantie: boolean }> }
   })
 }
 
@@ -254,13 +274,10 @@ const addInstrumentItem = async (quoteId: string, instrumentName: string, opts?:
     throw new Error('department_id este obligatoriu pentru a salva un instrument')
   }
   
-  // Salvează informații suplimentare în notes ca JSON
+  // Salvează informații suplimentare în notes ca JSON (pentru compatibilitate)
   const notesData = {
     name_snapshot: instrumentName,
     item_type: null, // null înseamnă doar instrument, fără serviciu
-    brand: opts?.brand || null,
-    serial_number: opts?.serial_number || null,
-    garantie: opts?.garantie || false,
     pipeline_id: opts?.pipeline_id || null,
   }
   
@@ -272,6 +289,13 @@ const addInstrumentItem = async (quoteId: string, instrumentName: string, opts?:
     technician_id: opts?.technician_id || null,
     qty: opts?.qty || 1,
     notes: JSON.stringify(notesData),
+    pipeline: opts?.pipeline_id || null,
+    // Brand și serial_number se salvează acum în tabelul tray_item_brand_serials
+    brandSerialGroups: opts?.brandSerialGroups || (opts?.brand || opts?.serial_number ? [{
+      brand: opts?.brand || null,
+      serialNumbers: opts?.serial_number ? [opts.serial_number] : [],
+      garantie: opts?.garantie || false
+    }] : undefined),
   })
   if (error) throw error
 }
@@ -281,7 +305,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Trash2, Plus, Wrench, Send, AlertTriangle } from 'lucide-react';
+import { Trash2, Plus, Wrench, Send, AlertTriangle, Save } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -292,6 +316,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 type Technician = {
   id: string // user_id din app_members
   name: string
@@ -303,6 +336,7 @@ import { persistAndLogServiceSheet } from "@/lib/history/serviceSheet"
 import { listTags, toggleLeadTag } from '@/lib/supabase/tagOperations'
 import { PrintView } from '@/components/print-view'
 import type { Lead } from '@/app/(crm)/dashboard/page'
+import { Textarea } from "@/components/ui/textarea"
 
 const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 
@@ -341,7 +375,11 @@ function PrintViewData({
       const trayIds = quotes.map(q => q.id)
       const { data: allTrayItems, error: itemsError } = await supabase
         .from('tray_items')
-        .select('*')
+        .select(`
+          id, tray_id, instrument_id, service_id, part_id, department_id,
+          technician_id, qty, notes, pipeline, created_at,
+          tray_item_brands(id, brand, garantie, tray_item_brand_serials(id, serial_number))
+        `)
         .in('tray_id', trayIds)
         .order('tray_id, id', { ascending: true })
       
@@ -577,7 +615,22 @@ type MaintenancePackageOption = {
   instrumentName: string
 }
 
-export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipelineSlug }: { leadId: string; lead?: Lead | null; fisaId?: string | null; initialQuoteId?: string | null; pipelineSlug?: string }) {
+// Tip pentru ref-ul expus
+export interface PreturiRef {
+  save: () => Promise<void>
+  getSelectedTrayId: () => string | null
+}
+
+interface PreturiProps {
+  leadId: string
+  lead?: Lead | null
+  fisaId?: string | null
+  initialQuoteId?: string | null
+  pipelineSlug?: string
+  isDepartmentPipeline?: boolean
+}
+
+const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, lead, fisaId, initialQuoteId, pipelineSlug, isDepartmentPipeline = false }, ref) {
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<Service[]>([]);
   // sheets (tavite)
@@ -596,6 +649,18 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
   const [trayImages, setTrayImages] = useState<TrayImage[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [isImagesExpanded, setIsImagesExpanded] = useState(false);
+
+  // State pentru detalii tăviță (comentarii per tăviță, în Fișa de serviciu)
+  const [trayDetailsMap, setTrayDetailsMap] = useState<Map<string, string>>(new Map())
+  const [selectedTrayForDetails, setSelectedTrayForDetails] = useState<string | null>(null)
+  const [trayDetails, setTrayDetails] = useState('')
+  const [loadingTrayDetails, setLoadingTrayDetails] = useState(false)
+  const [savingTrayDetails, setSavingTrayDetails] = useState(false)
+
+  // ID-ul efectiv al tăviței pentru care edităm detaliile:
+  // - dacă utilizatorul alege explicit din dropdown -> selectedTrayForDetails
+  // - altfel -> tăvița selectată în tab-uri (selectedQuoteId)
+  const activeTrayDetailsId = selectedTrayForDetails || selectedQuoteId || null
 
   const [pipelines, setPipelines] = useState<string[]>([])
   const [pipelinesWithIds, setPipelinesWithIds] = useState<Array<{ id: string; name: string }>>([])
@@ -617,6 +682,9 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
   const [officeDirect, setOfficeDirect] = useState(false)
   const [curierTrimis, setCurierTrimis] = useState(false)
 
+  // State pentru "No Deal" la nivel de fișă (doar în Vânzări)
+  const [noDeal, setNoDeal] = useState(false)
+
   // State pentru urgent global (pentru toate serviciile)
   const [urgentAllServices, setUrgentAllServices] = useState(false)
 
@@ -624,6 +692,23 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
   const [sendingTrays, setSendingTrays] = useState(false)
   const [showSendConfirmation, setShowSendConfirmation] = useState(false)
   const [traysAlreadyInDepartments, setTraysAlreadyInDepartments] = useState(false)
+
+  // State pentru ștergerea tăvițelor
+  const [showDeleteTrayConfirmation, setShowDeleteTrayConfirmation] = useState(false)
+  const [trayToDelete, setTrayToDelete] = useState<string | null>(null)
+  const [deletingTray, setDeletingTray] = useState(false)
+
+  // State pentru dialog-ul de creare tăviță
+  const [showCreateTrayDialog, setShowCreateTrayDialog] = useState(false)
+  const [newTrayNumber, setNewTrayNumber] = useState('')
+  const [newTraySize, setNewTraySize] = useState('medium')
+  const [creatingTray, setCreatingTray] = useState(false)
+  
+  // State pentru dialog-ul de editare tăviță
+  const [showEditTrayDialog, setShowEditTrayDialog] = useState(false)
+  const [editingTrayNumber, setEditingTrayNumber] = useState('')
+  const [editingTraySize, setEditingTraySize] = useState('medium')
+  const [updatingTray, setUpdatingTray] = useState(false)
 
   // State pentru abonament: '' | 'services' | 'parts' | 'both'
   const [subscriptionType, setSubscriptionType] = useState<'services' | 'parts' | 'both' | ''>('')
@@ -669,6 +754,12 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     return pipelineSlug.toLowerCase().includes('reparatii') || pipelineSlug.toLowerCase().includes('repair')
   }, [pipelineSlug])
 
+  // Verifică dacă suntem în pipeline-ul Recepție
+  const isReceptiePipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    return pipelineSlug.toLowerCase().includes('receptie') || pipelineSlug.toLowerCase().includes('reception')
+  }, [pipelineSlug])
+
   // Verifică dacă suntem în pipeline-ul Curier
   // Verifică dacă pipeline-ul permite adăugarea de imagini (Saloane, Frizerii, Horeca, Reparatii)
   const canAddTrayImages = useMemo(() => {
@@ -685,20 +776,39 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     return pipelineSlug.toLowerCase().includes('curier')
   }, [pipelineSlug])
 
+  // Pipeline-uri comerciale unde vrem să afișăm detalii de tăviță în Fișa de serviciu
+  const isCommercialPipeline = isVanzariPipeline || isReceptiePipeline || isCurierPipeline
+
+  // Restricții pentru tehnicieni în pipeline-urile departament
+  // Urgent și Abonament sunt disponibile doar în Recepție/Vânzări/Curier (NU pentru tehnicieni în departament)
+  const canEditUrgentAndSubscription = useMemo(() => {
+    // În pipeline departament, tehnicianul nu poate modifica Urgent sau Abonament
+    if (isDepartmentPipeline) return false
+    // În alte pipeline-uri (Recepție, Vânzări, Curier), toți pot modifica
+    return true
+  }, [isDepartmentPipeline])
+
+  // Tehnicianul poate adăuga piese doar în Reparații
+  const canAddParts = useMemo(() => {
+    if (isDepartmentPipeline) {
+      return isReparatiiPipeline
+    }
+    return true // În alte pipeline-uri se pot adăuga piese
+  }, [isDepartmentPipeline, isReparatiiPipeline])
+
   // State pentru a stoca cantitatea, brand, serial numbers și garantie pentru fiecare instrument
   // Notă: pipeline_id (pentru departament) este gestionat direct în items, nu în instrumentSettings
-  const [instrumentSettings, setInstrumentSettings] = useState<Record<string, { 
-    qty: string; 
-    brand: string;
-    serialNumbers: string[];
+  const [instrumentSettings, setInstrumentSettings] = useState<Record<string, {
+    qty: string;
+    brandSerialGroups: Array<{ brand: string; serialNumbers: string[] }>;
     garantie: boolean;
   }>>({})
 
   // Add-instrument form state
+  // Structură: array de grupuri brand + serial numbers
   const [instrumentForm, setInstrumentForm] = useState({
     instrument: '',
-    brand: '',
-    serialNumbers: [''] as string[],
+    brandSerialGroups: [{ brand: '', serialNumbers: [''] }] as Array<{ brand: string; serialNumbers: string[] }>,
     garantie: false,
     qty: '1'
   })
@@ -712,6 +822,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     urgent: false,
     technicianId: '',
     pipelineId: '', // pipeline_id pentru servicii (folosit pentru departament)
+    serialNumberId: '', // ID-ul serial number-ului atribuit
   })
 
   // Afișează toate instrumentele disponibile din tabelul instruments
@@ -721,12 +832,21 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
   // Add-part form state
   const [part, setPart] = useState({
-    id: '',            
-    overridePrice: '', 
+    id: '',
+    overridePrice: '',
     qty: '1',
     discount: '0',
-    urgent: false
+    urgent: false,
+    serialNumberId: '' // format: "brand::serialNumber"
   })
+
+  // Search state pentru servicii și piese
+  const [serviceSearchQuery, setServiceSearchQuery] = useState('')
+  const [partSearchQuery, setPartSearchQuery] = useState('')
+  
+  // Focus state pentru a afișa dropdown-ul când input-ul este focusat
+  const [serviceSearchFocused, setServiceSearchFocused] = useState(false)
+  const [partSearchFocused, setPartSearchFocused] = useState(false)
 
   const lastSavedRef = useRef<any[]>([])
   const [urgentTagId, setUrgentTagId] = useState<string | null>(null)
@@ -823,6 +943,63 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     }
   }
 
+  // Încarcă detaliile pentru toate tăvițele disponibile (comentarii per tăviță)
+  useEffect(() => {
+    // Doar în pipeline-urile comerciale folosim această secțiune în Fișa de serviciu
+    const loadTrayDetails = async () => {
+      if (!isCommercialPipeline || !quotes.length) {
+        setTrayDetailsMap(new Map())
+        setSelectedTrayForDetails(null)
+        setTrayDetails('')
+        return
+      }
+
+      setLoadingTrayDetails(true)
+      try {
+        const trayIds = quotes.map(q => q.id)
+        const { data, error } = await supabase
+          .from('tray_items')
+          .select('tray_id, details')
+          .in('tray_id', trayIds)
+
+        if (error) {
+          console.error('Eroare la încărcarea detaliilor tăvițelor:', error)
+          setTrayDetailsMap(new Map())
+          return
+        }
+
+        const newMap = new Map<string, string>()
+        ;(data || []).forEach((row: any) => {
+          if (row.tray_id && row.details) {
+            if (!newMap.has(row.tray_id)) {
+              newMap.set(row.tray_id, row.details)
+            }
+          }
+        })
+
+        setTrayDetailsMap(newMap)
+      } catch (err) {
+        console.error('Eroare la încărcarea detaliilor tăvițelor:', err)
+        setTrayDetailsMap(new Map())
+        setTrayDetails('')
+      } finally {
+        setLoadingTrayDetails(false)
+      }
+    }
+
+    loadTrayDetails()
+  // quotes se schimbă când se schimbă tăvițele
+  }, [isCommercialPipeline, quotes])
+
+  // Când se schimbă tăvița activă pentru detalii, sincronizăm textul afișat
+  useEffect(() => {
+    if (!isCommercialPipeline || !activeTrayDetailsId) {
+      setTrayDetails('')
+      return
+    }
+    setTrayDetails(trayDetailsMap.get(activeTrayDetailsId) || '')
+  }, [isCommercialPipeline, activeTrayDetailsId, trayDetailsMap])
+
   function computeItemsTotal(sheetItems: LeadQuoteItem[]) {
     // Exclude items-urile cu item_type: null (doar instrument, fără serviciu) din calculele de totaluri
     const visibleItems = sheetItems.filter(it => it.item_type !== null)
@@ -911,14 +1088,118 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     }
   }
 
+  // Ref pentru funcția de salvare (folosit de useImperativeHandle)
+  const saveRef = useRef<() => Promise<void>>(async () => {})
+
   async function saveAllAndLog() {
-    if (!selectedQuote) return
     setSaving(true)
     try {
-      // Dacă există un instrument selectat și nu există items în quote, creează un item doar cu instrumentul
+      // Salvează checkbox-urile pentru livrare în service_file ÎNTOTDEAUNA (chiar și fără tăviță)
+      console.log('🔍 DEBUG - Checkpoint salvare curier (începutul funcției):', {
+        fisaId,
+        officeDirect,
+        curierTrimis,
+        hasFisaId: !!fisaId,
+        hasSelectedQuote: !!selectedQuote
+      })
+      
+      if (fisaId) {
+        const { error: serviceFileError, data: updatedServiceFile } = await updateServiceFile(fisaId, {
+          office_direct: officeDirect,
+          curier_trimis: curierTrimis,
+          no_deal: noDeal,
+        })
+        
+        if (serviceFileError) {
+          console.error('❌ Eroare la actualizarea service_file:', serviceFileError)
+          toast.error('Eroare la salvarea checkbox-urilor livrare')
+        } else {
+          console.log('✅ Service file actualizat cu office_direct:', officeDirect, 'curier_trimis:', curierTrimis, 'data:', updatedServiceFile)
+          
+          // Adaugă fișa în pipeline-ul "Curier" dacă unul din checkbox-uri este bifat
+          if (officeDirect || curierTrimis) {
+            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
+            console.log('Căutare pipeline Curier:', {
+              pipelinesWithIds: pipelinesWithIds.map(p => p.name),
+              found: curierPipeline?.id,
+              officeDirect,
+              curierTrimis
+            })
+            
+            if (curierPipeline) {
+              const stageNameVariants = officeDirect 
+                ? ['Office direct', 'OFFICE DIRECT', 'office direct']
+                : ['Curier Trimis', 'CURIER TRIMIS', 'curier trimis', 'Curier trimis']
+              
+              const { data: allStages, error: allStagesError } = await supabase
+                .from('stages')
+                .select('id, name')
+                .eq('pipeline_id', curierPipeline.id) as { 
+                  data: Array<{ id: string; name: string }> | null; 
+                  error: any 
+                }
+              
+              let stageData: { id: string } | null = null
+              if (allStages && !allStagesError) {
+                for (const variant of stageNameVariants) {
+                  const stage = allStages.find((s) => s.name?.toLowerCase() === variant.toLowerCase())
+                  if (stage) {
+                    stageData = { id: stage.id }
+                    break
+                  }
+                }
+              }
+              
+              if (stageData?.id) {
+                const { error: pipelineError } = await addServiceFileToPipeline(fisaId, curierPipeline.id, stageData.id)
+                if (pipelineError) {
+                  console.error('Eroare la adăugarea fișei în pipeline Curier:', pipelineError)
+                } else {
+                  console.log('✅ Fișa adăugată în pipeline Curier')
+                }
+              }
+            }
+          } else {
+            // Dacă niciun checkbox nu e bifat, șterge din pipeline Curier
+            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
+            if (curierPipeline) {
+              await supabase
+                .from('pipeline_items')
+                .delete()
+                .eq('item_id', fisaId)
+                .eq('type', 'service_file')
+                .eq('pipeline_id', curierPipeline.id)
+            }
+          }
+        }
+      }
+      
+      // Restul logicii necesită selectedQuote
+      if (!selectedQuote) {
+        setSaving(false)
+        return
+      }
+      // Verifică dacă există date de brand/serial de salvat
       const instrumentIdToUse = instrumentForm.instrument || svc.instrumentId
-      if (instrumentIdToUse && items.length === 0) {
-        // Obține numele instrumentului din lista de instrumente
+      const groupsToSave = instrumentForm.brandSerialGroups.length > 0 
+        ? instrumentForm.brandSerialGroups 
+        : [{ brand: '', serialNumbers: [''] }]
+      
+      const hasValidBrandSerialData = groupsToSave.some(g => {
+        const hasBrand = g.brand && g.brand.trim()
+        const hasSerialNumbers = g.serialNumbers.some(sn => sn && sn.trim())
+        return hasBrand || hasSerialNumbers
+      })
+      
+      console.log('🔍 [saveAllAndLog] Checking brand/serial data:', {
+        instrumentIdToUse,
+        groupsToSave,
+        hasValidBrandSerialData,
+        itemsCount: items.length
+      })
+      
+      // Dacă există un instrument selectat cu date de brand/serial
+      if (instrumentIdToUse && hasValidBrandSerialData) {
         const instrument = instruments.find(i => i.id === instrumentIdToUse)
         if (!instrument || !instrument.name) {
           toast.error('Instrumentul selectat nu a fost găsit')
@@ -926,89 +1207,233 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           return
         }
         
-        // Obține datele instrumentului
+        // Verifică dacă instrumentul are department_id
+        if (!instrument.department_id) {
+          toast.error('Instrumentul selectat nu are departament setat.')
+          setSaving(false)
+          return
+        }
+        
         const savedSettings = instrumentSettings[instrumentIdToUse] || {}
-        const brand = instrumentForm.brand?.trim() || savedSettings.brand || null
-        const serialNumber = instrumentForm.serialNumbers?.[0]?.trim() || savedSettings.serialNumbers?.[0] || null
         const garantie = instrumentForm.garantie || savedSettings.garantie || false
         const qty = Number(instrumentForm.qty || savedSettings.qty || 1)
         
         // Determină pipeline_id automat bazat pe department_id al instrumentului
         let autoPipelineId: string | null = null
         if (instrument.department_id) {
-          // Verifică dacă department_id este UUID sau text direct
           const instrumentDept = departments.find(d => d.id === instrument.department_id)
           const deptName = instrumentDept?.name?.toLowerCase() || instrument.department_id?.toLowerCase()
-          
-          // Dacă departamentul este "reparatii", setează pipeline la "Reparatii"
           if (deptName === 'reparatii') {
             const reparatiiPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'reparatii')
             if (reparatiiPipeline) {
               autoPipelineId = reparatiiPipeline.id
-              console.log('Pipeline setat automat la Reparatii pentru instrument salvat:', instrument.name)
             }
           }
         }
         
-        // Verifică dacă instrumentul are department_id
-        if (!instrument.department_id) {
-          toast.error('Instrumentul selectat nu are departament setat. Te rog verifică setările instrumentului în baza de date.')
+        // Verifică dacă există deja un tray_item pentru acest instrument
+        const existingItem = items.find((i: any) => i.instrument_id === instrumentIdToUse)
+        
+        const brandSerialGroupsToSend = groupsToSave.map(g => ({
+          brand: g.brand?.trim() || null,
+          serialNumbers: g.serialNumbers.filter(sn => sn && sn.trim()).map(sn => sn.trim()),
+          garantie: garantie
+        })).filter(g => g.brand || g.serialNumbers.length > 0)
+        
+        console.log('📤 [saveAllAndLog] Brand serial groups to send:', brandSerialGroupsToSend)
+        
+        try {
+          if (existingItem) {
+            // Actualizează brand-urile și serial numbers pentru item-ul existent
+            console.log('📝 [saveAllAndLog] Updating existing item:', existingItem.id)
+            
+            const supabaseClient = supabaseBrowser()
+            let useNewStructure = true
+            
+            // Încearcă să șteargă din noile tabele
+            const { error: deleteError } = await supabaseClient
+              .from('tray_item_brands' as any)
+              .delete()
+              .eq('tray_item_id', existingItem.id)
+            
+            if (deleteError) {
+              // Dacă tabelul nu există, folosește câmpurile vechi
+              if (deleteError.code === '42P01' || deleteError.message?.includes('does not exist')) {
+                console.warn('⚠️ New tables not found, using legacy fields')
+                useNewStructure = false
+              } else {
+                console.error('❌ Error deleting old brands:', deleteError)
+              }
+            }
+            
+            // Adaugă noile brand-uri și serial numbers
+            if (brandSerialGroupsToSend.length > 0 && useNewStructure) {
+              for (const group of brandSerialGroupsToSend) {
+                const brandName = group.brand?.trim()
+                if (!brandName) continue
+                
+                const groupGarantie = group.garantie || false
+                const serialNumbers = group.serialNumbers.filter(sn => sn && sn.trim())
+                
+                console.log('💾 [saveAllAndLog] Creating brand:', brandName, 'with', serialNumbers.length, 'serials')
+                
+                // 1. Creează brand-ul
+                const { data: brandResult, error: brandError } = await (supabaseClient
+                  .from('tray_item_brands') as any)
+                  .insert([{
+                    tray_item_id: existingItem.id,
+                    brand: brandName,
+                    garantie: groupGarantie,
+                  }])
+                  .select()
+                  .single()
+                
+                if (brandError) {
+                  console.error('❌ Error creating brand:', brandError)
+                  // Fallback la câmpurile vechi
+                  useNewStructure = false
+                  break
+                }
+                
+                console.log('✅ Brand created:', (brandResult as any).id)
+                
+                // 2. Creează serial numbers pentru acest brand
+                if (serialNumbers.length > 0) {
+                  const serialsToInsert = serialNumbers.map(sn => ({
+                    brand_id: (brandResult as any).id,
+                    serial_number: sn.trim(),
+                  }))
+                  
+                  const { error: serialsError } = await supabaseClient
+                    .from('tray_item_brand_serials' as any)
+                    .insert(serialsToInsert as any)
+                  
+                  if (serialsError) {
+                    console.error('❌ Error creating serials:', serialsError)
+                  } else {
+                    console.log('✅ Serial numbers created:', serialNumbers.length)
+                  }
+                }
+              }
+            }
+            
+            // Notă: câmpurile brand și serial_number nu mai există în tray_items
+            // Toate datele se salvează în tray_item_brands și tray_item_brand_serials
+          } else {
+            // Creează un nou tray_item cu brand-urile și serial numbers
+            console.log('🆕 [saveAllAndLog] Creating new instrument item')
+            
+            await addInstrumentItem(
+              selectedQuote.id,
+              instrument.name,
+              {
+                instrument_id: instrument.id,
+                department_id: instrument.department_id,
+                qty: qty,
+                discount_pct: 0,
+                urgent: false,
+                technician_id: null,
+                pipeline_id: autoPipelineId,
+                brandSerialGroups: brandSerialGroupsToSend
+              }
+            )
+          }
+          
+          console.log('✅ [saveAllAndLog] Brand/serial data saved successfully')
+          toast.success('Brand și serial numbers salvate cu succes!')
+          
+          // Reîncarcă items pentru quote
+          const newItems = await listQuoteItems(selectedQuote.id, services, instruments, pipelinesWithIds)
+          setItems(newItems)
+          
+          // Populează formularul cu datele noi încărcate
+          populateInstrumentFormFromItems(newItems, instrumentIdToUse, true)
+          
+          // Actualizează lastSavedRef
+          lastSavedRef.current = (newItems ?? []).map((i: any) => ({
+            id: String(i.id),
+            name: i.name_snapshot,
+            qty: Number(i.qty ?? 1),
+            price: Number(i.price ?? 0),
+            type: i.item_type ?? null,
+            urgent: !!i.urgent,
+            department: i.department ?? null,
+            technician_id: i.technician_id ?? null,
+            pipeline_id: i.pipeline_id ?? null,
+            brand: i.brand ?? null,
+            serial_number: i.serial_number ?? null,
+            garantie: !!i.garantie,
+          }))
+          
+          // Păstrează instrumentul selectat
+          if (instrumentIdToUse) {
+            setSvc(prev => ({ ...prev, instrumentId: instrumentIdToUse }))
+            setInstrumentForm(prev => ({ ...prev, instrument: instrumentIdToUse }))
+          }
+          
+          // Dacă nu există alte items de salvat, finalizează aici
+          if (items.length === 0 || (items.length === 1 && existingItem)) {
+            await recalcAllSheetsTotal(quotes)
+            toast.success('Instrumentul și datele brand/serial au fost salvate!')
+            setIsDirty(false)
+            setSaving(false)
+            return
+          }
+          
+        } catch (error: any) {
+          console.error('❌ Error saving brand/serial data:', error)
+          toast.error('Eroare la salvarea datelor brand/serial: ' + (error.message || 'Eroare necunoscută'))
           setSaving(false)
           return
         }
-        
-        // Creează un item cu item_type: null pentru instrument (folosind numele instrumentului)
-        await addInstrumentItem(
-          selectedQuote.id,
-          instrument.name, // Trimite numele instrumentului, nu ID-ul
-          {
-            instrument_id: instrument.id, // ID-ul instrumentului (UUID)
-            department_id: instrument.department_id, // Department din instrument
-            qty: qty,
-            discount_pct: 0,
-            urgent: false,
-            technician_id: null,
-            brand: brand,
-            serial_number: serialNumber,
-            garantie: garantie,
-            pipeline_id: autoPipelineId // Pipeline setat automat dacă instrumentul e din departamentul "reparatii"
+      }
+      
+      // Dacă doar instrument fără brand/serial și nu există items
+      if (instrumentIdToUse && items.length === 0 && !hasValidBrandSerialData) {
+        const instrument = instruments.find(i => i.id === instrumentIdToUse)
+        if (instrument && instrument.department_id) {
+          const savedSettings = instrumentSettings[instrumentIdToUse] || {}
+          const garantie = instrumentForm.garantie || savedSettings.garantie || false
+          const qty = Number(instrumentForm.qty || savedSettings.qty || 1)
+          
+          let autoPipelineId: string | null = null
+          const instrumentDept = departments.find(d => d.id === instrument.department_id)
+          const deptName = instrumentDept?.name?.toLowerCase() || instrument.department_id?.toLowerCase()
+          if (deptName === 'reparatii') {
+            const reparatiiPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'reparatii')
+            if (reparatiiPipeline) autoPipelineId = reparatiiPipeline.id
           }
-        )
-        
-        // Reîncarcă items pentru quote
-        const newItems = await listQuoteItems(selectedQuote.id, services, instruments, pipelinesWithIds)
-        setItems(newItems)
-        
-        // Actualizează lastSavedRef cu snapshot-ul corect pentru ca la următoarea salvare să poată compara
-        lastSavedRef.current = (newItems ?? []).map((i: any) => ({
-          id: String(i.id),
-          name: i.name_snapshot,
-          qty: Number(i.qty ?? 1),
-          price: Number(i.price ?? 0),
-          type: i.item_type ?? null,
-          urgent: !!i.urgent,
-          department: i.department ?? null,
-          technician_id: i.technician_id ?? null,
-          pipeline_id: i.pipeline_id ?? null,
-          brand: i.brand ?? null,
-          serial_number: i.serial_number ?? null,
-          garantie: !!i.garantie,
-        }))
-        
-        // Păstrează instrumentul selectat în formular
-        // Asigură-te că instrumentul rămâne selectat în ambele state-uri
-        if (instrumentIdToUse) {
-          setSvc(prev => ({ ...prev, instrumentId: instrumentIdToUse }))
-          setInstrumentForm(prev => ({ ...prev, instrument: instrumentIdToUse }))
+          
+          try {
+            await addInstrumentItem(selectedQuote.id, instrument.name, {
+              instrument_id: instrument.id,
+              department_id: instrument.department_id,
+              qty: qty,
+              pipeline_id: autoPipelineId,
+            })
+            
+            const newItems = await listQuoteItems(selectedQuote.id, services, instruments, pipelinesWithIds)
+            setItems(newItems)
+            lastSavedRef.current = (newItems ?? []).map((i: any) => ({
+              id: String(i.id), name: i.name_snapshot, qty: Number(i.qty ?? 1),
+              price: Number(i.price ?? 0), type: i.item_type ?? null, urgent: !!i.urgent,
+              department: i.department ?? null, technician_id: i.technician_id ?? null,
+              pipeline_id: i.pipeline_id ?? null, brand: i.brand ?? null,
+              serial_number: i.serial_number ?? null, garantie: !!i.garantie,
+            }))
+            
+            await recalcAllSheetsTotal(quotes)
+            toast.success('Instrumentul a fost salvat!')
+            setIsDirty(false)
+            setSaving(false)
+            return
+          } catch (error: any) {
+            console.error('❌ Error saving instrument:', error)
+            toast.error('Eroare: ' + (error.message || 'Eroare necunoscută'))
+            setSaving(false)
+            return
+          }
         }
-        
-        // Recalculează totalurile
-        await recalcAllSheetsTotal(quotes)
-        
-        toast.success('Instrumentul a fost salvat în istoric!')
-        setIsDirty(false)
-        setSaving(false)
-        return
       }
       
       // Logica normală pentru salvare (dacă există items sau nu e doar instrument)
@@ -1016,6 +1441,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       const updateData: any = {
         is_cash: isCash,
         is_card: isCard,
+        urgent: urgentAllServices, // Salvează starea urgentă pe tăviță
       }
       
       // Adaugă subscription_type doar dacă este valid
@@ -1027,12 +1453,12 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       
       console.log('Salvare quote:', { quoteId: selectedQuote.id, updateData })
       
-      // salveaza cash/card si abonament in baza de date
+      // salveaza cash/card, urgent si abonament in baza de date
       // Notă: is_cash, is_card, subscription_type nu există în noua arhitectură
-      // Acestea sunt ignorate pentru moment
+      // Acestea sunt ignorate pentru moment, dar urgent se salvează pe tăviță
       try {
         await updateQuote(selectedQuote.id, updateData)
-        console.log('Quote actualizat cu succes')
+        console.log('Quote actualizat cu succes (inclusiv urgent:', urgentAllServices, ')')
       } catch (updateError: any) {
         // Dacă eroarea este PGRST116 (nu există rânduri), ignorăm pentru că
         // probabil nu există actualizări pentru câmpurile care există în trays
@@ -1058,6 +1484,19 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         prevSnapshotCount: (lastSavedRef.current as any)?.length || 0,
       })
       
+      // Verifică să nu existe mai mult de 2 instrumente diferite pe tăvița curentă
+      const instrumentIds = Array.from(
+        new Set(
+          items
+            .filter(it => it.instrument_id)
+            .map(it => String(it.instrument_id))
+        )
+      )
+      if (instrumentIds.length > 2) {
+        toast.error('Maxim 2 instrumente pot fi asociate aceleiași tăvițe.')
+        return
+      }
+
       const { items: fresh, snapshot } = await persistAndLogServiceSheet({
         leadId,
         quoteId: selectedQuote.id,
@@ -1069,138 +1508,6 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         pipelinesWithIds, // Trimite pipeline-urile cu ID-uri pentru a seta automat "Reparatii" pentru piese
       })
       console.log('Items salvați cu succes:', { freshCount: fresh.length })
-      
-      // Salvează checkbox-urile pentru livrare în service_file
-      console.log('🔍 DEBUG - Checkpoint salvare curier:', {
-        fisaId,
-        officeDirect,
-        curierTrimis,
-        hasFisaId: !!fisaId
-      })
-      
-      if (fisaId) {
-        const { error: serviceFileError } = await updateServiceFile(fisaId, {
-          office_direct: officeDirect,
-          curier_trimis: curierTrimis,
-        })
-        
-        if (serviceFileError) {
-          console.error('Eroare la actualizarea service_file:', serviceFileError)
-        } else {
-          console.log('Service file actualizat cu office_direct:', officeDirect, 'curier_trimis:', curierTrimis)
-          
-          // Adaugă fișa în pipeline-ul "Curier" dacă unul din checkbox-uri este bifat
-          if (officeDirect || curierTrimis) {
-            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
-            console.log('Căutare pipeline Curier:', {
-              pipelinesWithIds: pipelinesWithIds.map(p => p.name),
-              found: curierPipeline?.id,
-              officeDirect,
-              curierTrimis
-            })
-            
-            if (curierPipeline) {
-              // Determină stage-ul bazat pe checkbox-ul bifat
-              // Încearcă mai multe variante de nume (case-insensitive)
-              const stageNameVariants = officeDirect 
-                ? ['Office direct', 'OFFICE DIRECT', 'office direct']
-                : ['Curier Trimis', 'CURIER TRIMIS', 'curier trimis', 'Curier trimis']
-              
-              // Obține toate stage-urile din pipeline-ul Curier pentru debug
-              const { data: allStages, error: allStagesError } = await supabase
-                .from('stages')
-                .select('id, name')
-                .eq('pipeline_id', curierPipeline.id) as { 
-                  data: Array<{ id: string; name: string }> | null; 
-                  error: any 
-                }
-              
-              console.log('Stage-uri găsite în pipeline Curier:', {
-                pipelineId: curierPipeline.id,
-                stages: allStages,
-                error: allStagesError
-              })
-              
-              // Caută stage-ul (case-insensitive)
-              let stageData: { id: string } | null = null
-              let foundStageName: string | null = null
-              
-              if (allStages && !allStagesError) {
-                for (const variant of stageNameVariants) {
-                  const stage = allStages.find((s) => 
-                    s.name?.toLowerCase() === variant.toLowerCase()
-                  )
-                  if (stage) {
-                    stageData = { id: stage.id }
-                    foundStageName = stage.name
-                    break
-                  }
-                }
-              }
-              
-              if (stageData?.id) {
-                console.log('Stage găsit:', {
-                  stageId: stageData.id,
-                  stageName: foundStageName,
-                  fisaId
-                })
-                
-                // Folosește funcția addServiceFileToPipeline care gestionează automat insert/update
-                const { data: pipelineItem, error: pipelineError } = await addServiceFileToPipeline(
-                  fisaId,
-                  curierPipeline.id,
-                  stageData.id
-                )
-                
-                if (pipelineError) {
-                  console.error('Eroare la adăugarea fișei în pipeline:', {
-                    error: pipelineError,
-                    fisaId,
-                    pipelineId: curierPipeline.id,
-                    stageId: stageData.id
-                  })
-                  toast.error(`Eroare la adăugarea fișei în pipeline: ${pipelineError.message || 'Eroare necunoscută'}`)
-                } else {
-                  console.log('✅ Fișa adăugată/actualizată cu succes în pipeline Curier:', {
-                    stageName: foundStageName,
-                    pipelineItem,
-                    fisaId
-                  })
-                }
-              } else {
-                console.warn('❌ Stage-ul nu a fost găsit:', {
-                  searchedVariants: stageNameVariants,
-                  availableStages: allStages?.map((s: any) => s.name),
-                  pipelineId: curierPipeline.id
-                })
-                toast.error(`Stage-ul "${stageNameVariants[0]}" nu a fost găsit în pipeline-ul Curier`)
-              }
-            } else {
-              console.warn('❌ Pipeline-ul "Curier" nu a fost găsit:', {
-                availablePipelines: pipelinesWithIds.map(p => p.name)
-              })
-              toast.error('Pipeline-ul "Curier" nu a fost găsit')
-            }
-          } else {
-            // Dacă niciun checkbox nu este bifat, șterge fișa din pipeline-ul Curier (dacă există)
-            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
-            if (curierPipeline) {
-              const { error: deleteError } = await supabase
-                .from('pipeline_items')
-                .delete()
-                .eq('item_id', fisaId)
-                .eq('type', 'service_file')
-                .eq('pipeline_id', curierPipeline.id)
-              
-              if (deleteError) {
-                console.error('Eroare la ștergerea fișei din pipeline:', deleteError)
-              } else {
-                console.log('Fișa ștearsă din pipeline Curier (niciun checkbox bifat)')
-              }
-            }
-          }
-        }
-      }
       
       setItems(fresh)
       lastSavedRef.current = snapshot
@@ -1245,6 +1552,23 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     }
   }
 
+  // Actualizează ref-ul pentru funcția de salvare
+  saveRef.current = saveAllAndLog
+
+  // Expune funcția de salvare și tray-ul selectat prin ref
+  useImperativeHandle(
+    ref,
+    () => ({
+      save: async () => {
+        console.log('🔄 [Preturi] Save called via ref - brandSerialGroups:', instrumentForm.brandSerialGroups)
+        await saveRef.current()
+        console.log('✅ [Preturi] Save completed')
+      },
+      getSelectedTrayId: () => selectedQuoteId,
+    }),
+    [selectedQuoteId, instrumentForm.brandSerialGroups]
+  )
+
   // Funcție pentru validarea tăvițelor înainte de expediere
   const validateTraysBeforeSend = async (): Promise<{ valid: boolean; errors: string[] }> => {
     const errors: string[] = []
@@ -1272,34 +1596,48 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
   // Funcție pentru verificarea dacă tăvițele sunt deja în departamente
   const checkTraysInDepartments = async (trayIds: string[]) => {
     if (trayIds.length === 0) {
+      console.log('🔍 checkTraysInDepartments: Nu există tăvițe de verificat')
       setTraysAlreadyInDepartments(false)
       return
     }
 
     try {
+      console.log('🔍 checkTraysInDepartments: Verificare pentru tăvițe:', trayIds)
+      
       // Obține pipeline-urile departamentelor (Saloane, Horeca, Frizerii, Reparatii)
-      const { data: deptPipelines } = await supabase
+      const { data: deptPipelines, error: deptError } = await supabase
         .from('pipelines')
-        .select('id')
+        .select('id, name')
         .in('name', ['Saloane', 'Horeca', 'Frizerii', 'Reparatii'])
 
+      if (deptError) {
+        console.error('❌ Eroare la obținerea pipeline-urilor departamentelor:', deptError)
+        setTraysAlreadyInDepartments(false)
+        return
+      }
+
       if (!deptPipelines || deptPipelines.length === 0) {
+        console.log('🔍 checkTraysInDepartments: Nu s-au găsit pipeline-uri pentru departamente')
         setTraysAlreadyInDepartments(false)
         return
       }
 
       const deptPipelineIds = deptPipelines.map((p: any) => p.id)
+      console.log('🔍 checkTraysInDepartments: Pipeline-uri departamente:', {
+        ids: deptPipelineIds,
+        names: deptPipelines.map((p: any) => p.name)
+      })
 
       // Verifică dacă există pipeline_items pentru tăvițe în pipeline-urile departamentelor
       const { data: pipelineItems, error } = await supabase
         .from('pipeline_items')
-        .select('item_id')
+        .select('item_id, pipeline_id')
         .eq('type', 'tray')
         .in('item_id', trayIds)
         .in('pipeline_id', deptPipelineIds)
 
       if (error) {
-        console.error('Eroare la verificarea tăvițelor în departamente:', error)
+        console.error('❌ Eroare la verificarea tăvițelor în departamente:', error)
         setTraysAlreadyInDepartments(false)
         return
       }
@@ -1310,11 +1648,14 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
       console.log('🔍 Verificare tăvițe în departamente:', {
         trayIds,
+        deptPipelineIds,
+        pipelineItemsFound: pipelineItems?.length || 0,
+        pipelineItems: pipelineItems,
         hasTraysInDepartments,
-        count: pipelineItems?.length || 0
+        result: hasTraysInDepartments ? 'Tăvițele SUNT deja în departamente' : 'Tăvițele NU sunt în departamente'
       })
     } catch (error) {
-      console.error('Eroare la verificarea tăvițelor în departamente:', error)
+      console.error('❌ Eroare la verificarea tăvițelor în departamente:', error)
       setTraysAlreadyInDepartments(false)
     }
   }
@@ -1510,6 +1851,55 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       setShowSendConfirmation(false)
     }
   }
+
+  // Funcție pentru ștergerea unei tăvițe
+  const handleDeleteTray = async () => {
+    if (!trayToDelete) return
+
+    setDeletingTray(true)
+    try {
+      // Verifică dacă tăvița are items
+      const trayItems = await listQuoteItems(trayToDelete, services, instruments, pipelinesWithIds)
+      
+      // Dacă tăvița are items, șterge-le mai întâi
+      if (trayItems.length > 0) {
+        for (const item of trayItems) {
+          await deleteTrayItem(item.id)
+        }
+      }
+
+      // Șterge tăvița
+      const { success, error } = await deleteTray(trayToDelete)
+      
+      if (error || !success) {
+        toast.error('Eroare la ștergerea tăviței')
+        console.error('Error deleting tray:', error)
+        return
+      }
+
+      toast.success('Tăvița a fost ștearsă')
+      
+      // Actualizează lista de tăvițe
+      setQuotes(prev => prev.filter(q => q.id !== trayToDelete))
+      
+      // Dacă tăvița ștearsă era selectată, selectează prima tăviță rămasă
+      if (selectedQuoteId === trayToDelete) {
+        const remainingQuotes = quotes.filter(q => q.id !== trayToDelete)
+        if (remainingQuotes.length > 0) {
+          setSelectedQuoteId(remainingQuotes[0].id)
+        } else {
+          setSelectedQuoteId(null)
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting tray:', error)
+      toast.error('Eroare la ștergerea tăviței')
+    } finally {
+      setDeletingTray(false)
+      setShowDeleteTrayConfirmation(false)
+      setTrayToDelete(null)
+    }
+  }
   
   useEffect(() => {
     (async () => {
@@ -1518,25 +1908,28 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         // Încarcă toate datele în paralel, inclusiv pipelines și departments
         const [svcList, techList, partList, instList, pipelinesData, departmentsData] = await Promise.all([
           listServices(),
-          // Obține membrii din app_members pentru tehnicieni (folosim user_id ca id și email ca nume)
+          // Obține membrii din app_members pentru tehnicieni (folosim user_id ca id și name ca nume)
           supabase
             .from('app_members')
-            .select('user_id, email')
+            .select('user_id, name, email')
             .order('created_at', { ascending: true })
             .then(({ data, error }) => {
               if (error) {
                 console.error('Error loading app_members:', error)
                 return []
               }
-              // Transformă în format compatibil cu Technician (id = user_id, name din email)
+              // Transformă în format compatibil cu Technician (id = user_id, name din câmpul name)
               const techs = (data ?? []).map((m: any) => {
                 let name = 'Necunoscut'
                 
-                // Folosește email-ul ca nume (partea dinainte de @)
-                if (m.email) {
+                // Folosește câmpul name din app_members
+                if (m.name) {
+                  name = m.name
+                } else if (m.email) {
+                  // Fallback: folosește email-ul ca nume (partea dinainte de @)
                   name = m.email.split('@')[0]
                 } else {
-                  // Fallback: folosește o parte din user_id
+                  // Fallback final: folosește o parte din user_id
                   name = `User ${m.user_id.slice(0, 8)}`
                 }
                 
@@ -1601,16 +1994,12 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         setDepartments(departmentsData);
         setPipeLoading(false);
       
-        // Load or create first sheet
+        // Load trays for service sheet (fără creare automată)
         let qs: LeadQuote[];
         if (fisaId) {
           // Dacă avem fisaId, încarcă doar tăvițele din acea fișă
           qs = await listTraysForServiceSheet(fisaId);
-          if (!qs.length) {
-            // Dacă nu există tăvițe, creează prima tăviță pentru această fișă
-            const created = await createQuoteForLead(leadId, undefined, fisaId);
-            qs = [created];
-          }
+          // Nu creăm automat tăviță - utilizatorul va apăsa "Adaugă tăviță"
         } else {
           // Tăvițe standalone nu mai sunt suportate
           // Toate tăvițele trebuie să fie asociate cu o fișă de serviciu
@@ -1640,11 +2029,14 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           }
           
           qs = await listTraysForServiceSheet(defaultFisaId!)
-          if (!qs.length) {
-            const created = await createQuoteForLead(leadId, undefined, defaultFisaId)
-            qs = [created]
-          }
+          // Nu creăm automat tăviță - utilizatorul va apăsa "Adaugă tăviță"
         }
+        // În modul departament, filtrăm să afișăm doar tăvița curentă (initialQuoteId)
+        if (isDepartmentPipeline && initialQuoteId) {
+          const filteredQuotes = qs.filter(q => q.id === initialQuoteId)
+          qs = filteredQuotes.length > 0 ? filteredQuotes : qs
+        }
+        
         setQuotes(qs);
         
         // Dacă avem initialQuoteId, folosim-l, altfel folosim primul quote
@@ -1675,17 +2067,19 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           setTraysAlreadyInDepartments(false)
         }
         
-        // Încarcă checkbox-urile pentru livrare din service_file (în paralel)
+        // Încarcă checkbox-urile pentru livrare + No Deal din service_file (în paralel)
         if (fisaId) {
           parallelTasks.push(
             getServiceFile(fisaId).then(({ data: serviceFileData }) => {
               if (serviceFileData) {
                 setOfficeDirect(serviceFileData.office_direct || false)
                 setCurierTrimis(serviceFileData.curier_trimis || false)
+                setNoDeal(serviceFileData.no_deal || false)
                 console.log('Încărcare checkbox-uri livrare din service_file:', {
                   fisaId,
                   office_direct: serviceFileData.office_direct,
-                  curier_trimis: serviceFileData.curier_trimis
+                  curier_trimis: serviceFileData.curier_trimis,
+                  no_deal: serviceFileData.no_deal
                 })
               }
             }).catch(err => {
@@ -1698,7 +2092,11 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         const allTrayIds = qs.map(q => q.id)
         const batchItemsPromise = supabase
           .from('tray_items')
-          .select('*')
+          .select(`
+            id, tray_id, instrument_id, service_id, part_id, department_id,
+            technician_id, qty, notes, pipeline, created_at,
+            tray_item_brands(id, brand, garantie, tray_item_brand_serials(id, serial_number))
+          `)
           .in('tray_id', allTrayIds)
           .order('tray_id, id', { ascending: true })
           .then(({ data: allTrayItems, error: itemsError }) => {
@@ -1782,6 +2180,19 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 }
               }
               
+              // Extrage brand_groups din tray_item_brands
+              const brands = (item as any).tray_item_brands || []
+              const brandGroups = brands.map((b: any) => ({
+                id: b.id,
+                brand: b.brand || '',
+                garantie: b.garantie || false,
+                serialNumbers: (b.tray_item_brand_serials || []).map((s: any) => s.serial_number || '')
+              }))
+              
+              // Pentru compatibilitate, primul brand
+              const firstBrand = brands.length > 0 ? brands[0] : null
+              const firstSerial = firstBrand?.tray_item_brand_serials?.[0]?.serial_number || null
+              
               return {
                 ...item,
                 item_type,
@@ -1789,13 +2200,16 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 discount_pct: notesData.discount_pct || 0,
                 urgent: notesData.urgent || false,
                 name_snapshot: notesData.name_snapshot || notesData.name || '',
-                brand: notesData.brand || null,
-                serial_number: notesData.serial_number || null,
-                garantie: notesData.garantie || false,
+                // Folosește datele din noua structură, cu fallback la notesData
+                brand: firstBrand?.brand || notesData.brand || null,
+                serial_number: firstSerial || notesData.serial_number || null,
+                garantie: firstBrand?.garantie || notesData.garantie || false,
+                // Include toate brand-urile cu serial numbers
+                brand_groups: brandGroups,
                 pipeline_id: notesData.pipeline_id || null,
                 department,
                 qty: item.qty || 1,
-              } as LeadQuoteItem & { price: number; department?: string | null }
+              } as LeadQuoteItem & { price: number; department?: string | null; brand_groups?: Array<{ id: string; brand: string; serialNumbers: string[]; garantie: boolean }> }
             })
             
             // Set items și lastSavedRef
@@ -1815,17 +2229,36 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
             }));
             setIsDirty(false); // Resetează isDirty la încărcarea inițială
 
-            // Pre-selectează instrumentul dacă există deja servicii în tăviță
+            // Pre-selectează instrumentul dacă există deja items în tăviță
+            // Mai întâi verifică dacă există items cu doar instrument (item_type: null)
+            const instrumentOnlyItems = (qi ?? []).filter((item: any) => item.item_type === null && item.instrument_id)
             const serviceItems = (qi ?? []).filter((item: any) => item.item_type === 'service')
-            if (serviceItems.length > 0 && serviceItems[0].service_id) {
+            
+            let selectedInstrumentId: string | null = null
+            
+            // Prioritate 1: Item cu doar instrument
+            if (instrumentOnlyItems.length > 0 && instrumentOnlyItems[0].instrument_id) {
+              selectedInstrumentId = instrumentOnlyItems[0].instrument_id
+              console.log('📦 [loadQuotes] Found instrument-only item, instrumentId:', selectedInstrumentId)
+            }
+            // Prioritate 2: Servicii existente
+            else if (serviceItems.length > 0 && serviceItems[0].service_id) {
               const firstServiceDef = svcList.find(s => s.id === serviceItems[0].service_id)
               if (firstServiceDef?.instrument_id) {
-                const instrumentId = firstServiceDef.instrument_id!
-                setSvc(prev => ({ ...prev, instrumentId }))
-                // Populează formularul instrument cu datele salvate
-                populateInstrumentFormFromItems(qi ?? [], instrumentId)
+                selectedInstrumentId = firstServiceDef.instrument_id
+                console.log('📦 [loadQuotes] Found service item, instrumentId:', selectedInstrumentId)
               }
             }
+            
+            // Populează formularul dacă am găsit un instrument
+            if (selectedInstrumentId) {
+              setSvc(prev => ({ ...prev, instrumentId: selectedInstrumentId! }))
+              setInstrumentForm(prev => ({ ...prev, instrument: selectedInstrumentId! }))
+              // Populează formularul instrument cu datele salvate - forțează reîncărcarea la deschiderea tăviței
+              console.log('📦 [loadQuotes] Populating form with instrumentId:', selectedInstrumentId)
+              populateInstrumentFormFromItems(qi ?? [], selectedInstrumentId, true)
+            }
+            
             return qi
           }).catch((err: any) => {
             console.error('Eroare la încărcarea items-urilor:', err)
@@ -1835,19 +2268,23 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           })
         )
         
-        // Load cash/card and subscription values from quote (după ce știm prima tăviță)
+        // Load cash/card, urgent and subscription values from quote (după ce știm prima tăviță)
         const selectedQuoteForData = qs.find(q => q.id === firstId) || qs[0];
         const firstQuote = selectedQuoteForData as any
         if (firstQuote) {
           setIsCash(firstQuote.is_cash || false)
           setIsCard(firstQuote.is_card || false)
           const loadedSubscriptionType = firstQuote.subscription_type || ''
-          console.log('Încărcare subscription_type din quote:', {
+          const loadedUrgent = firstQuote.urgent || false
+          console.log('Încărcare subscription_type și urgent din quote:', {
             quoteId: firstQuote.id,
             subscription_type: firstQuote.subscription_type,
-            loadedSubscriptionType
+            urgent: firstQuote.urgent,
+            loadedSubscriptionType,
+            loadedUrgent
           })
           setSubscriptionType(loadedSubscriptionType)
+          setUrgentAllServices(loadedUrgent)
         }
         
         // Așteaptă toate task-urile în paralel
@@ -1919,6 +2356,24 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
             
             const trayData = tray as any
             if (trayData && trayData.service_file?.lead_id === leadId) {
+              // Verifică dacă s-a schimbat ceva relevant (evită reîncărcări inutile)
+              const hasRelevantChange = payloadNew && (
+                payloadNew.is_cash !== undefined ||
+                payloadNew.is_card !== undefined ||
+                payloadNew.subscription_type !== undefined ||
+                payloadNew.urgent !== undefined ||
+                payloadNew.number !== undefined ||
+                payloadNew.size !== undefined ||
+                payloadNew.status !== undefined ||
+                payload.eventType === 'DELETE' ||
+                payload.eventType === 'INSERT'
+              )
+              
+              if (!hasRelevantChange && payload.eventType === 'UPDATE') {
+                // Nu s-a schimbat nimic relevant, nu reîncărca
+                return
+              }
+              
               // Daca se modifica tăvița curentă, actualizeaza checkbox-urile
               if (trayId === selectedQuoteId && payloadNew) {
                 setIsCash(payloadNew.is_cash || false)
@@ -1926,13 +2381,23 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 if (payloadNew.subscription_type !== undefined) {
                   setSubscriptionType(payloadNew.subscription_type || '')
                 }
+                if (payloadNew.urgent !== undefined) {
+                  setUrgentAllServices(payloadNew.urgent || false)
+                }
               }
               
               // Reincarca tăvițele pentru a avea date actualizate
               const currentQuotes = fisaId 
                 ? await listTraysForServiceSheet(fisaId)
                 : await listQuotesForLead(leadId)
-              setQuotes(currentQuotes)
+              
+              // Verifică dacă quotes-urile s-au schimbat cu adevărat înainte de a actualiza
+              const currentIds = currentQuotes.map(q => q.id).sort().join(',')
+              const prevIds = quotes.map(q => q.id).sort().join(',')
+              
+              if (currentIds !== prevIds || payload.eventType === 'DELETE' || payload.eventType === 'INSERT') {
+                setQuotes(currentQuotes)
+              }
               
               // Daca tăvița curentă s-a schimbat, actualizeaza checkbox-urile
               if (selectedQuoteId) {
@@ -1941,11 +2406,14 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                   setIsCash(updatedQuote.is_cash || false)
                   setIsCard(updatedQuote.is_card || false)
                   setSubscriptionType(updatedQuote.subscription_type || '')
+                  setUrgentAllServices(updatedQuote.urgent || false)
                 }
               }
               
-              // Recalculeaza totalul
-              await recalcAllSheetsTotal(currentQuotes)
+              // Recalculeaza totalul doar dacă este necesar
+              if (hasRelevantChange) {
+                await recalcAllSheetsTotal(currentQuotes)
+              }
             }
           }
         }
@@ -1957,15 +2425,45 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     }
   }, [leadId, fisaId]);
 
+  // Ref pentru a urmări ID-urile anterioare și a preveni verificări inutile
+  const prevTrayIdsRef = useRef<string>('')
+  
   // Verifică dacă tăvițele sunt în departamente când se schimbă lista de tăvițe
   useEffect(() => {
-    if (quotes.length > 0 && fisaId) {
+    const currentTrayIds = quotes.map(q => q.id).sort().join(',')
+    
+    // Verifică dacă ID-urile s-au schimbat cu adevărat
+    if (prevTrayIdsRef.current === currentTrayIds) {
+      return // Nu s-au schimbat, nu face nimic
+    }
+    
+    prevTrayIdsRef.current = currentTrayIds
+    
+    if (quotes.length > 0) {
       const trayIds = quotes.map(q => q.id)
+      console.log('🔍 useEffect: Verificare tăvițe în departamente:', { trayIds, fisaId, quotesCount: quotes.length })
       checkTraysInDepartments(trayIds)
     } else {
+      console.log('🔍 useEffect: Nu există tăvițe, setăm traysAlreadyInDepartments = false')
       setTraysAlreadyInDepartments(false)
     }
-  }, [quotes.map(q => q.id).join(',')])
+  }, [quotes])
+
+  // Resetează dialog-ul de creare tăviță când se accesează o tăviță existentă
+  useEffect(() => {
+    // Doar dacă există o tăviță selectată și dialog-ul este deschis, închide-l
+    if (selectedQuoteId && quotes.length > 0) {
+      setShowCreateTrayDialog(prev => {
+        if (prev) {
+          console.log('🔵 Resetare dialog creare tăviță - tăviță existentă accesată')
+          setNewTrayNumber('')
+          setNewTraySize('medium')
+          return false
+        }
+        return prev
+      })
+    }
+  }, [selectedQuoteId, quotes.length])
 
   // Încarcă imaginile pentru tăvița selectată
   useEffect(() => {
@@ -2148,58 +2646,164 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
   }, [subtotal, totalDiscount, urgentAmount, subscriptionDiscountAmount]);
 
   // ----- Add instrument -----
-  function onAddSerialNumber() {
+  // Adaugă un nou grup brand + serial numbers
+  function onAddBrandSerialGroup() {
     setInstrumentForm(prev => ({
       ...prev,
-      serialNumbers: [...prev.serialNumbers, '']
+      brandSerialGroups: [...prev.brandSerialGroups, { brand: '', serialNumbers: [''] }]
     }))
     setIsDirty(true)
   }
 
-  function onRemoveSerialNumber(index: number) {
+  // Șterge un grup brand + serial numbers
+  function onRemoveBrandSerialGroup(groupIndex: number) {
     setInstrumentForm(prev => ({
       ...prev,
-      serialNumbers: prev.serialNumbers.filter((_, i) => i !== index)
+      brandSerialGroups: prev.brandSerialGroups.filter((_, i) => i !== groupIndex)
     }))
     setIsDirty(true)
   }
 
-  function onUpdateSerialNumber(index: number, value: string) {
+  // Actualizează brand-ul pentru un grup
+  function onUpdateBrand(groupIndex: number, value: string) {
     setInstrumentForm(prev => ({
       ...prev,
-      serialNumbers: prev.serialNumbers.map((sn, i) => i === index ? value : sn)
+      brandSerialGroups: prev.brandSerialGroups.map((group, i) => 
+        i === groupIndex ? { ...group, brand: value } : group
+      )
+    }))
+    setIsDirty(true)
+  }
+
+  // Adaugă un serial number într-un grup
+  function onAddSerialNumber(groupIndex: number) {
+    setInstrumentForm(prev => ({
+      ...prev,
+      brandSerialGroups: prev.brandSerialGroups.map((group, i) => 
+        i === groupIndex 
+          ? { ...group, serialNumbers: [...group.serialNumbers, ''] }
+          : group
+      )
+    }))
+    setIsDirty(true)
+  }
+
+  // Șterge un serial number dintr-un grup
+  function onRemoveSerialNumber(groupIndex: number, serialIndex: number) {
+    setInstrumentForm(prev => ({
+      ...prev,
+      brandSerialGroups: prev.brandSerialGroups.map((group, i) => 
+        i === groupIndex 
+          ? { ...group, serialNumbers: group.serialNumbers.filter((_, si) => si !== serialIndex) }
+          : group
+      )
+    }))
+    setIsDirty(true)
+  }
+
+  // Actualizează un serial number dintr-un grup
+  function onUpdateSerialNumber(groupIndex: number, serialIndex: number, value: string) {
+    setInstrumentForm(prev => ({
+      ...prev,
+      brandSerialGroups: prev.brandSerialGroups.map((group, i) => 
+        i === groupIndex 
+          ? { ...group, serialNumbers: group.serialNumbers.map((sn, si) => si === serialIndex ? value : sn) }
+          : group
+      )
     }))
     setIsDirty(true)
   }
 
   // Funcție helper pentru a popula formularul instrument cu datele salvate din items
-  function populateInstrumentFormFromItems(items: LeadQuoteItem[], instrumentId: string | null) {
+  function populateInstrumentFormFromItems(items: LeadQuoteItem[], instrumentId: string | null, forceReload: boolean = false) {
     if (!instrumentId) return
     
-    // Găsește primul item care are brand, serial_number sau garantie pentru acest instrument
-    // Cautăm în items-urile care sunt servicii și au service_id care corespunde unui serviciu cu acest instrument
-    const serviceItems = items.filter(item => item.item_type === 'service' && item.service_id)
-    
-    // Găsește primul item care are date despre instrument (brand, serial_number sau garantie)
-    const itemWithInstrumentData = serviceItems.find(item => {
-      const serviceDef = services.find(s => s.id === item.service_id)
-      return serviceDef?.instrument_id === instrumentId && (item.brand || item.serial_number || item.garantie)
+    // Găsește toate items-urile care sunt instrumente (item_type: null) sau servicii cu acest instrument
+    const instrumentItems = items.filter(item => {
+      // Items care sunt direct instrumente (item_type: null și au instrument_id)
+      if (item.item_type === null && item.instrument_id === instrumentId) {
+        return true
+      }
+      // Sau servicii care au acest instrument
+      if (item.item_type === 'service' && item.service_id) {
+        const serviceDef = services.find(s => s.id === item.service_id)
+        return serviceDef?.instrument_id === instrumentId
+      }
+      return false
     })
     
-    if (itemWithInstrumentData) {
-      // Populează formularul cu datele găsite doar dacă formularul este gol sau dacă datele diferă
+    console.log('🔍 populateInstrumentFormFromItems - instrumentItems found:', instrumentItems.length, 'for instrumentId:', instrumentId, 'forceReload:', forceReload)
+    
+    // Găsește primul item care are brand_groups sau brand/serial_number
+    const itemWithInstrumentData = instrumentItems.find(item => {
+      const hasBrandGroups = (item as any).brand_groups && (item as any).brand_groups.length > 0
+      const hasData = hasBrandGroups || item.brand || item.serial_number || item.garantie
+      if (hasData) {
+        console.log('✅ Found item with data:', {
+          id: item.id,
+          brand_groups: (item as any).brand_groups?.length || 0,
+          brand: item.brand,
+          serial_number: item.serial_number
+        })
+      }
+      return hasData
+    })
+    
+    // Chiar dacă nu găsim date, verificăm dacă există un item
+    const itemWithPotentialData = instrumentItems.length > 0 ? instrumentItems[0] : null
+    
+    if (itemWithInstrumentData || itemWithPotentialData) {
+      const targetItem = itemWithInstrumentData || itemWithPotentialData
+      
+      // Extrage brand-urile și serial numbers din noua structură brand_groups
+      let brandSerialGroups: Array<{ brand: string; serialNumbers: string[]; garantie: boolean }> = []
+      
+      // Noua structură: brand_groups = Array<{ id, brand, serialNumbers[], garantie }>
+      const brandGroups = (targetItem as any).brand_groups || []
+      
+      console.log('📦 Raw brand_groups from DB:', brandGroups)
+      
+      if (brandGroups.length > 0) {
+        console.log('📦 Processing brand_groups:', brandGroups.length, 'brands')
+        
+        // Transformă direct din structura din DB
+        brandSerialGroups = brandGroups.map((bg: any) => ({
+          brand: bg.brand || '',
+          serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 ? bg.serialNumbers : [''],
+          garantie: bg.garantie || false
+        }))
+        
+        console.log('✅ Brand groups loaded:', brandSerialGroups)
+      } else if (targetItem?.brand || targetItem?.serial_number) {
+        console.log('⚠️ Using fallback brand/serial_number fields')
+        // Fallback la câmpurile vechi pentru compatibilitate
+        brandSerialGroups = [{
+          brand: targetItem.brand || '',
+          serialNumbers: targetItem.serial_number ? [targetItem.serial_number] : [''],
+          garantie: targetItem.garantie || false
+        }]
+      } else {
+        brandSerialGroups = [{ brand: '', serialNumbers: [''], garantie: false }]
+      }
+      
+      const finalGroups = brandSerialGroups.length > 0 ? brandSerialGroups : [{ brand: '', serialNumbers: [''], garantie: false }]
+      console.log('✅ Final brand serial groups to populate:', finalGroups)
+      
+      // Populează formularul - dacă forceReload este true, suprascrie întotdeauna
       setInstrumentForm(prev => {
-        // Dacă formularul are deja date și este pentru același instrument, nu le suprascriem
-        if (prev.instrument === instrumentId && prev.brand) {
+        // Dacă forceReload este false și formularul are deja date pentru același instrument, nu le suprascriem
+        if (!forceReload && prev.instrument === instrumentId && prev.brandSerialGroups.some(g => g.brand || g.serialNumbers.some(sn => sn && sn.trim()))) {
+          console.log('⏭️ Skipping populate - form already has data for this instrument')
           return prev
         }
+        
+        console.log('✅ Populating form with brand serial groups:', finalGroups)
         
         return {
           ...prev,
           instrument: instrumentId,
-          brand: itemWithInstrumentData.brand || '',
-          serialNumbers: itemWithInstrumentData.serial_number ? [itemWithInstrumentData.serial_number] : [''],
-          garantie: itemWithInstrumentData.garantie || false,
+          brandSerialGroups: finalGroups,
+          garantie: brandSerialGroups.some(g => g.garantie) || targetItem?.garantie || false,
           qty: instrumentSettings[instrumentId]?.qty || prev.qty || '1'
         }
       })
@@ -2209,9 +2813,8 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         ...prev,
         [instrumentId]: {
           qty: prev[instrumentId]?.qty || '1',
-          brand: itemWithInstrumentData.brand || '',
-          serialNumbers: itemWithInstrumentData.serial_number ? [itemWithInstrumentData.serial_number] : [],
-          garantie: itemWithInstrumentData.garantie || false
+          brandSerialGroups: brandSerialGroups,
+          garantie: brandSerialGroups.some(g => g.garantie) || targetItem?.garantie || false
         }
       }))
     }
@@ -2282,11 +2885,13 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)))
       
       // Obține datele instrumentului
-      const brand = (instrumentForm.brand && instrumentForm.brand.trim()) 
-        ? instrumentForm.brand.trim() 
+      // Folosește primul grup pentru servicii (compatibilitate)
+      const firstGroup = instrumentForm.brandSerialGroups[0] || { brand: '', serialNumbers: [''] }
+      const brand = (firstGroup.brand && firstGroup.brand.trim()) 
+        ? firstGroup.brand.trim() 
         : null
-      const serialNumber = (instrumentForm.serialNumbers.length > 0 && instrumentForm.serialNumbers[0].trim()) 
-        ? instrumentForm.serialNumbers[0].trim() 
+      const serialNumber = (firstGroup.serialNumbers.length > 0 && firstGroup.serialNumbers[0].trim()) 
+        ? firstGroup.serialNumbers[0].trim() 
         : null
       const garantie = instrumentForm.garantie || false
       
@@ -2401,19 +3006,33 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       return
     }
   
-    const qty = Math.max(1, Number(instrumentForm.qty || svc.qty || 1))
+    const qty = Math.max(1, Number(svc.qty || instrumentForm.qty || 1))
     const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)))
     
-    // Obține datele instrumentului direct din instrumentForm
-    const brand = (instrumentForm.brand && instrumentForm.brand.trim()) 
-      ? instrumentForm.brand.trim() 
-      : null
-    const serialNumber = (instrumentForm.serialNumbers.length > 0 && instrumentForm.serialNumbers[0].trim()) 
-      ? instrumentForm.serialNumbers[0].trim() 
-      : null
+    // Obține datele instrumentului - folosește serial number-ul selectat sau primul din listă
+    let brand: string | null = null
+    let serialNumber: string | null = null
+    
+    // Verifică dacă a fost selectat un serial number specific
+    if (svc.serialNumberId) {
+      // Format: "brand::serialNumber"
+      const parts = svc.serialNumberId.split('::')
+      brand = parts[0] || null
+      serialNumber = parts[1] || null
+    } else {
+      // Fallback: folosește primul grup pentru compatibilitate
+      const firstGroup = instrumentForm.brandSerialGroups[0] || { brand: '', serialNumbers: [''] }
+      brand = (firstGroup.brand && firstGroup.brand.trim()) 
+        ? firstGroup.brand.trim() 
+        : null
+      serialNumber = (firstGroup.serialNumbers.length > 0 && firstGroup.serialNumbers[0].trim()) 
+        ? firstGroup.serialNumbers[0].trim() 
+        : null
+    }
+    
     const garantie = instrumentForm.garantie || false
   
-    console.log('onAddService - instrumentForm:', instrumentForm, 'svc.instrumentId:', svc.instrumentId, 'brand:', brand, 'serialNumber:', serialNumber, 'garantie:', garantie);
+    console.log('onAddService - qty:', qty, 'serialNumberId:', svc.serialNumberId, 'brand:', brand, 'serialNumber:', serialNumber, 'garantie:', garantie);
   
     // Verifică dacă există deja un item cu instrument (item_type: null)
     // Dacă există, actualizează-l cu detaliile serviciului în loc să creezi unul nou
@@ -2525,12 +3144,14 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     setSvc(prev => ({ 
       ...prev, 
       id: '', 
-      qty: instrumentForm.qty || '1', 
+      qty: '1', // Resetează cantitatea
       discount: '0', 
       urgent: false, 
       technicianId: '',
       pipelineId: '', // Resetează pipeline_id după adăugare
+      serialNumberId: '', // Resetează serial number-ul selectat
     }))
+    setServiceSearchQuery('') // Resetează căutarea serviciului
     setIsDirty(true)
   }
 
@@ -2570,6 +3191,15 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     const reparatiiPipeline = pipelinesWithIds.find(p => p.name === 'Reparatii')
     const pipelineIdForPart = reparatiiPipeline?.id || null
     
+    // Extrage brand și serial number din selecție (format: "brand::serialNumber")
+    let partBrand: string | null = null
+    let partSerialNumber: string | null = null
+    if (part.serialNumberId && part.serialNumberId.includes('::')) {
+      const [b, sn] = part.serialNumberId.split('::')
+      partBrand = b || null
+      partSerialNumber = sn || null
+    }
+    
     setItems(prev => [
       ...prev,
       {
@@ -2584,10 +3214,13 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         urgent: urgentAllServices, // Folosește urgentAllServices pentru piese
         pipeline_id: pipelineIdForPart, // Setează automat pipeline-ul "Reparatii" pentru piese
         technician_id: null,
+        brand: partBrand, // Brand-ul instrumentului căruia îi este destinată piesa
+        serial_number: partSerialNumber, // Serial number-ul instrumentului
       } as unknown as LeadQuoteItem
     ])
   
-    setPart({ id: '', overridePrice: '', qty: '1', discount: '0', urgent: false })
+    setPart({ id: '', overridePrice: '', qty: '1', discount: '0', urgent: false, serialNumberId: '' })
+    setPartSearchQuery('') // Resetează căutarea piesei
     setIsDirty(true)
   }
 
@@ -2623,6 +3256,14 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
   async function onChangeSheet(newId: string) {
     if (!newId || newId === selectedQuoteId) return;
+    
+    // Resetează dialog-ul de creare tăviță când se schimbă tăvița
+    if (showCreateTrayDialog) {
+      setShowCreateTrayDialog(false)
+      setNewTrayNumber('')
+      setNewTraySize('medium')
+    }
+    
     setLoading(true);
     try {
       // incarca valorile cash/card si subscription pentru noua tavita
@@ -2631,12 +3272,16 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         setIsCash(newQuote.is_cash || false)
         setIsCard(newQuote.is_card || false)
         const loadedSubscriptionType = newQuote.subscription_type || ''
-        console.log('Schimbare tăviță - încărcare subscription_type:', {
+        const loadedUrgent = newQuote.urgent || false
+        console.log('Schimbare tăviță - încărcare subscription_type și urgent:', {
           quoteId: newQuote.id,
           subscription_type: newQuote.subscription_type,
-          loadedSubscriptionType
+          urgent: newQuote.urgent,
+          loadedSubscriptionType,
+          loadedUrgent
         })
         setSubscriptionType(loadedSubscriptionType)
+        setUrgentAllServices(loadedUrgent)
       }
       setSelectedQuoteId(newId);
       
@@ -2673,8 +3318,8 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           const instrumentId = firstServiceDef.instrument_id!
           setSvc(prev => ({ ...prev, instrumentId }))
           setInstrumentForm(prev => ({ ...prev, instrument: instrumentId }))
-          // Populează formularul instrument cu datele salvate
-          populateInstrumentFormFromItems(qi ?? [], instrumentId)
+          // Populează formularul instrument cu datele salvate - forțează reîncărcarea
+          populateInstrumentFormFromItems(qi ?? [], instrumentId, true)
         } else {
           // Doar dacă nu există instrument selectat deja, resetează
           if (!currentInstrumentId) {
@@ -2690,8 +3335,8 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           const instrumentId = instrument.id
           setSvc(prev => ({ ...prev, instrumentId }))
           setInstrumentForm(prev => ({ ...prev, instrument: instrumentId }))
-          // Populează formularul instrument cu datele salvate
-          populateInstrumentFormFromItems(qi ?? [], instrumentId)
+          // Populează formularul instrument cu datele salvate - forțează reîncărcarea
+          populateInstrumentFormFromItems(qi ?? [], instrumentId, true)
         }
       } else {
         // Resetează instrumentul doar dacă nu există nici servicii, nici items cu instrument
@@ -2702,30 +3347,113 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         }
       }
       
-      // Actualizează urgentAllServices bazat pe serviciile și piesele din tăviță
+      // Actualizează urgentAllServices bazat pe tăviță și pe serviciile/piesele din tăviță
+      // Prioritate: dacă tăvița are urgent setat, folosește-l; altfel verifică items-urile
+      const trayUrgent = newQuote?.urgent || false
       const partItems = (qi ?? []).filter((item: any) => item.item_type === 'part')
       const allServicesUrgent = serviceItems.length > 0 && serviceItems.every((item: any) => item.urgent)
       const allPartsUrgent = partItems.length > 0 && partItems.every((item: any) => item.urgent)
       const allItemsUrgent = (serviceItems.length > 0 && allServicesUrgent) || (partItems.length > 0 && allPartsUrgent)
-      setUrgentAllServices(allItemsUrgent)
+      // Folosește urgent de pe tăviță dacă este setat, altfel folosește urgent de pe items
+      setUrgentAllServices(trayUrgent || allItemsUrgent)
     } finally {
       setLoading(false);
     }
   }
   
   async function onAddSheet() {
-    setLoading(true);
+    console.log('🔵 onAddSheet apelat:', { fisaId, leadId })
+    // Verifică dacă există fisaId
+    if (!fisaId) {
+      console.error('❌ Nu există fisaId, nu se poate crea tăviță')
+      toast.error('Nu există fișă de serviciu selectată. Te rog selectează sau creează o fișă de serviciu.')
+      return
+    }
+    // Deschide dialog-ul pentru introducerea numărului și mărimii
+    setNewTrayNumber('')
+    setNewTraySize('medium')
+    setShowCreateTrayDialog(true)
+    console.log('✅ Dialog deschis, showCreateTrayDialog:', true)
+  }
+
+  async function handleCreateTray() {
+    if (!newTrayNumber.trim()) {
+      toast.error('Introduceți numărul tăviței')
+      return
+    }
+
+    setCreatingTray(true)
+    setLoading(true)
     try {
-      // Pasează fisaId dacă este disponibil
-      const created = await createQuoteForLead(leadId, undefined, fisaId || null);
+      // Creează tăvița cu numărul și mărimea introduse
+      const created = await createQuoteForLead(leadId, newTrayNumber.trim(), fisaId || null, newTraySize);
       const next = [...quotes, created].sort((a, b) => a.sheet_index - b.sheet_index);
       setQuotes(next);
       setSelectedQuoteId(created.id);
       setItems([]);
       lastSavedRef.current = [];
       await recalcAllSheetsTotal(next);
+      setShowCreateTrayDialog(false)
+      setNewTrayNumber('')
+      setNewTraySize('medium')
+      toast.success('Tăvița a fost creată cu succes')
+    } catch (error: any) {
+      console.error('Error creating tray:', error)
+      toast.error('Eroare la crearea tăviței: ' + (error?.message || 'Eroare necunoscută'))
     } finally {
+      setCreatingTray(false)
       setLoading(false);
+    }
+  }
+  
+  // Funcție pentru deschiderea dialog-ului de editare tăviță
+  function onEditTray() {
+    if (!selectedQuote) return
+    
+    setEditingTrayNumber(selectedQuote.number || '')
+    setEditingTraySize(selectedQuote.size || 'medium')
+    setShowEditTrayDialog(true)
+  }
+  
+  // Funcție pentru salvarea editărilor tăviței
+  async function handleUpdateTray() {
+    if (!selectedQuote || !editingTrayNumber.trim()) {
+      toast.error('Introduceți numărul tăviței')
+      return
+    }
+
+    setUpdatingTray(true)
+    setLoading(true)
+    try {
+      // Actualizează tăvița cu numărul și mărimea editate
+      await updateQuote(selectedQuote.id, {
+        number: editingTrayNumber.trim(),
+        size: editingTraySize,
+      })
+      
+      // Reîncarcă tăvițele pentru a avea date actualizate
+      const updatedQuotes = fisaId 
+        ? await listTraysForServiceSheet(fisaId)
+        : await listQuotesForLead(leadId)
+      
+      setQuotes(updatedQuotes)
+      
+      // Păstrează selecția pe tăvița editată
+      const updatedQuote = updatedQuotes.find(q => q.id === selectedQuote.id)
+      if (updatedQuote) {
+        setSelectedQuoteId(updatedQuote.id)
+      }
+      
+      setShowEditTrayDialog(false)
+      setEditingTrayNumber('')
+      setEditingTraySize('medium')
+      toast.success('Tăvița a fost actualizată cu succes')
+    } catch (error: any) {
+      console.error('Error updating tray:', error)
+      toast.error('Eroare la actualizarea tăviței: ' + (error?.message || 'Eroare necunoscută'))
+    } finally {
+      setUpdatingTray(false)
+      setLoading(false)
     }
   }
 
@@ -2791,6 +3519,20 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     () => hasServicesInSheet || hasInstrumentInSheet,
     [hasServicesInSheet, hasInstrumentInSheet]
   )
+
+  // Instrumente distincte prezente în tăvița curentă (pentru afișare în UI)
+  const distinctInstrumentsInTray = useMemo(() => {
+    const ids = Array.from(
+      new Set(
+        items
+          .filter(it => it.instrument_id)
+          .map(it => String(it.instrument_id))
+      )
+    )
+    return ids
+      .map(id => instruments.find(i => i.id === id))
+      .filter((i): i is { id: string; name: string; weight: number; department_id: string | null } => !!i)
+  }, [items, instruments])
 
   // Filtrează serviciile disponibile: exclude serviciile deja folosite pentru instrumentul selectat
   // Include și pachetul de mentenanță dacă instrumentul are unul definit
@@ -2866,67 +3608,220 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
     }
   }, [hasInstrumentInSheet, svc.instrumentId, instrumentFromSheet])
 
-  // Populează formularul instrument cu datele salvate când se schimbă instrumentul sau items-urile
+  // Populează formularul instrument cu datele salvate când se schimbă items-urile (după salvare)
+  // Folosește un ref pentru a detecta dacă items-urile s-au schimbat
+  const prevItemsLengthRef = useRef(items.length)
   useEffect(() => {
     const instrumentId = currentInstrumentId
     if (instrumentId && items.length > 0) {
-      populateInstrumentFormFromItems(items, instrumentId)
+      // Forțează reîncărcarea dacă items-urile s-au schimbat (după salvare)
+      const itemsChanged = prevItemsLengthRef.current !== items.length
+      prevItemsLengthRef.current = items.length
+      
+      console.log('🔄 useEffect - items changed:', itemsChanged, 'instrumentId:', instrumentId, 'items.length:', items.length)
+      
+      // Întotdeauna populează cu forceReload pentru a asigura că datele din DB sunt afișate
+      populateInstrumentFormFromItems(items, instrumentId, true)
     }
   }, [currentInstrumentId, items, services])
 
-  if (loading || !selectedQuote) {
+  if (loading) {
     return (
       <div className="p-2 border rounded-lg">Se încarcă…</div>
     );
   }
-
-  return (
-    <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
-      {/* Header modern cu gradient */}
-      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b">
-        <div className="px-4 pt-4 pb-3">
-          <h3 className="font-semibold text-base text-foreground">Fișa de serviciu</h3>
+  
+  // Dacă nu există tăvițe, afișează mesaj și buton pentru adăugare
+  if (!selectedQuote || quotes.length === 0) {
+    return (
+      <>
+        <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
+          <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b">
+            <div className="px-4 pt-4 pb-3">
+              <h3 className="font-semibold text-base text-foreground">Fișa de serviciu</h3>
+            </div>
+          </div>
+          <div className="p-6 text-center">
+            <p className="text-muted-foreground mb-4">Nu există tăvițe în această fișă.</p>
+            {/* Buton adaugă tăviță - ascuns pentru pipeline-urile departament */}
+            {!isDepartmentPipeline && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  console.log('🔵 Buton "Adaugă tăviță" apăsat')
+                  onAddSheet()
+                }}
+                className="flex items-center gap-2 px-4 py-2 mx-auto rounded-lg text-sm font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-all duration-200 border-2 border-dashed border-primary/30 hover:border-primary/50 cursor-pointer"
+                type="button"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Adaugă tăviță</span>
+              </button>
+            )}
+          </div>
         </div>
         
-        {/* Tabs pentru tăvițe - design modern */}
-        <div className="px-4 pb-3">
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-            {quotes.map((q, index) => (
-              <button
-                key={q.id}
-                onClick={() => onChangeSheet(q.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap
-                  ${selectedQuoteId === q.id 
-                    ? 'bg-primary text-primary-foreground shadow-md shadow-primary/25' 
-                    : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
-                  }`}
+        {/* Dialog pentru crearea unei tăvițe noi - inclus și aici pentru cazul când nu există tăvițe */}
+        <Dialog open={showCreateTrayDialog} onOpenChange={setShowCreateTrayDialog}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Creează tăviță nouă</DialogTitle>
+              <DialogDescription>
+                Introduceți numărul și mărimea tăviței. Aceste informații vor fi afișate în toate locurile unde apare tăvița.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="tray-number-empty">Număr tăviță</Label>
+                <Input
+                  id="tray-number-empty"
+                  placeholder="ex: 1, 2, A, B..."
+                  value={newTrayNumber}
+                  onChange={(e) => setNewTrayNumber(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !creatingTray) {
+                      handleCreateTray()
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="tray-size-empty">Mărime</Label>
+                <Select value={newTraySize} onValueChange={setNewTraySize}>
+                  <SelectTrigger id="tray-size-empty">
+                    <SelectValue placeholder="Selectează mărimea" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="small">Mică</SelectItem>
+                    <SelectItem value="medium">Medie</SelectItem>
+                    <SelectItem value="large">Mare</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowCreateTrayDialog(false)
+                  setNewTrayNumber('')
+                  setNewTraySize('medium')
+                }}
+                disabled={creatingTray}
               >
-                <span className={`flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold
-                  ${selectedQuoteId === q.id 
-                    ? 'bg-primary-foreground/20 text-primary-foreground' 
-                    : 'bg-muted-foreground/20 text-muted-foreground'
-                  }`}>
-                  {index + 1}
-                </span>
-                <span>Tăviță</span>
-              </button>
+                Anulează
+              </Button>
+              <Button
+                onClick={handleCreateTray}
+                disabled={creatingTray || !newTrayNumber.trim()}
+              >
+                {creatingTray ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Se creează...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Creează
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  return (
+    <div className="space-y-2 sm:space-y-3 lg:space-y-4 border rounded-lg sm:rounded-xl bg-card shadow-sm overflow-hidden">
+      {/* Header modern cu gradient */}
+      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b">
+        <div className="px-2 sm:px-3 lg:px-4 pt-2 sm:pt-3 lg:pt-4 pb-2 sm:pb-3 flex items-center justify-between gap-2">
+          <h3 className="font-semibold text-sm sm:text-base text-foreground">Fișa de serviciu</h3>
+          {/* În pipeline-urile tehnice (departamente), tehnicienii nu pot edita tăvița din acest UI */}
+          {selectedQuote && !isDepartmentPipeline && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onEditTray}
+              className="flex items-center gap-2"
+            >
+              <Wrench className="h-4 w-4" />
+              <span className="hidden sm:inline">Editează tăviță</span>
+            </Button>
+          )}
+        </div>
+        
+        {/* Tabs pentru tăvițe - design modern - ascuns în mod departament */}
+        {!isDepartmentPipeline && (
+        <div className="px-2 sm:px-3 lg:px-4 pb-2 sm:pb-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
+            {quotes.map((q, index) => (
+              <div key={q.id} className="relative group">
+                <button
+                  onClick={() => onChangeSheet(q.id)}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap
+                    ${selectedQuoteId === q.id 
+                      ? 'bg-primary text-primary-foreground shadow-md shadow-primary/25' 
+                      : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }
+                    ${(isVanzariPipeline || isReceptiePipeline) && quotes.length > 1 ? 'pr-8' : ''}`}
+                >
+                  <span className={`flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold
+                    ${selectedQuoteId === q.id 
+                      ? 'bg-primary-foreground/20 text-primary-foreground' 
+                      : 'bg-muted-foreground/20 text-muted-foreground'
+                    }`}>
+                    {q.number || index + 1}
+                  </span>
+                  <span>Tăviță {q.size && `(${q.size})`}</span>
+                </button>
+                {/* Buton de ștergere - doar pentru Vânzări și Recepție și când avem mai mult de o tăviță */}
+                {(isVanzariPipeline || isReceptiePipeline) && quotes.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTrayToDelete(q.id)
+                      setShowDeleteTrayConfirmation(true)
+                    }}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-full bg-red-500/10 hover:bg-red-500/20 text-red-500 hover:text-red-600 transition-all opacity-0 group-hover:opacity-100"
+                    title="Șterge tăvița"
+                  >
+                    <XIcon className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             ))}
             
-            {/* Buton adaugă tăviță nouă */}
-            <button
-              onClick={onAddSheet}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-all duration-200 whitespace-nowrap border-2 border-dashed border-primary/30 hover:border-primary/50"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Nouă</span>
-            </button>
-            {/* Butonul "Trimite tăvițele" - doar pentru pipeline-ul Curier */}
-            {isCurierPipeline && (
+            {/* Buton adaugă tăviță nouă - ascuns pentru pipeline-urile departament */}
+            {!isDepartmentPipeline && (
+              <button
+                onClick={onAddSheet}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-all duration-200 whitespace-nowrap border-2 border-dashed border-primary/30 hover:border-primary/50"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Nouă</span>
+              </button>
+            )}
+            {/* Butonul "Trimite tăvițele" - pentru pipeline-ul Curier și Receptie */}
+            {(isCurierPipeline || isReceptiePipeline) && (
               <button
                 onClick={() => setShowSendConfirmation(true)}
                 disabled={sendingTrays || quotes.length === 0 || traysAlreadyInDepartments}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/25 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                title={traysAlreadyInDepartments ? "Tăvițele sunt deja trimise în departamente" : ""}
+                title={
+                  sendingTrays 
+                    ? "Se trimit tăvițele..." 
+                    : quotes.length === 0 
+                    ? "Nu există tăvițe de trimis" 
+                    : traysAlreadyInDepartments 
+                    ? "Tăvițele sunt deja trimise în departamente" 
+                    : `Trimite ${quotes.length} tăviț${quotes.length === 1 ? 'ă' : 'e'} în departamente`
+                }
               >
                 {sendingTrays ? (
                   <>
@@ -2941,7 +3836,142 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
             )}
           </div>
         </div>
+        )}
       </div>
+
+      {/* Secțiune Informații Tăviță – mutată în Fișa de serviciu pentru pipeline-urile comerciale */}
+      {isCommercialPipeline && quotes.length > 0 && (
+        <div className="px-2 sm:px-3 lg:px-4 pt-2 sm:pt-3 lg:pt-4 pb-2 sm:pb-3 lg:pb-4 border-b bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/70 dark:from-amber-900/40 dark:via-amber-950/40 dark:to-orange-950/30">
+          <div className="flex flex-col gap-2 sm:gap-3 lg:gap-4 rounded-lg sm:rounded-xl border border-amber-300/80 dark:border-amber-700/80 bg-white/70 dark:bg-slate-950/40 px-2 sm:px-3 lg:px-4 py-2 sm:py-3 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <div className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-700 dark:text-amber-200 flex-shrink-0">
+                  <Package className="h-3 w-3 sm:h-3.5 sm:w-3.5 lg:h-4 lg:w-4" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="font-semibold text-xs sm:text-sm text-amber-900 dark:text-amber-100 tracking-wide">
+                    Informații Tăviță
+                  </span>
+                  <span className="text-[10px] sm:text-xs text-amber-800/80 dark:text-amber-200/80">
+                    Aici notezi exact ce a spus clientul pentru fiecare tăviță.
+                  </span>
+                </div>
+              </div>
+              {activeTrayDetailsId && (
+                <span className="inline-flex items-center rounded-full border border-amber-400/80 bg-amber-50/90 dark:bg-amber-900/60 px-3 py-1 text-[11px] font-medium text-amber-900 dark:text-amber-50 shadow-xs">
+                  Tăviță selectată: {
+                    quotes.find(t => t.id === activeTrayDetailsId)?.number ||
+                    quotes.find(t => t.id === activeTrayDetailsId)?.id?.slice(0, 6) ||
+                    'N/A'
+                  }
+                </span>
+              )}
+            </div>
+
+            {/* Dropdown pentru selectarea tăviței */}
+            <div className="grid gap-1.5 sm:gap-2">
+              <Label className="text-[10px] sm:text-[11px] font-semibold text-amber-900/90 dark:text-amber-100 uppercase tracking-wide">
+                Selectează tăvița pentru care introduci detalii
+              </Label>
+              <Select
+                value={activeTrayDetailsId || undefined}
+                onValueChange={(value) => {
+                  setSelectedTrayForDetails(value)
+                }}
+              >
+                <SelectTrigger className="w-full h-8 sm:h-9 border-amber-300/80 bg-white/80 dark:bg-slate-950/60 hover:border-amber-400 focus:ring-amber-500/40 text-xs sm:text-sm">
+                  <SelectValue placeholder="Selectează tăvița pentru a adăuga detalii..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {quotes.map((tray, index) => (
+                    <SelectItem key={tray.id} value={tray.id}>
+                      Tăviță #{tray.number || index + 1} - {tray.size}
+                      {trayDetailsMap.has(tray.id) && ' ✓'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Textarea cu detalii pentru tăvița selectată */}
+            {activeTrayDetailsId && (
+              <div className="space-y-1 sm:space-y-1.5">
+                <Label className="text-[10px] sm:text-[11px] font-semibold text-amber-900/90 dark:text-amber-100 uppercase tracking-wide">
+                  Detalii comandă comunicate de client (vizibile pentru tehnicieni)
+                </Label>
+                {loadingTrayDetails ? (
+                  <div className="flex items-center justify-center py-4 sm:py-6">
+                    <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <>
+                    <Textarea
+                      value={trayDetails}
+                      onChange={(e) => setTrayDetails(e.target.value)}
+                      placeholder="Exemple: „Clienta dorește vârfurile foarte ascuțite, fără polish”, „Nu scurtați lama”, „Tăvița 23A – preferă retur prin curier”."
+                      className="min-h-[80px] sm:min-h-[100px] lg:min-h-[110px] text-xs sm:text-sm resize-none border-amber-200/80 focus-visible:ring-amber-500/40 bg-white/90 dark:bg-slate-950/60"
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-[11px] text-amber-900/80 dark:text-amber-100/80">
+                        Aceste note se salvează pe tăvița selectată și sunt vizibile în departamente.
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        disabled={savingTrayDetails || !activeTrayDetailsId}
+                        onClick={async () => {
+                          if (!activeTrayDetailsId) {
+                            toast.error('Selectează o tăviță')
+                            return
+                          }
+
+                          setSavingTrayDetails(true)
+                          try {
+                            // Salvăm detaliile în tray_items.details pentru tăvița selectată
+                            const { data, error } = await supabase
+                              .from('tray_items')
+                              .update({ details: trayDetails } as any)
+                              .eq('tray_id', activeTrayDetailsId)
+                              .select('tray_id')
+
+                            console.log('[Detalii tavita] Răspuns salvare:', { data, error })
+
+                            if (error && Object.keys(error as any).length > 0) {
+                              console.error('Eroare la salvarea detaliilor tăviței:', error)
+                              const message = (error as any).message || 'Eroare necunoscută la salvare'
+                              toast.error('Eroare la salvarea detaliilor: ' + message)
+                            } else {
+                              const newMap = new Map(trayDetailsMap)
+                              newMap.set(activeTrayDetailsId, trayDetails)
+                              setTrayDetailsMap(newMap)
+                              toast.success('Detaliile tăviței au fost salvate')
+                            }
+                          } catch (err: any) {
+                            console.error('Eroare la salvarea detaliilor tăviței:', err)
+                            toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
+                          } finally {
+                            setSavingTrayDetails(false)
+                          }
+                        }}
+                      >
+                        {savingTrayDetails ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                            Salvare...
+                          </>
+                        ) : (
+                          'Salvează detaliile'
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       
       {/* Dialog de confirmare pentru trimiterea tăvițelor */}
       <AlertDialog open={showSendConfirmation} onOpenChange={setShowSendConfirmation}>
@@ -2979,6 +4009,187 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog de confirmare pentru ștergerea tăviței */}
+      <AlertDialog open={showDeleteTrayConfirmation} onOpenChange={setShowDeleteTrayConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              Confirmare ștergere tăviță
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-base">
+              Ești sigur că vrei să ștergi această tăviță?
+              <br /><br />
+              <span className="font-medium text-red-600">
+                Această acțiune nu poate fi anulată. Toate serviciile și piesele din tăviță vor fi șterse.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingTray} onClick={() => setTrayToDelete(null)}>
+              Anulează
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteTray}
+              disabled={deletingTray}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deletingTray ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Se șterge...
+                </>
+              ) : (
+                <>
+                  <XIcon className="h-4 w-4 mr-1" /> Da, șterge
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog pentru crearea unei tăvițe noi */}
+      <Dialog open={showCreateTrayDialog} onOpenChange={setShowCreateTrayDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Creează tăviță nouă</DialogTitle>
+            <DialogDescription>
+              Introduceți numărul și mărimea tăviței. Aceste informații vor fi afișate în toate locurile unde apare tăvița.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="tray-number">Număr tăviță</Label>
+              <Input
+                id="tray-number"
+                placeholder="ex: 1, 2, A, B..."
+                value={newTrayNumber}
+                onChange={(e) => setNewTrayNumber(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !creatingTray) {
+                    handleCreateTray()
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="tray-size">Mărime</Label>
+              <Select value={newTraySize} onValueChange={setNewTraySize}>
+                <SelectTrigger id="tray-size">
+                  <SelectValue placeholder="Selectează mărimea" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="small">Mică</SelectItem>
+                  <SelectItem value="medium">Medie</SelectItem>
+                  <SelectItem value="large">Mare</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCreateTrayDialog(false)
+                setNewTrayNumber('')
+                setNewTraySize('medium')
+              }}
+              disabled={creatingTray}
+            >
+              Anulează
+            </Button>
+            <Button
+              onClick={handleCreateTray}
+              disabled={creatingTray || !newTrayNumber.trim()}
+            >
+              {creatingTray ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Se creează...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Creează
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Dialog pentru editarea unei tăvițe */}
+      <Dialog open={showEditTrayDialog} onOpenChange={setShowEditTrayDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Editează tăviță</DialogTitle>
+            <DialogDescription>
+              Modifică numărul și mărimea tăviței. Aceste informații vor fi actualizate în toate locurile unde apare tăvița.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-tray-number">Număr tăviță</Label>
+              <Input
+                id="edit-tray-number"
+                placeholder="ex: 1, 2, A, B..."
+                value={editingTrayNumber}
+                onChange={(e) => setEditingTrayNumber(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !updatingTray) {
+                    handleUpdateTray()
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-tray-size">Mărime</Label>
+              <Select value={editingTraySize} onValueChange={setEditingTraySize}>
+                <SelectTrigger id="edit-tray-size">
+                  <SelectValue placeholder="Selectează mărimea" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="small">Mică</SelectItem>
+                  <SelectItem value="medium">Medie</SelectItem>
+                  <SelectItem value="large">Mare</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEditTrayDialog(false)
+                setEditingTrayNumber('')
+                setEditingTraySize('medium')
+              }}
+              disabled={updatingTray}
+            >
+              Anulează
+            </Button>
+            <Button
+              onClick={handleUpdateTray}
+              disabled={updatingTray || !editingTrayNumber.trim()}
+            >
+              {updatingTray ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Se actualizează...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Salvează
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
         
         {/* Secțiune Imagini Tăviță - Modern Gallery UI */}
         {selectedQuoteId && canAddTrayImages && (
@@ -3132,9 +4343,11 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
         )}
         
         {/* Opțiuni Urgent & Abonament - Compact Bar */}
-        <div className="mx-3 mb-3 flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
-          <div className="flex items-center gap-4">
-            {/* Urgent Toggle */}
+        <div className="mx-1 sm:mx-2 lg:mx-3 mb-2 sm:mb-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-muted/30 border border-border/40">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:gap-4">
+            {/* Urgent Toggle - ascuns pentru tehnicieni în pipeline departament */}
+            {canEditUrgentAndSubscription && (
+            <>
             <label className="flex items-center gap-2.5 cursor-pointer group">
               <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'}`}>
                 <Checkbox
@@ -3145,7 +4358,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 />
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${urgentAllServices ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </div>
-              <span className={`text-sm font-medium transition-colors ${urgentAllServices ? 'text-red-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+              <span className={`text-xs sm:text-sm font-medium transition-colors ${urgentAllServices ? 'text-red-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
                 Urgent
               </span>
               {urgentAllServices && (
@@ -3159,11 +4372,11 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
             <div className="h-5 w-px bg-border/60" />
             
             {/* Abonament */}
-            <div className="flex items-center gap-2">
-              <Label htmlFor="subscription" className="text-sm font-medium text-muted-foreground">Abonament</Label>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Label htmlFor="subscription" className="text-xs sm:text-sm font-medium text-muted-foreground">Abonament</Label>
               <select
                 id="subscription"
-                className="h-8 text-sm rounded-lg border border-border/60 px-3 bg-white dark:bg-background hover:border-primary/40 transition-colors cursor-pointer"
+                className="h-7 sm:h-8 text-xs sm:text-sm rounded-md sm:rounded-lg border border-border/60 px-2 sm:px-3 bg-white dark:bg-background hover:border-primary/40 transition-colors cursor-pointer"
                 value={subscriptionType}
                 onChange={e => {
                   const newValue = e.target.value as 'services' | 'parts' | 'both' | ''
@@ -3180,10 +4393,29 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 <option value="both">✨ Ambele</option>
               </select>
             </div>
+            </>
+            )}
           
-          {/* Checkbox-uri pentru livrare - doar în pipeline-ul Vânzări */}
+          {/* Checkbox-uri pentru livrare + No Deal - doar în pipeline-ul Vânzări */}
           {isVanzariPipeline && (
             <div className="flex items-center gap-3">
+              <div className="h-5 w-px bg-border/60" />
+              {/* No Deal la nivel de fișă */}
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <Checkbox
+                  id="no-deal-service-file"
+                  checked={noDeal}
+                  onCheckedChange={(c: any) => {
+                    const isChecked = !!c
+                    setNoDeal(isChecked)
+                    setIsDirty(true)
+                  }}
+                  className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
+                />
+                <span className={`text-xs sm:text-sm font-medium transition-colors ${noDeal ? 'text-red-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                  No Deal
+                </span>
+              </label>
               <div className="h-5 w-px bg-border/60" />
               <label className="flex items-center gap-2 cursor-pointer group">
                 <Checkbox
@@ -3198,11 +4430,11 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                   }}
                   className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
                 />
-                <span className={`text-sm font-medium transition-colors ${officeDirect ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                <span className={`text-xs sm:text-sm font-medium transition-colors ${officeDirect ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
                   Office direct
                 </span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer group">
+              <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer group">
                 <Checkbox
                   id="curier-trimis"
                   checked={curierTrimis}
@@ -3215,55 +4447,121 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                   }}
                   className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                 />
-                <span className={`text-sm font-medium transition-colors ${curierTrimis ? 'text-purple-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                <span className={`text-xs sm:text-sm font-medium transition-colors ${curierTrimis ? 'text-purple-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
                   Curier Trimis
                 </span>
               </label>
             </div>
           )}
           
-          {/* Buton Salvare */}
-          <Button 
-            size="sm" 
-            onClick={saveAllAndLog} 
-            disabled={loading || saving || !isDirty}
-            className="ml-auto shadow-sm"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                Se salvează…
-              </>
-            ) : (
-              "Salvează în Istoric"
+          {/* Butoane acțiune fișă */}
+          <div className="ml-auto flex items-center gap-2">
+            {/* Buton Facturare - doar în pipeline-ul Recepție */}
+            {isReceptiePipeline && (
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  try {
+                    // Folosește PrintViewData deja prezent în DOM pentru layout de factură
+                    window.print()
+                  } catch (err) {
+                    console.error('Eroare la pornirea printării/facturării:', err)
+                    toast.error('Nu s-a putut deschide fereastra de facturare (print).')
+                  }
+                }}
+                className="shadow-sm"
+              >
+                Facturează fișa
+              </Button>
             )}
-          </Button>
+
+            {/* Buton Salvare */}
+            <Button 
+              size="sm" 
+              onClick={saveAllAndLog} 
+              disabled={loading || saving || !isDirty}
+              className="shadow-sm"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  Se salvează…
+                </>
+              ) : (
+                "Salvează în Istoric"
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Add Instrument - New Section */}
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-lg border border-green-200 dark:border-green-800 mx-2 p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-green-600 dark:text-green-400" />
-            <span className="text-sm font-medium text-green-900 dark:text-green-100">Adaugă Instrument</span>
+      {/* Add Instrument - New Section 
+          Ascuns pentru tehnicieni în pipeline-urile departament (Saloane, Frizerii, Horeca, Reparatii) */}
+      {!(isDepartmentPipeline && isTechnician) && (
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-lg border border-green-200 dark:border-green-800 mx-1 sm:mx-2 p-2 sm:p-3">
+          <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Wrench className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-600 dark:text-green-400" />
+              <span className="text-xs sm:text-sm font-medium text-green-900 dark:text-green-100">Adaugă Instrument</span>
+            </div>
+            {distinctInstrumentsInTray.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground mr-1">Instrumente în tăviță:</span>
+                {distinctInstrumentsInTray.map(inst => (
+                  <span
+                    key={inst.id}
+                    className="inline-flex items-center rounded-full bg-emerald-100/80 dark:bg-emerald-900/40 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-100"
+                  >
+                    {inst.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-        
-        <div className="grid grid-cols-12 gap-3">
+
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3">
           {/* Instrument - 8 cols */}
-          <div className="col-span-8">
-            <Label className="text-xs text-muted-foreground mb-1 block">Instrument</Label>
+          <div className="col-span-1 sm:col-span-8">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Instrument</Label>
             <select
               className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
               value={instrumentForm.instrument}
               onChange={e => {
                 const newInstrumentId = e.target.value
-                // Sincronizează cu formularul de serviciu
-                const savedSettings = instrumentSettings[newInstrumentId]
-                const savedQty = savedSettings?.qty || '1'
+
+                // Dacă acest instrument ar fi al treilea distinct pe tăviță, nu permitem schimbarea
+                if (
+                  newInstrumentId &&
+                  !distinctInstrumentsInTray.some(i => i.id === newInstrumentId)
+                ) {
+                  const currentDistinctIds = new Set(
+                    items
+                      .filter(it => it.instrument_id)
+                      .map(it => String(it.instrument_id))
+                  )
+                  if (currentDistinctIds.size >= 2) {
+                    toast.error('Poți avea maxim 2 instrumente pe aceeași tăviță.')
+                    return
+                  }
+                }
+
+                // Sincronizează cu formularul de serviciu și cu setările specifice instrumentului (brand / serial / garanție / qty)
+                const savedSettings = instrumentSettings[newInstrumentId] || {}
+                const savedQty = savedSettings.qty || '1'
+                const savedBrandGroups = savedSettings.brandSerialGroups && savedSettings.brandSerialGroups.length > 0
+                  ? savedSettings.brandSerialGroups
+                  : [{ brand: '', serialNumbers: [''] }]
+                const savedGarantie = savedSettings.garantie || false
                 
-                setInstrumentForm(prev => ({ ...prev, instrument: newInstrumentId, qty: savedQty }))
+                setInstrumentForm(prev => ({
+                  ...prev,
+                  instrument: newInstrumentId,
+                  qty: savedQty,
+                  brandSerialGroups: savedBrandGroups,
+                  garantie: savedGarantie,
+                }))
                 setSvc(s => ({ 
                   ...s, 
                   instrumentId: newInstrumentId, 
@@ -3274,12 +4572,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                 // Activează butonul "Salvează în Istoric" când se selectează un instrument
                 setIsDirty(true)
               }}
-              disabled={hasServicesInSheet}
-              title={
-                hasServicesInSheet 
-                  ? "Instrumentul este blocat - există deja servicii în tăviță" 
-                  : "Selectează instrument"
-              }
+              title="Selectează instrument (poți avea până la 2 instrumente pe tăviță)"
             >
               <option value="">— selectează —</option>
               {availableInstruments.map(inst => (
@@ -3289,10 +4582,10 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
           </div>
 
           {/* Cant - 4 cols */}
-          <div className="col-span-4">
-            <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
+          <div className="col-span-1 sm:col-span-4">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Cant.</Label>
             <Input
-              className="h-8 text-sm text-center disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-7 sm:h-8 text-xs sm:text-sm text-center disabled:opacity-50 disabled:cursor-not-allowed"
             inputMode="numeric"
               value={instrumentForm.qty}
               onChange={e => {
@@ -3304,8 +4597,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                     ...prev,
                     [instrumentForm.instrument]: {
                       qty: newQty,
-                      brand: prev[instrumentForm.instrument]?.brand || '',
-                      serialNumbers: prev[instrumentForm.instrument]?.serialNumbers || [],
+                      brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [''] }],
                       garantie: prev[instrumentForm.instrument]?.garantie || false
                     }
                   }))
@@ -3322,227 +4614,400 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
         {/* Brand, Serial Number și Garantie - doar pentru instrumente din departamentul Reparații */}
         {isReparatiiInstrument && (
-          <div className="grid grid-cols-12 gap-3 mt-3">
-            {/* Brand - 2 cols */}
-            <div className="col-span-2">
-              <Label className="text-xs text-muted-foreground mb-1 block">Brand</Label>
-            <Input
-                className="h-8 text-sm"
-                value={instrumentForm.brand}
-                onChange={e => {
-                  setInstrumentForm(prev => ({ ...prev, brand: e.target.value }))
-                  setIsDirty(true)
-                }}
-                placeholder="Introduceți brand-ul"
-              />
-            </div>
+          <div className="space-y-3 mt-3">
+            {instrumentForm.brandSerialGroups.map((group, groupIndex) => (
+              <div key={groupIndex} className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3 p-2 sm:p-3 bg-muted/30 rounded-lg border">
+                {/* Brand - 2 cols */}
+                <div className="col-span-1 sm:col-span-2">
+                  <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Brand</Label>
+                  <Input
+                    className="h-7 sm:h-8 text-xs sm:text-sm"
+                    value={group.brand}
+                    onChange={e => onUpdateBrand(groupIndex, e.target.value)}
+                    placeholder="Introduceți brand-ul"
+                  />
+                </div>
 
-            {/* Serial Numbers - 4 cols */}
-            <div className="col-span-4">
-              <Label className="text-xs text-muted-foreground mb-1 block">Serial Numbers</Label>
-              <div className="space-y-1">
-                {instrumentForm.serialNumbers.map((serialNumber, index) => (
-                  <div key={index} className="flex gap-1 items-center">
-                    <Input
-                      className="h-7 text-sm flex-1"
-                      value={serialNumber}
-                      onChange={e => onUpdateSerialNumber(index, e.target.value)}
-                      placeholder={`Serial ${index + 1}`}
-                    />
-                    {index === 0 && (
-                      <Button 
-                        type="button"
-                        size="sm" 
-                        variant="outline"
-                        onClick={onAddSerialNumber}
-                        className="h-7 text-xs px-2 flex-shrink-0"
-                      >
-                        <Plus className="h-3 w-3 mr-1" /> Adaugă
-                      </Button>
-                    )}
-                    {instrumentForm.serialNumbers.length > 1 && index > 0 && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onRemoveSerialNumber(index)}
-                        className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                {/* Serial Numbers - 4 cols */}
+                <div className="col-span-1 sm:col-span-4">
+                  <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Serial Numbers</Label>
+                  <div className="space-y-1">
+                    {group.serialNumbers.map((serialNumber, serialIndex) => (
+                      <div key={serialIndex} className="flex gap-1 items-center">
+                        <Input
+                          className="h-7 text-sm flex-1"
+                          value={serialNumber}
+                          onChange={e => onUpdateSerialNumber(groupIndex, serialIndex, e.target.value)}
+                          placeholder={`Serial ${serialIndex + 1}`}
+                        />
+                        {serialIndex === 0 && group.serialNumbers.length === 1 && (
+                          <Button 
+                            type="button"
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => onAddSerialNumber(groupIndex)}
+                            className="h-7 text-xs px-2 flex-shrink-0"
+                          >
+                            <Plus className="h-3 w-3 mr-1" /> Serial
+                          </Button>
+                        )}
+                        {group.serialNumbers.length > 1 && serialIndex > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onRemoveSerialNumber(groupIndex, serialIndex)}
+                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {serialIndex === group.serialNumbers.length - 1 && group.serialNumbers.length > 1 && (
+                          <Button 
+                            type="button"
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => onAddSerialNumber(groupIndex)}
+                            className="h-7 text-xs px-2 flex-shrink-0"
+                          >
+                            <Plus className="h-3 w-3 mr-1" /> Serial
+                          </Button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Garantie - 2 cols */}
-            <div className="col-span-2 flex flex-col justify-end">
-              <div className="flex items-center gap-1 h-8">
-                <Checkbox
-                  id="instrument-garantie"
-                  checked={instrumentForm.garantie}
-                  onCheckedChange={(c: any) => {
-                    setInstrumentForm(prev => ({ ...prev, garantie: !!c }))
-                    setIsDirty(true)
-                  }}
-                />
-                <Label htmlFor="instrument-garantie" className="text-xs cursor-pointer">Garantie</Label>
+                {/* Garantie - 2 cols */}
+                <div className="col-span-1 sm:col-span-2 flex flex-col justify-end">
+                  <div className="flex items-center gap-1 h-7 sm:h-8">
+                    <Checkbox
+                      id={`instrument-garantie-${groupIndex}`}
+                      checked={instrumentForm.garantie}
+                      onCheckedChange={(c: any) => {
+                        setInstrumentForm(prev => ({ ...prev, garantie: !!c }))
+                        setIsDirty(true)
+                      }}
+                    />
+                    <Label htmlFor={`instrument-garantie-${groupIndex}`} className="text-[10px] sm:text-xs cursor-pointer">Garantie</Label>
+                  </div>
+                </div>
+
+                {/* Buton ștergere grup - 2 cols */}
+                <div className="col-span-1 sm:col-span-2 flex flex-col justify-end">
+                  {instrumentForm.brandSerialGroups.length > 1 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onRemoveBrandSerialGroup(groupIndex)}
+                      className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />
+                      Șterge grup
+                    </Button>
+                  )}
+                </div>
+
+                {/* Buton adaugă grup nou - doar pentru primul grup */}
+                {groupIndex === 0 && (
+                  <div className="col-span-1 sm:col-span-2 flex flex-col justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={onAddBrandSerialGroup}
+                      className="h-7 sm:h-8 text-xs sm:text-sm"
+                    >
+                      <Plus className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1" />
+                      Adaugă brand
+                    </Button>
+                  </div>
+                )}
               </div>
-            </div>
+            ))}
           </div>
         )}
       </div>
+      )}
 
       {/* Add Service - Redesigned */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg border border-blue-200 dark:border-blue-800 mx-2 p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Adaugă Serviciu</span>
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg border border-blue-200 dark:border-blue-800 mx-1 sm:mx-2 p-2 sm:p-3">
+        <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Wrench className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
+            <span className="text-xs sm:text-sm font-medium text-blue-900 dark:text-blue-100">Adaugă Serviciu</span>
           </div>
           <Button size="sm" onClick={onAddService} disabled={!svc.id} className="h-7">
             <Plus className="h-3 w-3 mr-1" /> Adaugă
           </Button>
         </div>
         
-        <div className="grid grid-cols-12 gap-3">
-          {/* Serviciu - 8 cols */}
-          <div className="col-span-8">
-            <Label className="text-xs text-muted-foreground mb-1 block">Serviciu</Label>
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3">
+          {/* Serviciu cu search - 6 cols */}
+          <div className="relative col-span-1 sm:col-span-6">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Serviciu</Label>
+            <div className="relative">
+              <Input
+                className="h-7 sm:h-8 text-xs sm:text-sm pr-8"
+                placeholder={currentInstrumentId ? "Caută serviciu sau click pentru lista completă..." : "Selectează mai întâi un instrument"}
+                value={serviceSearchQuery}
+                onChange={e => setServiceSearchQuery(e.target.value)}
+                onFocus={() => setServiceSearchFocused(true)}
+                onBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
+                disabled={!currentInstrumentId}
+              />
+              {serviceSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setServiceSearchQuery('')
+                    setSvc(s => ({ ...s, id: '' }))
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <XIcon className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            {(serviceSearchFocused || serviceSearchQuery) && currentInstrumentId && (
+              <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-background border rounded-md shadow-lg">
+                {/* Header cu numărul de servicii disponibile */}
+                {!serviceSearchQuery && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-b sticky top-0">
+                    {availableServices.length} servicii disponibile pentru acest instrument
+                  </div>
+                )}
+                {availableServices
+                  .filter(s => !serviceSearchQuery || s.name.toLowerCase().includes(serviceSearchQuery.toLowerCase()))
+                  .slice(0, serviceSearchQuery ? 10 : 20)
+                  .map(s => {
+                    // Verifică dacă este pachet de mentenanță
+                    if ((s as any).isPackage) {
+                      const pkg = s as MaintenancePackageOption
+                      return (
+                        <button
+                          key={pkg.id}
+                          type="button"
+                          onClick={() => {
+                            setSvc(prev => ({ ...prev, id: pkg.id }))
+                            setServiceSearchQuery(pkg.name)
+                            setServiceSearchFocused(false)
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center bg-blue-50 dark:bg-blue-950/30"
+                        >
+                          <span>📦 {pkg.name}</span>
+                        </button>
+                      )
+                    }
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => {
+                          setSvc(prev => ({ ...prev, id: s.id }))
+                          setServiceSearchQuery(s.name)
+                          setServiceSearchFocused(false)
+                        }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
+                      >
+                        <span>{s.name}</span>
+                        <span className="text-muted-foreground">{s.price.toFixed(2)} RON</span>
+                      </button>
+                    )
+                  })}
+                {serviceSearchQuery && availableServices.filter(s => s.name.toLowerCase().includes(serviceSearchQuery.toLowerCase())).length === 0 && (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">Nu s-au găsit servicii</div>
+                )}
+                {!serviceSearchQuery && availableServices.length > 20 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t">
+                    Tastează pentru a căuta în toate cele {availableServices.length} servicii...
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Cantitate - 2 cols */}
+          <div className="col-span-1 sm:col-span-2">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Cant.</Label>
+            <Input
+              className="h-7 sm:h-8 text-xs sm:text-sm text-center"
+              inputMode="numeric"
+              value={svc.qty}
+              onChange={e => setSvc(s => ({ ...s, qty: e.target.value }))}
+              placeholder="1"
+            />
+          </div>
+
+          {/* Serial Number - 3 cols */}
+          <div className="col-span-1 sm:col-span-3">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Serial Nr.</Label>
             <select
-              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
-              value={svc.id}
-              onChange={e => {
-                const serviceId = e.target.value
-                setSvc(s => ({ 
-                  ...s, 
-                  id: serviceId
-                }))
-              }}
-              disabled={!currentInstrumentId}
+              className="w-full h-7 sm:h-8 text-xs sm:text-sm border rounded-md px-2 bg-background"
+              value={svc.serialNumberId}
+              onChange={e => setSvc(s => ({ ...s, serialNumberId: e.target.value }))}
             >
-              <option value="">— selectează —</option>
-              {availableServices.map(s => {
-                // Verifică dacă este pachet de mentenanță
-                if ((s as any).isPackage) {
-                  const pkg = s as MaintenancePackageOption
-                  return (
-                    <option key={pkg.id} value={pkg.id} className="font-semibold bg-blue-50">
-                      📦 {pkg.name}
+              <option value="">-- Fără atribuire --</option>
+              {/* Afișează toate serial numbers din brand_groups */}
+              {instrumentForm.brandSerialGroups.flatMap((group, gIdx) => 
+                group.serialNumbers
+                  .filter(sn => sn && sn.trim())
+                  .map((sn, snIdx) => (
+                    <option key={`${gIdx}-${snIdx}`} value={`${group.brand}::${sn}`}>
+                      {group.brand ? `${group.brand} - ${sn}` : sn}
                     </option>
-                  )
-                }
-                // Serviciu normal
-                return (
-                  <option key={s.id} value={s.id}>
-                    {s.name} — {s.price.toFixed(2)} RON
-                  </option>
-                )
-              })}
+                  ))
+              )}
             </select>
           </div>
 
-          {/* Disc - 2 cols */}
-          <div className="col-span-2">
-            <Label className="text-xs text-muted-foreground mb-1 block">Disc%</Label>
-          <Input
-              className="h-8 text-sm text-center"
-            inputMode="decimal"
-            value={svc.discount}
-            onChange={e => setSvc(s => ({ ...s, discount: e.target.value }))}
-            placeholder="0"
-          />
-        </div>
+          {/* Disc - 1 col - ascuns pentru tehnicieni în pipeline departament */}
+          {canEditUrgentAndSubscription && (
+          <div className="col-span-1">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Disc%</Label>
+            <Input
+              className="h-7 sm:h-8 text-xs sm:text-sm text-center"
+              inputMode="decimal"
+              value={svc.discount}
+              onChange={e => setSvc(s => ({ ...s, discount: e.target.value }))}
+              placeholder="0"
+            />
+          </div>
+          )}
         </div>
       </div>
 
-      {/* Add Part - Redesigned (doar pentru pipeline-ul Reparații) */}
-      {isReparatiiPipeline && (
-        <form onSubmit={onAddPart} className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 rounded-lg border border-amber-200 dark:border-amber-800 mx-2 p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <span className="text-sm font-medium text-amber-900 dark:text-amber-100">Adaugă Piesă</span>
+      {/* Add Part - Redesigned (doar pentru pipeline-ul Reparații sau când canAddParts este true) */}
+      {canAddParts && isReparatiiPipeline && (
+        <form onSubmit={onAddPart} className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 rounded-lg border border-amber-200 dark:border-amber-800 mx-1 sm:mx-2 p-2 sm:p-3">
+        <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-600 dark:text-amber-400" />
+            <span className="text-xs sm:text-sm font-medium text-amber-900 dark:text-amber-100">Adaugă Piesă</span>
           </div>
           <Button type="submit" size="sm" className="h-7" disabled={!part.id}>
             <Plus className="h-3 w-3 mr-1" /> Adaugă
           </Button>
       </div>
 
-        <div className="grid grid-cols-12 gap-3">
-          {/* Piesă - 5 cols */}
-          <div className="col-span-5">
-            <Label className="text-xs text-muted-foreground mb-1 block">Piesă</Label>
-        <select
-              className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background"
-          value={part.id}
-          onChange={e => setPart(p => ({ ...p, id: e.target.value, overridePrice: '' }))}
-        >
-              <option value="">— selectează —</option>
-          {parts.map(p => (
-            <option key={p.id} value={p.id}>
-              {p.name} — {p.price.toFixed(2)} RON
-            </option>
-          ))}
-        </select>
-      </div>
-          
-          {/* Preț - 2 cols */}
-          <div className="col-span-2">
-            <Label className="text-xs text-muted-foreground mb-1 block">Preț</Label>
-          <Input
-              className="h-8 text-sm"
-            inputMode="decimal"
-            value={part.overridePrice}
-            onChange={e => setPart(p => ({ ...p, overridePrice: e.target.value }))}
-              placeholder="catalog"
-          />
-        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3">
+          {/* Piesă cu search - 6 cols */}
+          <div className="relative col-span-1 sm:col-span-6">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Piesă</Label>
+            <div className="relative">
+              <Input
+                className="h-7 sm:h-8 text-xs sm:text-sm pr-8"
+                placeholder="Caută piesă sau click pentru lista completă..."
+                value={partSearchQuery}
+                onChange={e => setPartSearchQuery(e.target.value)}
+                onFocus={() => setPartSearchFocused(true)}
+                onBlur={() => setTimeout(() => setPartSearchFocused(false), 200)}
+              />
+              {partSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPartSearchQuery('')
+                    setPart(p => ({ ...p, id: '' }))
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <XIcon className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            {(partSearchFocused || partSearchQuery) && (
+              <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-background border rounded-md shadow-lg">
+                {/* Header cu numărul de piese disponibile */}
+                {!partSearchQuery && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-b sticky top-0">
+                    {parts.length} piese disponibile
+                  </div>
+                )}
+                {parts
+                  .filter(p => !partSearchQuery || p.name.toLowerCase().includes(partSearchQuery.toLowerCase()))
+                  .slice(0, partSearchQuery ? 10 : 20)
+                  .map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setPart(prev => ({ ...prev, id: p.id, overridePrice: '' }))
+                        setPartSearchQuery(p.name)
+                        setPartSearchFocused(false)
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
+                    >
+                      <span>{p.name}</span>
+                      <span className="text-muted-foreground">{p.price.toFixed(2)} RON</span>
+                    </button>
+                  ))}
+                {partSearchQuery && parts.filter(p => p.name.toLowerCase().includes(partSearchQuery.toLowerCase())).length === 0 && (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">Nu s-au găsit piese</div>
+                )}
+                {!partSearchQuery && parts.length > 20 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t">
+                    Tastează pentru a căuta în toate cele {parts.length} piese...
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-          {/* Cant - 1 col */}
-          <div className="col-span-1">
-            <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
-          <Input
-              className="h-8 text-sm text-center"
-            inputMode="numeric"
-            value={part.qty}
-            onChange={e => setPart(p => ({ ...p, qty: e.target.value }))}
-            placeholder="1"
-          />
-        </div>
+          {/* Serial Number - 4 cols */}
+          <div className="col-span-1 sm:col-span-4">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Serial Nr. (instrument)</Label>
+            <select
+              className="w-full h-7 sm:h-8 text-xs sm:text-sm border rounded-md px-2 bg-background"
+              value={part.serialNumberId}
+              onChange={e => setPart(p => ({ ...p, serialNumberId: e.target.value }))}
+            >
+              <option value="">-- Selectează serial --</option>
+              {instrumentForm.brandSerialGroups.flatMap((group, gIdx) =>
+                group.serialNumbers
+                  .filter(sn => sn && sn.trim())
+                  .map((sn, snIdx) => (
+                    <option key={`${gIdx}-${snIdx}`} value={`${group.brand}::${sn}`}>
+                      {group.brand ? `${group.brand} - ${sn}` : sn}
+                    </option>
+                  ))
+              )}
+            </select>
+          </div>
 
-          {/* Disc - 2 cols */}
-          <div className="col-span-2">
-            <Label className="text-xs text-muted-foreground mb-1 block">Disc%</Label>
-          <Input
-              className="h-8 text-sm text-center"
-            inputMode="decimal"
-            value={part.discount}
-            onChange={e => setPart(p => ({ ...p, discount: e.target.value }))}
-            placeholder="0"
-          />
-        </div>
+          {/* Cant - 2 cols */}
+          <div className="col-span-1 sm:col-span-2">
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Cant.</Label>
+            <Input
+              className="h-7 sm:h-8 text-xs sm:text-sm text-center"
+              inputMode="numeric"
+              value={part.qty}
+              onChange={e => setPart(p => ({ ...p, qty: e.target.value }))}
+              placeholder="1"
+            />
+          </div>
         </div>
       </form>
       )}
 
       {/* Items Table */}
-      <div className="p-0 mx-2 overflow-hidden border rounded-lg bg-card">
-        <Table className="text-sm">
+      <div className="p-0 mx-1 sm:mx-2 overflow-x-auto border rounded-lg bg-card">
+        <Table className="text-xs sm:text-sm min-w-[800px]">
           <TableHeader>
             <TableRow className="bg-muted/30">
-              <TableHead className="w-24 text-xs font-semibold">Instrument</TableHead>
-              <TableHead className="text-xs font-semibold">Serviciu</TableHead>
-              <TableHead className="text-xs font-semibold">Piesă</TableHead>
-              <TableHead className="w-16 text-xs font-semibold text-center">Cant.</TableHead>
-              <TableHead className="w-24 text-xs font-semibold text-center">Preț</TableHead>
-              <TableHead className="w-16 text-xs font-semibold text-center">Disc%</TableHead>
-              <TableHead className="w-16 text-xs font-semibold text-center">Urgent</TableHead>
-              <TableHead className="w-28 text-xs font-semibold">Departament</TableHead>
-              <TableHead className="w-28 text-xs font-semibold">Tehnician</TableHead>
-              <TableHead className="w-24 text-xs font-semibold text-right">Total</TableHead>
-              <TableHead className="w-10"></TableHead>
+              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold">Instrument</TableHead>
+              <TableHead className="text-[10px] sm:text-xs font-semibold min-w-[120px]">Serviciu</TableHead>
+              <TableHead className="text-[10px] sm:text-xs font-semibold min-w-[100px]">Piesă</TableHead>
+              <TableHead className="w-32 sm:w-40 text-[10px] sm:text-xs font-semibold">Brand / Serial</TableHead>
+              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Cant.</TableHead>
+              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold text-center">Preț</TableHead>
+              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Disc%</TableHead>
+              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Urgent</TableHead>
+              <TableHead className="w-24 sm:w-28 text-[10px] sm:text-xs font-semibold hidden md:table-cell">Departament</TableHead>
+              <TableHead className="w-24 sm:w-28 text-[10px] sm:text-xs font-semibold hidden lg:table-cell">Tehnician</TableHead>
+              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold text-right">Total</TableHead>
+              <TableHead className="w-8 sm:w-10"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -3587,16 +5052,16 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
               return (
                 <TableRow key={it.id} className="hover:bg-muted/30">
-                  <TableCell className="text-xs text-muted-foreground py-2">
+                  <TableCell className="text-[10px] sm:text-xs text-muted-foreground py-1.5 sm:py-2">
                     {itemInstrument}
                   </TableCell>
-                  <TableCell className="font-medium text-sm py-2">
+                  <TableCell className="font-medium text-xs sm:text-sm py-1.5 sm:py-2">
                     {serviceName}
                   </TableCell>
-                  <TableCell className="text-sm py-2">
+                  <TableCell className="text-xs sm:text-sm py-1.5 sm:py-2">
                     {it.item_type === 'part' ? (
                       <Input
-                        className="h-7 text-sm"
+                        className="h-6 sm:h-7 text-xs sm:text-sm"
                         value={it.name_snapshot}
                         onChange={e => onUpdateItem(it.id, { name_snapshot: e.target.value })}
                       />
@@ -3605,26 +5070,61 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                     )}
                   </TableCell>
 
-                  <TableCell className="py-2">
+                  {/* Brand / Serial - afișează toate brand-urile cu serial numbers */}
+                  <TableCell className="py-1.5 sm:py-2">
+                    {(() => {
+                      const brandGroups = (it as any).brand_groups || []
+                      if (brandGroups.length > 0) {
+                        return (
+                          <div className="space-y-1">
+                            {brandGroups.map((bg: any, idx: number) => (
+                              <div key={idx} className="text-[10px] sm:text-xs">
+                                <span className="font-medium text-blue-600">{bg.brand || '—'}</span>
+                                {bg.serialNumbers && bg.serialNumbers.length > 0 && bg.serialNumbers.some((sn: string) => sn && sn.trim()) && (
+                                  <span className="text-muted-foreground ml-1">
+                                    ({bg.serialNumbers.filter((sn: string) => sn && sn.trim()).join(', ')})
+                                  </span>
+                                )}
+                                {bg.garantie && <span className="ml-1 text-green-600 text-[9px] sm:text-[10px]">✓G</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      } else if (it.brand || it.serial_number) {
+                        // Fallback pentru structura veche
+                        return (
+                          <div className="text-[10px] sm:text-xs">
+                            <span className="font-medium text-blue-600">{it.brand || '—'}</span>
+                            {it.serial_number && (
+                              <span className="text-muted-foreground ml-1">({it.serial_number})</span>
+                            )}
+                            {it.garantie && <span className="ml-1 text-green-600 text-[9px] sm:text-[10px]">✓G</span>}
+                          </div>
+                        )
+                      }
+                      return <span className="text-muted-foreground text-[10px] sm:text-xs">—</span>
+                    })()}
+                  </TableCell>
+
+                  <TableCell className="py-1.5 sm:py-2">
                     <Input
-                      className="h-7 text-sm text-center w-14 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-6 sm:h-7 text-xs sm:text-sm text-center w-12 sm:w-14"
                       inputMode="numeric"
                       value={String(it.qty)}
                       onChange={e => {
                         const v = Math.max(1, Number(e.target.value || 1));
                         onUpdateItem(it.id, { qty: v });
                       }}
-                      disabled={it.item_type === 'service'}
-                      title={it.item_type === 'service' ? "Cantitatea este blocată pentru servicii" : "Introduceți cantitatea"}
+                      title="Introduceți cantitatea"
                     />
                   </TableCell>
 
-                  <TableCell className="py-2 text-center">
+                  <TableCell className="py-1.5 sm:py-2 text-center">
                     {it.item_type === 'service' ? (
-                      <span className="text-sm">{it.price.toFixed(2)}</span>
+                      <span className="text-xs sm:text-sm">{it.price.toFixed(2)}</span>
                     ) : (
                       <Input
-                        className="h-7 text-sm text-center w-20"
+                        className="h-6 sm:h-7 text-xs sm:text-sm text-center w-16 sm:w-20"
                         inputMode="decimal"
                         value={String(it.price)}
                         onChange={e => {
@@ -3635,27 +5135,37 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                     )}
                   </TableCell>
 
-                  <TableCell className="py-2">
-                    <Input
-                      className="h-7 text-sm text-center w-12"
-                      inputMode="decimal"
-                      value={String(it.discount_pct)}
-                      onChange={e => {
-                        const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
-                        onUpdateItem(it.id, { discount_pct: v });
-                      }}
-                    />
+                  <TableCell className="py-1.5 sm:py-2">
+                    {canEditUrgentAndSubscription ? (
+                      <Input
+                        className="h-6 sm:h-7 text-xs sm:text-sm text-center w-10 sm:w-12"
+                        inputMode="decimal"
+                        value={String(it.discount_pct)}
+                        onChange={e => {
+                          const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
+                          onUpdateItem(it.id, { discount_pct: v });
+                        }}
+                      />
+                    ) : (
+                      <span className="text-[10px] sm:text-xs text-muted-foreground">{it.discount_pct}%</span>
+                    )}
                   </TableCell>
 
-                  <TableCell className="py-2 text-center">
+                  <TableCell className="py-1.5 sm:py-2 text-center">
+                    {canEditUrgentAndSubscription ? (
                       <Checkbox
                         checked={!!it.urgent}
                         onCheckedChange={(c: any) => onUpdateItem(it.id, { urgent: !!c })}
                       />
+                    ) : (
+                      <span className={`text-[10px] sm:text-xs ${it.urgent ? 'text-red-600 font-medium' : 'text-muted-foreground'}`}>
+                        {it.urgent ? 'Da' : '—'}
+                      </span>
+                    )}
                   </TableCell>
 
-                  <TableCell className="py-2">
-                    <span className="text-xs text-muted-foreground">
+                  <TableCell className="py-1.5 sm:py-2 hidden md:table-cell">
+                    <span className="text-[10px] sm:text-xs text-muted-foreground">
                       {it.pipeline_id 
                         ? pipelinesWithIds.find(p => p.id === it.pipeline_id)?.name || '—'
                         : '—'
@@ -3663,26 +5173,20 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
                     </span>
                   </TableCell>
 
-                  <TableCell className="py-2">
-                      <select
-                      className="w-full h-7 text-xs rounded border px-1 bg-white dark:bg-background"
-                      value={it.technician_id ?? ''}
-                        onChange={e => {
-                        onUpdateItem(it.id, { technician_id: e.target.value || null })
-                        }}
-                      >
-                        <option value="">—</option>
-                        {technicians.map(t => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
-                      </select>
+                  <TableCell className="py-1.5 sm:py-2 hidden lg:table-cell">
+                    <span className="text-[10px] sm:text-xs text-muted-foreground">
+                      {it.technician_id 
+                        ? (technicians.find(t => t.id === it.technician_id)?.name || it.technician_id)
+                        : '—'
+                      }
+                    </span>
                   </TableCell>
 
-                  <TableCell className="text-right font-medium text-sm py-2">{lineTotal.toFixed(2)}</TableCell>
+                  <TableCell className="text-right font-medium text-xs sm:text-sm py-1.5 sm:py-2">{lineTotal.toFixed(2)}</TableCell>
 
-                  <TableCell className="py-2">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(it.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
+                  <TableCell className="py-1.5 sm:py-2">
+                    <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => onDelete(it.id)}>
+                      <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -3691,7 +5195,7 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
 
             {items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={11} className="text-muted-foreground text-center py-6 text-sm">
+                <TableCell colSpan={12} className="text-muted-foreground text-center py-4 sm:py-6 text-xs sm:text-sm">
                   Nu există poziții încă.
                 </TableCell>
               </TableRow>
@@ -3701,8 +5205,8 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       </div>
 
       {/* Totals */}
-      <div className="flex justify-end px-2">
-        <div className="w-full md:w-[320px] space-y-1 text-sm bg-muted/20 rounded-lg p-3">
+      <div className="flex justify-end px-1 sm:px-2">
+        <div className="w-full md:w-[280px] lg:w-[320px] space-y-0.5 sm:space-y-1 text-xs sm:text-sm bg-muted/20 rounded-lg p-2 sm:p-3">
         <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Subtotal</span>
           <span>{subtotal.toFixed(2)} RON</span>
@@ -3813,4 +5317,6 @@ export default function Preturi({ leadId, lead, fisaId, initialQuoteId, pipeline
       </div>
     </div>
   );
-}
+})
+
+export default Preturi

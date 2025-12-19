@@ -1,4 +1,13 @@
-// middleware.ts
+/**
+ * Middleware simplificat pentru autentificare
+ * 
+ * Strategia nouă:
+ * - Verifică DOAR dacă există session validă
+ * - NU mai verifică roluri sau permisiuni (se fac în AuthContext)
+ * - NU mai face query-uri la app_members (evită probleme cu RLS)
+ * - Permisiunile se verifică în client-side prin AuthContext
+ */
+
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs"
@@ -13,33 +22,20 @@ export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
   const supabase = createMiddlewareClient({ req, res })
 
-  // 1) Session check
-  const { data: { session } } = await supabase.auth.getSession()
+  // Verifică dacă există session
+  const { data: { session }, error } = await supabase.auth.getSession()
 
-  if (!session) {
+  // Dacă nu există session, redirectează la sign-in
+  if (error || !session) {
     const url = req.nextUrl.clone()
     url.pathname = "/auth/sign-in"
-    url.searchParams.set("next", pathname) // so we can bounce back after login
+    url.searchParams.set("next", pathname)
     return NextResponse.redirect(url)
   }
 
-  const { data: member, error: memberErr } = await supabase
-    .from("app_members")
-    .select("role")
-    .eq("user_id", session.user.id)  
-    .single()
-
-  // If not in app, send to a simple "no access" page (or dashboard)
-  if (memberErr || !member) {
-    const url = req.nextUrl.clone()
-    url.pathname = "/auth/no-access"   // make a tiny page or change to "/"
-    return NextResponse.redirect(url)
-  }
-
-  // (Optional) only owners can access destructive areas; you can branch by path here
-  // if (pathname.startsWith("/settings") && member.role !== "owner") { ... }
-
-  return res // IMPORTANT: return the SAME res you passed to createMiddlewareClient
+  // Session validă → permite acces
+  // Verificările de permisiuni se fac în AuthContext și componente
+  return res
 }
 
 // Protect only real app pages
@@ -56,5 +52,8 @@ export const config = {
     "/pipelines",
     "/settings/:path*",
     "/settings",
+    "/profile/:path*",
+    "/profile",
+    "/tehnician/:path*",
   ],
 }

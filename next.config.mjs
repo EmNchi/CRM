@@ -35,22 +35,59 @@ const nextConfig = {
   compress: true,
   poweredByHeader: false,
   
-  // ✅ Bundle analyzer în dev
-  ...(process.env.ANALYZE === 'true' && {
-    webpack: (config, { isServer }) => {
-      if (!isServer) {
-        const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer')
-        config.plugins.push(
-          new BundleAnalyzerPlugin({
-            analyzerMode: 'static',
-            reportFilename: '../bundle-report.html',
-            openAnalyzer: false,
-          })
-        )
+  // ✅ Configurare pentru chunk loading pe mobil
+  webpack: (config, { isServer, dev }) => {
+    if (!isServer) {
+      // Optimizare pentru chunk loading pe mobil
+      config.optimization = {
+        ...config.optimization,
+        splitChunks: {
+          chunks: 'all',
+          cacheGroups: {
+            default: false,
+            vendors: false,
+            // Vendor chunks mai mici pentru încărcare mai rapidă pe mobil
+            vendor: {
+              name: 'vendor',
+              chunks: 'all',
+              test: /node_modules/,
+              priority: 20,
+              maxSize: 244000, // ~240KB per chunk pentru mobil
+            },
+            common: {
+              name: 'common',
+              minChunks: 2,
+              chunks: 'all',
+              priority: 10,
+              reuseExistingChunk: true,
+            },
+          },
+        },
       }
-      return config
-    },
-  }),
+      
+      // Retry logic pentru chunk loading failures
+      if (!dev) {
+        config.output = {
+          ...config.output,
+          chunkLoadTimeout: 30000, // 30 secunde timeout pentru chunk loading
+        }
+      }
+    }
+    
+    // Bundle analyzer în dev
+    if (process.env.ANALYZE === 'true' && !isServer) {
+      const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer')
+      config.plugins.push(
+        new BundleAnalyzerPlugin({
+          analyzerMode: 'static',
+          reportFilename: '../bundle-report.html',
+          openAnalyzer: false,
+        })
+      )
+    }
+    
+    return config
+  },
 }
 
 export default nextConfig
