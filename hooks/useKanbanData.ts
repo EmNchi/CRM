@@ -7,6 +7,7 @@ import type { PipelineItemType } from '@/lib/supabase/pipelineOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
 import type { Tag } from '@/lib/supabase/tagOperations'
+import { useRole } from '@/hooks/useRole'
 
 const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
@@ -39,9 +40,26 @@ export function useKanbanData(pipelineSlug?: string) {
   const [pipelines, setPipelines] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isDepartmentPipelineState, setIsDepartmentPipelineState] = useState(false)
 
   const [currentPipelineId, setCurrentPipelineId] = useState<string | null>(null)
   const { getPipelines, invalidateCache } = usePipelinesCache()
+  const { role } = useRole()
+  
+  // Obține ID-ul utilizatorului curent pentru filtrarea tăvițelor în pipeline-urile departament
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        setCurrentUserId(user?.id || null)
+      } catch (err) {
+        console.error('Error fetching current user:', err)
+        setCurrentUserId(null)
+      }
+    }
+    fetchCurrentUser()
+  }, [])
   
   // Debounce helper pentru refresh-uri
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -111,6 +129,8 @@ export function useKanbanData(pipelineSlug?: string) {
           const isDepartmentPipeline = departmentPipelines.some(dept => 
             toSlug(currentPipeline.name) === toSlug(dept)
           )
+          const isAdminOrOwner = role === 'admin' || role === 'owner'
+          setIsDepartmentPipelineState(isDepartmentPipeline)
           let allLeads: KanbanLead[] = []
         
           // Toate pipeline-urile folosesc acum getKanbanItems care suportă leads, service_files și trays
@@ -118,12 +138,17 @@ export function useKanbanData(pipelineSlug?: string) {
           // Pipeline Receptie - afișează service_files
           // Pipeline Curier - afișează service_files
           // Alte pipeline-uri (Vanzari etc) - afișează leads
-          const { data: itemsData, error: itemsError } = await getKanbanItems(currentPipeline.id)
+          // Pentru pipeline-urile departament, pasăm currentUserId pentru filtrarea tăvițelor
+          // DAR NU pentru admin / owner care trebuie să vadă toate tăvițele
+          const { data: itemsData, error: itemsError } = await getKanbanItems(
+            currentPipeline.id, 
+            isDepartmentPipeline && !isAdminOrOwner ? currentUserId || undefined : undefined
+          )
           if (itemsError) throw itemsError
           allLeads = (itemsData || []) as any[]
         
           if (isDepartmentPipeline) {
-            console.log('📦 Department pipeline - loaded trays:', allLeads.length)
+            console.log('📦 Department pipeline - loaded trays:', allLeads.length, '(filtered for user:', currentUserId, ')')
           } else if (isReceptie) {
             console.log('📋 Receptie pipeline - loaded items:', allLeads.length)
           }
@@ -146,7 +171,7 @@ export function useKanbanData(pipelineSlug?: string) {
     } finally {
       setLoading(false)
     }
-  }, [pipelineSlug, getPipelines])
+  }, [pipelineSlug, getPipelines, currentUserId, role])
 
   // keep ref to latest load function for use inside effects/callbacks
   const loadDataRef = useRef(loadData)
@@ -318,6 +343,23 @@ export function useKanbanData(pipelineSlug?: string) {
       }
     )
 
+    // Pentru tray_items - când se schimbă technician_id sau alte detalii,
+    // reîncarcă datele pentru a reflecta schimbările de vizibilitate ale tăvițelor
+    if (isDepartmentPipelineState) {
+      ch.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tray_items',
+        },
+        () => {
+          // Nu avem nevoie de invalidateCache aici, doar refresh de date
+          debouncedRefresh()
+        }
+      )
+    }
+
     // Pentru modificări în leads table - actualizează doar lead-ul afectat
     ch.on(
       'postgres_changes',
@@ -354,7 +396,7 @@ export function useKanbanData(pipelineSlug?: string) {
       }
       supabase.removeChannel(ch) 
     }
-  }, [currentPipelineId, debouncedRefresh, invalidateCache])
+  }, [currentPipelineId, debouncedRefresh, invalidateCache, isDepartmentPipelineState])
 
 
   const handleLeadMove = useCallback(async (leadId: string, newStageName: string) => {

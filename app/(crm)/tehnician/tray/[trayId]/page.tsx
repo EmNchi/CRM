@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ArrowLeft, Plus, Trash2, Save, Loader2, Wrench, ImageIcon, ImagePlus, X, Download, ChevronUp, ChevronDown, Camera, Package, CircleDot, CheckCircle2, Clock } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Save, Loader2, Wrench, ImageIcon, ImagePlus, X, Download, ChevronUp, ChevronDown, Camera, Package, CircleDot, CheckCircle2, Clock, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { 
@@ -35,6 +35,9 @@ import {
   deleteTrayImageReference,
   type TrayImage 
 } from '@/lib/supabase/imageOperations'
+import { listParts, type Part } from '@/lib/supabase/partOperations'
+import { moveItemToStage } from '@/lib/supabase/pipelineOperations'
+import { getPipelinesWithStages } from '@/lib/supabase/leadOperations'
 
 const supabase = supabaseBrowser()
 
@@ -43,6 +46,7 @@ interface TrayData {
   number: string
   size: string
   status: 'in_receptie' | 'in_lucru' | 'gata'
+  urgent: boolean
   service_file: {
     id: string
     number: string
@@ -75,6 +79,7 @@ interface TrayItem {
   tray_id: string
   instrument_id: string | null
   service_id: string | null
+  part_id: string | null
   technician_id: string | null
   qty: number
   discount_pct?: number
@@ -83,7 +88,6 @@ interface TrayItem {
   serial_number?: string | null
   garantie?: boolean
   notes?: string | null
-  name_snapshot?: string | null
   // Joined data
   service?: Service
   department?: { id: string; name: string }
@@ -109,9 +113,8 @@ export default function TehnicianTrayPage() {
   const [newService, setNewService] = useState({
     service_id: '',
     instrument_id: '',
-    qty: 1,
     discount_pct: 0,
-    urgent: false,
+    qty: 1,
   })
   
   // Lista tuturor instrumentelor pentru dropdown
@@ -128,10 +131,11 @@ export default function TehnicianTrayPage() {
   // State pentru adăugare piesă
   const [addPartOpen, setAddPartOpen] = useState(false)
   const [newPart, setNewPart] = useState({
-    name: '',
-    price: 0,
+    part_id: '',
     qty: 1,
   })
+  const [parts, setParts] = useState<Part[]>([])
+  const [loadingParts, setLoadingParts] = useState(false)
 
   // State pentru editare inline
   const [editingItem, setEditingItem] = useState<string | null>(null)
@@ -140,6 +144,15 @@ export default function TehnicianTrayPage() {
     discount_pct?: number
     urgent?: boolean
   }>({})
+
+  // State pentru editare serviciu (dialog)
+  const [editServiceOpen, setEditServiceOpen] = useState(false)
+  const [editingServiceItem, setEditingServiceItem] = useState<TrayItem | null>(null)
+  const [editService, setEditService] = useState({
+    qty: 1,
+    discount_pct: 0,
+    price: 0,
+  })
 
   // Încărcare date
   useEffect(() => {
@@ -162,6 +175,7 @@ export default function TehnicianTrayPage() {
           number,
           size,
           status,
+          urgent,
           service_file_id,
           service_file:service_files!inner(
             id,
@@ -189,8 +203,19 @@ export default function TehnicianTrayPage() {
         .select('instrument_id')
         .eq('tray_id', trayId)
 
-      if (itemError && itemError.code !== 'PGRST116') {
-        throw itemError
+      if (itemError) {
+        console.log('[TrayPage] loadData - itemError when checking for instruments:', {
+          message: itemError.message,
+          code: itemError.code,
+          details: itemError.details,
+          hint: itemError.hint
+        })
+        // Dacă eroarea nu este PGRST116 (tabel inexistent), aruncă eroarea
+        if (itemError.code !== 'PGRST116') {
+          throw itemError
+        }
+        // Altfel, continuă fără items (tabelul poate să nu existe încă)
+        console.warn('[TrayPage] loadData - PGRST116 error ignored, continuing without items')
       }
 
       // Găsește primul instrument valid
@@ -243,6 +268,9 @@ export default function TehnicianTrayPage() {
         setServices(allSvcs)
       }
 
+      // Încarcă piese
+      await loadParts()
+
       // Încarcă departamentele
       const { data: depts, error: deptsError } = await supabase
         .from('departments')
@@ -270,38 +298,215 @@ export default function TehnicianTrayPage() {
       }
 
       // Încarcă toate tray_items pentru această tăviță
-      await loadTrayItems(firstInstrumentId || null)
+      console.log('[TrayPage] loadData - calling loadTrayItems with instrumentId:', firstInstrumentId)
+      try {
+        await loadTrayItems(firstInstrumentId || null)
+      } catch (trayItemsError: any) {
+        console.error('[TrayPage] loadData - Error in loadTrayItems:', {
+          message: trayItemsError?.message,
+          code: trayItemsError?.code,
+          details: trayItemsError?.details,
+          hint: trayItemsError?.hint,
+          fullError: trayItemsError
+        })
+        // Nu aruncăm eroarea aici, doar o logăm, pentru a permite încărcarea altor date
+        toast.error(`Eroare la încărcare items: ${trayItemsError?.message || 'Eroare necunoscută'}`)
+      }
 
     } catch (error: any) {
-      console.error('Eroare la încărcare:', error)
-      toast.error(`Eroare: ${error.message}`)
+      console.error('[TrayPage] loadData - Eroare la încărcare:', {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        name: error?.name,
+        stack: error?.stack,
+        fullError: error
+      })
+      
+      const errorMessage = error?.message || error?.code || 'Eroare necunoscută la încărcare date'
+      toast.error(`Eroare: ${errorMessage}`)
     } finally {
       setLoading(false)
     }
   }
 
   const loadTrayItems = async (instrumentId: string | null) => {
-    if (!trayId) return
+    if (!trayId) {
+      console.warn('[TrayPage] loadTrayItems called without trayId')
+      return
+    }
+
+    console.log('[TrayPage] loadTrayItems START - trayId:', trayId)
 
     try {
-      // Încarcă TOATE serviciile pentru această tăviță (nu filtrăm după instrument)
-      const { data, error } = await supabase
-        .from('tray_items')
-        .select(`
-          *,
-          service:services(*),
-          department:departments(id, name),
-          instrument:instruments(id, name)
-        `)
-        .eq('tray_id', trayId)
-        .order('created_at')
+      // Încearcă mai întâi cu join-ul complet (inclusiv tray_item_brands)
+      let data: any[] | null = null
+      let error: any = null
+      let useNewStructure = true
 
-      if (error) throw error
+      try {
+        console.log('[TrayPage] Attempting query with tray_item_brands...')
+        const result = await supabase
+          .from('tray_items')
+          .select(`
+            id,
+            tray_id,
+            instrument_id,
+            service_id,
+            part_id,
+            department_id,
+            technician_id,
+            qty,
+            notes,
+            created_at,
+            service:services(*),
+            department:departments(id, name),
+            instrument:instruments(id, name),
+            tray_item_brands(id, brand, garantie, tray_item_brand_serials(id, serial_number))
+          `)
+          .eq('tray_id', trayId)
+          .order('created_at')
+
+        console.log('[TrayPage] Query result:', { 
+          hasData: !!result.data, 
+          dataLength: result.data?.length,
+          hasError: !!result.error,
+          error: result.error 
+        })
+
+        if (result.error) {
+          console.error('[TrayPage] Query error:', {
+            message: result.error.message,
+            code: result.error.code,
+            details: result.error.details,
+            hint: result.error.hint,
+            fullError: result.error
+          })
+          
+          // Dacă eroarea este legată de tray_item_brands, încercă fără el
+          if (result.error.message?.includes('tray_item_brands') || 
+              result.error.code === 'PGRST116' ||
+              result.error.message?.includes('relation') && result.error.message?.includes('tray_item_brands')) {
+            console.warn('[TrayPage] tray_item_brands join failed, trying without it:', result.error.message)
+            useNewStructure = false
+          } else {
+            throw result.error
+          }
+        } else {
+          data = result.data
+          error = null
+          console.log('[TrayPage] Query successful with tray_item_brands, loaded', data?.length, 'items')
+        }
+      } catch (e: any) {
+        console.error('[TrayPage] Exception in first query attempt:', {
+          message: e?.message,
+          code: e?.code,
+          name: e?.name,
+          stack: e?.stack,
+          fullError: e
+        })
+        
+        // Dacă este o eroare de structură, încercă fără tray_item_brands
+        if (e?.message?.includes('tray_item_brands') || 
+            e?.code === 'PGRST116' ||
+            (e?.message?.includes('relation') && e?.message?.includes('tray_item_brands'))) {
+          console.warn('[TrayPage] tray_item_brands join failed (exception), trying without it:', e?.message)
+          useNewStructure = false
+        } else {
+          throw e
+        }
+      }
+
+      // Fallback: încarcă fără tray_item_brands dacă prima încercare a eșuat
+      if (!useNewStructure || !data) {
+        console.log('[TrayPage] Attempting query without tray_item_brands...')
+        const result = await supabase
+          .from('tray_items')
+          .select(`
+            id,
+            tray_id,
+            instrument_id,
+            service_id,
+            part_id,
+            department_id,
+            technician_id,
+            qty,
+            notes,
+            created_at,
+            service:services(*),
+            department:departments(id, name),
+            instrument:instruments(id, name)
+          `)
+          .eq('tray_id', trayId)
+          .order('created_at')
+
+        console.log('[TrayPage] Fallback query result:', { 
+          hasData: !!result.data, 
+          dataLength: result.data?.length,
+          hasError: !!result.error,
+          error: result.error 
+        })
+
+        if (result.error) {
+          console.error('[TrayPage] Fallback query error:', {
+            message: result.error.message,
+            code: result.error.code,
+            details: result.error.details,
+            hint: result.error.hint,
+            fullError: result.error
+          })
+          throw result.error
+        }
+        data = result.data
+        console.log('[TrayPage] Loaded tray_items without tray_item_brands:', data?.length, 'items')
+      } else {
+        console.log('[TrayPage] Loaded tray_items with tray_item_brands:', data?.length, 'items')
+      }
+
+      if (error) {
+        console.error('[TrayPage] Error still present after queries:', error)
+        throw error
+      }
       
       console.log('[TrayPage] Loaded tray_items from DB:', data?.length, 'items')
-      console.log('[TrayPage] Raw data:', JSON.stringify(data, null, 2))
+      const servicesJoined = data?.map((i: any) => ({ 
+        service_id: i.service_id, 
+        service_name: i.service?.name,
+        has_service: !!i.service 
+      })).filter((i: any) => i.service_id)
+      console.log('[TrayPage] Services joined:', servicesJoined)
+      
+      // Verifică dacă join-ul cu services a funcționat (dacă RLS permite)
+      // Dacă există service_id dar service este null, înseamnă că RLS blochează join-ul
+      const itemsWithServiceIdButNoJoin = data?.filter((i: any) => i.service_id && !i.service) || []
+      if (itemsWithServiceIdButNoJoin.length > 0) {
+        console.warn('[TrayPage] RLS might be blocking service joins. Loading services separately...')
+        // Încarcă serviciile separat ca fallback
+        const serviceIds = itemsWithServiceIdButNoJoin.map((i: any) => i.service_id).filter(Boolean)
+        if (serviceIds.length > 0) {
+          const { data: servicesData, error: servicesError } = await supabase
+            .from('services')
+            .select('id, name, price')
+            .in('id', serviceIds)
+          
+          if (!servicesError && servicesData) {
+            // Creează un map pentru servicii
+            const servicesMap = new Map(servicesData.map((s: any) => [s.id, s]))
+            // Adaugă serviciile la items
+            data?.forEach((item: any) => {
+              if (item.service_id && !item.service && servicesMap.has(item.service_id)) {
+                item.service = servicesMap.get(item.service_id)
+              }
+            })
+            console.log('[TrayPage] Services loaded separately and added to items')
+          }
+        }
+      }
 
-      // Parsează notes JSON pentru discount_pct, urgent, brand, serial_number, garantie
+      // Parsează notes JSON pentru discount_pct, urgent
+      // Brand și serial_number vin acum din tray_item_brands
+      // Și asigură-te că serviciile au datele complete chiar dacă join-ul nu a funcționat
       const items = (data || []).map((item: any) => {
         let discount_pct = 0
         let urgent = false
@@ -309,16 +514,53 @@ export default function TehnicianTrayPage() {
         let serial_number = null
         let garantie = false
 
+        // Extrage brand și serial_number din tray_item_brands (noua structură)
+        if (item.tray_item_brands && Array.isArray(item.tray_item_brands) && item.tray_item_brands.length > 0) {
+          // Folosește primul brand (sau poți agrega toate)
+          const firstBrand = item.tray_item_brands[0]
+          if (firstBrand) {
+            brand = firstBrand.brand || null
+            garantie = firstBrand.garantie || false
+            
+            // Extrage serial numbers din primul brand
+            if (firstBrand.tray_item_brand_serials && Array.isArray(firstBrand.tray_item_brand_serials) && firstBrand.tray_item_brand_serials.length > 0) {
+              const serials = firstBrand.tray_item_brand_serials
+                .map((s: any) => s?.serial_number)
+                .filter((sn: any) => sn && sn.trim())
+              serial_number = serials.length > 0 ? serials.join(', ') : null
+            }
+          }
+        }
+        
+        // Fallback: dacă nu există tray_item_brands, încearcă să extragă din notes (pentru backwards compatibility)
+        if (!brand && !serial_number && item.notes) {
+          try {
+            const notesData = JSON.parse(item.notes)
+            if (notesData.brand) brand = notesData.brand
+            if (notesData.serial_number) serial_number = notesData.serial_number
+            if (notesData.garantie !== undefined) garantie = notesData.garantie
+          } catch (e) {
+            // Ignoră eroarea de parsing
+          }
+        }
+
+        // Parsează notes JSON pentru discount_pct și urgent (brand/serial_number nu mai sunt în notes)
         if (item.notes) {
           try {
             const notesData = JSON.parse(item.notes)
             discount_pct = notesData.discount_pct || 0
             urgent = notesData.urgent || false
-            brand = notesData.brand || null
-            serial_number = notesData.serial_number || null
-            garantie = notesData.garantie || false
+            // Nu mai căutăm brand și serial_number în notes, le luăm din tray_item_brands
           } catch (e) {
             // Notes nu este JSON valid, ignoră
+          }
+        }
+
+        // Dacă itemul are service_id dar nu are service din join, încercă să-l găsească din state
+        if (item.service_id && !item.service) {
+          const serviceFromState = services.find(s => s.id === item.service_id)
+          if (serviceFromState) {
+            item.service = serviceFromState
           }
         }
 
@@ -334,9 +576,50 @@ export default function TehnicianTrayPage() {
 
       console.log('[TrayPage] Processed items:', items.length, items)
       setTrayItems(items as TrayItem[])
+      console.log('[TrayPage] loadTrayItems SUCCESS - set', items.length, 'items')
     } catch (error: any) {
-      console.error('[TrayPage] Eroare la încărcare tray_items:', error)
-      toast.error(`Eroare: ${error.message}`)
+      // Log detaliat al erorii
+      const errorDetails = {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        name: error?.name,
+        stack: error?.stack,
+        toString: error?.toString?.(),
+        stringified: JSON.stringify(error, Object.getOwnPropertyNames(error || {})),
+        type: typeof error,
+        isNull: error === null,
+        isUndefined: error === undefined,
+        keys: error && typeof error === 'object' ? Object.keys(error) : [],
+        fullError: error
+      }
+      
+      console.error('[TrayPage] Eroare la încărcare tray_items - Full details:', errorDetails)
+      
+      // Îmbunătățește mesajul de eroare
+      let errorMessage = 'Eroare la încărcare items'
+      if (error?.message) {
+        errorMessage = error.message
+      } else if (error?.code) {
+        errorMessage = `Eroare ${error.code}: ${error.message || 'Eroare necunoscută'}`
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      } else if (error && typeof error === 'object') {
+        // Încearcă să extragă informații din obiectul de eroare
+        try {
+          errorMessage = JSON.stringify(error, Object.getOwnPropertyNames(error))
+        } catch (e) {
+          errorMessage = `Eroare: ${String(error)}`
+        }
+      } else if (error !== null && error !== undefined) {
+        errorMessage = String(error)
+      }
+      
+      toast.error(`Eroare: ${errorMessage}`)
+      
+      // Setează items-urile ca array gol pentru a evita erori ulterioare
+      setTrayItems([])
     }
   }
 
@@ -358,6 +641,20 @@ export default function TehnicianTrayPage() {
       loadTrayImages()
     }
   }, [trayId])
+
+  // Încarcă piese
+  const loadParts = async () => {
+    setLoadingParts(true)
+    try {
+      const partsList = await listParts()
+      setParts(partsList.filter(p => p.active))
+    } catch (error: any) {
+      console.error('[TrayPage] Error loading parts:', error)
+      toast.error('Eroare la încărcarea pieselor')
+    } finally {
+      setLoadingParts(false)
+    }
+  }
 
   // Upload imagine
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -445,21 +742,117 @@ export default function TehnicianTrayPage() {
     }
   }
 
-  // Schimbă statusul tăviței
+  // Schimbă urgent-ul tăviței
+  const handleUrgentChange = async (urgent: boolean) => {
+    if (!trayId || !trayData) return
+    
+    try {
+      const { error } = await supabase
+        .from('trays')
+        .update({ urgent })
+        .eq('id', trayId)
+      
+      if (error) throw error
+      
+      setTrayData({ ...trayData, urgent })
+      toast.success(urgent ? 'Tăviță marcată ca urgentă' : 'Tăviță nemarcată ca urgentă')
+    } catch (error: any) {
+      console.error('Eroare la actualizare urgent:', error)
+      toast.error('Eroare la actualizare')
+    }
+  }
+
+  // Schimbă statusul tăviței și mută lead-ul în stage-ul corespunzător
   const handleStatusChange = async (newStatus: 'in_receptie' | 'in_lucru' | 'gata') => {
     if (!trayId || !trayData) return
     
     setUpdatingStatus(true)
     try {
-      const { error } = await supabase
+      // Actualizează statusul tăviței
+      const { error: trayError } = await supabase
         .from('trays')
         .update({ status: newStatus })
         .eq('id', trayId)
       
-      if (error) throw error
+      if (trayError) throw trayError
       
       setTrayData({ ...trayData, status: newStatus })
-      toast.success(`Status actualizat: ${getStatusLabel(newStatus)}`)
+      
+      // Mută lead-ul în stage-ul corespunzător
+      const leadId = trayData.service_file.lead.id
+      if (leadId) {
+        try {
+          // Obține toate pipeline-urile și stage-urile
+          const pipelinesData = await getPipelinesWithStages()
+          
+          // Găsește pipeline-ul care conține lead-ul
+          const { data: pipelineItem } = await supabase
+            .from('pipeline_items')
+            .select('pipeline_id, stage_id')
+            .eq('type', 'lead')
+            .eq('item_id', leadId)
+            .maybeSingle()
+          
+          if (pipelineItem && pipelinesData) {
+            const pipeline = pipelinesData.find((p: any) => p.id === pipelineItem.pipeline_id)
+            
+            if (pipeline) {
+              let targetStageName = ''
+              
+              // Determină stage-ul țintă în funcție de status (cu variante de nume)
+              let targetStage: any = null
+              
+              if (newStatus === 'gata') {
+                // Mută în "Finalizat" - caută variante
+                targetStage = pipeline.stages.find((s: any) => {
+                  const name = s.name.toLowerCase()
+                  return name.includes('finalizat') || name.includes('finalizare') || name === 'finalizat'
+                })
+              } else if (newStatus === 'in_lucru') {
+                // Mută în "Asteptare" - caută variante
+                targetStage = pipeline.stages.find((s: any) => {
+                  const name = s.name.toLowerCase()
+                  return name.includes('asteptare') || name.includes('astept') || name === 'asteptare'
+                })
+              } else if (newStatus === 'in_receptie') {
+                // Mută în "In Lucru" - caută variante
+                targetStage = pipeline.stages.find((s: any) => {
+                  const name = s.name.toLowerCase()
+                  return (name.includes('in lucru') || name.includes('în lucru') || name === 'in lucru') && 
+                         !name.includes('asteptare')
+                })
+              }
+              
+              if (targetStage) {
+                const { error: moveError } = await moveItemToStage(
+                  'lead',
+                  leadId,
+                  pipeline.id,
+                  targetStage.id
+                )
+                
+                if (moveError) {
+                  console.error('[TrayPage] Error moving lead to stage:', moveError)
+                  toast.error('Eroare la mutarea în stage')
+                } else {
+                  toast.success(`Tavita mutată în ${targetStage.name}`)
+                }
+              } else {
+                const statusLabel = newStatus === 'gata' ? 'Finalizat' : 
+                                   newStatus === 'in_lucru' ? 'Asteptare' : 'In Lucru'
+                console.warn(`[TrayPage] Stage "${statusLabel}" nu a fost găsit în pipeline`)
+                toast.success(`Status actualizat: ${getStatusLabel(newStatus)}`)
+              }
+            }
+          }
+        } catch (moveError: any) {
+          console.error('[TrayPage] Error in move lead logic:', moveError)
+          // Continuă oricum, statusul tăviței a fost actualizat
+          toast.success(`Status actualizat: ${getStatusLabel(newStatus)}`)
+        }
+      } else {
+        toast.success(`Status actualizat: ${getStatusLabel(newStatus)}`)
+      }
     } catch (error: any) {
       console.error('[TrayPage] Error updating status:', error)
       toast.error('Eroare la actualizare status')
@@ -479,8 +872,8 @@ export default function TehnicianTrayPage() {
 
   // Adaugă piesă nouă
   const handleAddPart = async () => {
-    if (!newPart.name.trim()) {
-      toast.error('Introdu numele piesei')
+    if (!newPart.part_id) {
+      toast.error('Selectează o piesă')
       return
     }
     
@@ -489,24 +882,86 @@ export default function TehnicianTrayPage() {
       return
     }
 
+    const selectedPart = parts.find(p => p.id === newPart.part_id)
+    if (!selectedPart) {
+      toast.error('Piesa selectată nu există')
+      return
+    }
+
     setSaving(true)
     try {
+      // Folosește instrumentul curent dacă există
+      const instrumentId = instrument?.id || null
+      
+      // Șterge înregistrarea cu doar instrumentul dacă există și avem un instrument
+      if (instrumentId) {
+        const instrumentOnlyItems = trayItems.filter(i => 
+          i.instrument_id === instrumentId && isInstrumentOnly(i)
+        )
+        
+        if (instrumentOnlyItems.length > 0) {
+          for (const instrumentItem of instrumentOnlyItems) {
+            const { error: deleteError } = await supabase
+              .from('tray_items')
+              .delete()
+              .eq('id', instrumentItem.id)
+            
+            if (deleteError) {
+              console.error('[TrayPage] Error deleting instrument-only item:', deleteError)
+              // Continuă oricum, nu este critic
+            }
+          }
+        }
+      }
+
       const notesData = {
         item_type: 'part',
-        price: newPart.price,
-        name: newPart.name.trim(),
+        price: selectedPart.price,
+        name: selectedPart.name,
+      }
+
+      // Găsește departamentul "Reparații" pentru piese (case-insensitive, cu sau fără diacritice)
+      let reparatiiDeptId = Object.entries(departments).find(
+        ([_, dept]) => {
+          const deptNameLower = dept.name.toLowerCase()
+          return deptNameLower.includes('reparat') || deptNameLower === 'reparatii' || deptNameLower === 'reparații'
+        }
+      )?.[0] || null
+
+      // Dacă nu s-a găsit în departments map, încercă direct din baza de date
+      if (!reparatiiDeptId) {
+        const { data: reparatiiDept, error: deptError } = await supabase
+          .from('departments')
+          .select('id, name')
+          .or('name.ilike.Reparatii,name.ilike.Reparații')
+          .limit(1)
+          .maybeSingle() as { data: { id: string; name: string } | null; error: any }
+
+        if (!deptError && reparatiiDept) {
+          reparatiiDeptId = reparatiiDept.id
+          // Actualizează și departments map pentru viitoare utilizări
+          setDepartments(prev => ({
+            ...prev,
+            [reparatiiDept.id]: { id: reparatiiDept.id, name: reparatiiDept.name }
+          }))
+        }
+      }
+
+      // Dacă încă nu s-a găsit departamentul, aruncă o eroare clară
+      if (!reparatiiDeptId) {
+        throw new Error('Departamentul "Reparații" nu a fost găsit în baza de date. Contactează administratorul.')
       }
 
       const { error } = await supabase
         .from('tray_items')
         .insert({
           tray_id: trayId,
-          instrument_id: null,
+          instrument_id: instrumentId,
           service_id: null,
-          department_id: null,
+          part_id: selectedPart.id,
+          department_id: reparatiiDeptId,
           technician_id: currentUserId,
           qty: newPart.qty,
-          name_snapshot: newPart.name.trim(),
           notes: JSON.stringify(notesData),
         })
 
@@ -514,7 +969,7 @@ export default function TehnicianTrayPage() {
 
       toast.success('Piesă adăugată cu succes')
       setAddPartOpen(false)
-      setNewPart({ name: '', price: 0, qty: 1 })
+      setNewPart({ part_id: '', qty: 1 })
       await loadTrayItems(null)
     } catch (error: any) {
       console.error('[TrayPage] Error adding part:', error)
@@ -524,7 +979,7 @@ export default function TehnicianTrayPage() {
     }
   }
 
-  // Calculează prețul cu discount și urgent
+  // Calculează prețul cu discount și urgent (urgent se preia de pe tăviță)
   const calculatePrice = (item: TrayItem) => {
     let basePrice = 0
     
@@ -538,13 +993,32 @@ export default function TehnicianTrayPage() {
       } catch (e) {}
     }
     
-    // Dacă nu este piesă, folosește prețul serviciului
-    if (basePrice === 0 && item.service) {
-      basePrice = item.service.price
+    // Pentru servicii, verifică dacă există preț override în notes
+    if (basePrice === 0 && item.notes) {
+      try {
+        const notesData = JSON.parse(item.notes)
+        if (notesData.item_type === 'service' && notesData.price) {
+          basePrice = notesData.price
+        }
+      } catch (e) {}
+    }
+    
+    // Dacă nu există preț override, folosește prețul serviciului
+    if (basePrice === 0) {
+      if (item.service?.price) {
+        basePrice = item.service.price
+      } else if (item.service_id) {
+        // Fallback: caută serviciul în array-ul services din state
+        const serviceFromState = services.find(s => s.id === item.service_id)
+        if (serviceFromState) {
+          basePrice = serviceFromState.price
+        }
+      }
     }
     
     let price = basePrice * item.qty
-    if (item.urgent) {
+    // Urgent se preia de pe tăviță, nu de pe item
+    if (trayData?.urgent) {
       price = price * 1.3 // +30%
     }
     if (item.discount_pct) {
@@ -553,18 +1027,75 @@ export default function TehnicianTrayPage() {
     return price
   }
   
+  // Verifică dacă itemul este doar instrument (fără serviciu/piesă)
+  const isInstrumentOnly = (item: TrayItem) => {
+    if (item.notes) {
+      try {
+        const notesData = JSON.parse(item.notes)
+        // Dacă item_type este explicit null, este doar instrument
+        if (notesData.item_type === null) {
+          return true
+        }
+      } catch (e) {}
+    }
+    // Dacă nu are service_id și nu este piesă, este doar instrument
+    if (!item.service_id && !item.notes) {
+      return true
+    }
+    // Verifică dacă notes nu are item_type setat și nu are service_id
+    if (!item.service_id) {
+      try {
+        const notesData = item.notes ? JSON.parse(item.notes) : {}
+        if (!notesData.item_type && !notesData.name && !notesData.price) {
+          return true
+        }
+      } catch (e) {
+        // Dacă notes nu este JSON valid și nu are service_id, probabil este doar instrument
+        return true
+      }
+    }
+    return false
+  }
+  
   // Obține numele itemului (serviciu sau piesă)
   const getItemName = (item: TrayItem) => {
+    // Dacă este doar instrument, nu returna nume
+    if (isInstrumentOnly(item)) {
+      return ''
+    }
+    
     // Verifică dacă este piesă
     if (item.notes) {
       try {
         const notesData = JSON.parse(item.notes)
         if (notesData.item_type === 'part') {
-          return item.name_snapshot || notesData.name || 'Piesă'
+          return notesData.name || 'Piesă'
         }
       } catch (e) {}
     }
-    return item.service?.name || item.name_snapshot || 'Serviciu necunoscut'
+    
+    // Pentru servicii, caută în array-ul services din state folosind service_id
+    if (item.service_id) {
+      // Încearcă mai întâi din join
+      if (item.service?.name) {
+        return item.service.name
+      }
+      // Fallback: caută în array-ul services din state
+      const serviceFromState = services.find(s => s.id === item.service_id)
+      if (serviceFromState) {
+        return serviceFromState.name
+      }
+    }
+    
+    // Fallback: dacă nu există service, verifică notes
+    if (item.notes) {
+      try {
+        const notesData = JSON.parse(item.notes)
+        return notesData.name || ''
+      } catch (e) {}
+    }
+    
+    return ''
   }
   
   // Verifică dacă itemul este piesă
@@ -578,10 +1109,67 @@ export default function TehnicianTrayPage() {
     return false
   }
 
-  // Calculează totalul pentru tăviță
+  // Calculează totalul pentru tăviță (exclude items-urile cu doar instrument)
   const trayTotal = useMemo(() => {
-    return trayItems.reduce((sum, item) => sum + calculatePrice(item), 0)
-  }, [trayItems])
+    return trayItems
+      .filter(item => {
+        // Exclude items-urile cu doar instrument
+        if (item.notes) {
+          try {
+            const notesData = JSON.parse(item.notes)
+            if (notesData.item_type === null) {
+              return false
+            }
+          } catch (e) {}
+        }
+        // Dacă nu are service_id și nu este piesă, exclude
+        if (!item.service_id) {
+          try {
+            const notesData = item.notes ? JSON.parse(item.notes) : {}
+            if (!notesData.item_type && !notesData.name && !notesData.price) {
+              return false
+            }
+          } catch (e) {
+            // Dacă notes nu este JSON valid și nu are service_id, exclude
+            return false
+          }
+        }
+        return true
+      })
+      .reduce((sum, item) => {
+        let basePrice = 0
+        if (item.notes) {
+          try {
+            const notesData = JSON.parse(item.notes)
+            if (notesData.item_type === 'part' && notesData.price) {
+              basePrice = notesData.price
+            }
+          } catch (e) {}
+        }
+        // Pentru servicii, verifică dacă există preț override în notes
+        if (basePrice === 0 && item.notes) {
+          try {
+            const notesData = JSON.parse(item.notes)
+            if (notesData.item_type === 'service' && notesData.price) {
+              basePrice = notesData.price
+            }
+          } catch (e) {}
+        }
+        
+        if (basePrice === 0 && item.service) {
+          basePrice = item.service.price
+        }
+        let price = basePrice * item.qty
+        // Urgent se preia de pe tăviță
+        if (trayData?.urgent) {
+          price = price * 1.3
+        }
+        if (item.discount_pct) {
+          price = price * (1 - item.discount_pct / 100)
+        }
+        return sum + price
+      }, 0)
+  }, [trayItems, trayData?.urgent])
 
   // Serviciile filtrate după instrumentul selectat
   const filteredServices = useMemo(() => {
@@ -604,6 +1192,11 @@ export default function TehnicianTrayPage() {
       return
     }
     
+    if (!newService.qty || newService.qty < 1) {
+      toast.error('Introdu cantitatea (minim 1)')
+      return
+    }
+    
     if (!currentUserId) {
       toast.error('Nu ești autentificat')
       return
@@ -617,48 +1210,149 @@ export default function TehnicianTrayPage() {
         return
       }
 
-      // Parsează notes JSON
-      const notesData = {
-        discount_pct: newService.discount_pct || 0,
-        urgent: newService.urgent || false,
+      // Șterge înregistrarea cu doar instrumentul dacă există
+      const instrumentOnlyItems = trayItems.filter(i => 
+        i.instrument_id === instrumentId && isInstrumentOnly(i)
+      )
+      
+      if (instrumentOnlyItems.length > 0) {
+        for (const instrumentItem of instrumentOnlyItems) {
+          const { error: deleteError } = await supabase
+            .from('tray_items')
+            .delete()
+            .eq('id', instrumentItem.id)
+          
+          if (deleteError) {
+            console.error('[TrayPage] Error deleting instrument-only item:', deleteError)
+            // Continuă oricum, nu este critic
+          }
+        }
       }
 
-      console.log('[TrayPage] Adding service:', {
+      // Parsează notes JSON (urgent se preia de pe tăviță, nu de pe serviciu)
+      const notesData = {
+        item_type: 'service',
+        discount_pct: newService.discount_pct || 0,
+      }
+
+      const insertData = {
         tray_id: trayId,
         instrument_id: instrumentId,
         service_id: newService.service_id,
         department_id: selectedService.department_id,
         technician_id: currentUserId,
-        qty: newService.qty,
-      })
+        qty: newService.qty, // Cantitatea introdusă manual
+        notes: JSON.stringify(notesData),
+      }
+
+      console.log('[TrayPage] Adding service:', insertData)
+      console.log('[TrayPage] service_id value:', newService.service_id, 'type:', typeof newService.service_id)
 
       const { data, error } = await supabase
         .from('tray_items')
-        .insert({
-          tray_id: trayId,
-          instrument_id: instrumentId,
-          service_id: newService.service_id,
-          department_id: selectedService.department_id,
-          technician_id: currentUserId,
-          qty: newService.qty,
-          notes: JSON.stringify(notesData),
-        })
+        .insert(insertData)
         .select()
 
       if (error) {
         console.error('[TrayPage] Insert error:', error)
+        console.error('[TrayPage] Insert data that failed:', insertData)
         throw error
       }
 
-      console.log('[TrayPage] Service added:', data)
+      console.log('[TrayPage] Service added successfully:', data)
+      console.log('[TrayPage] Saved service_id:', data?.[0]?.service_id)
+      
+      // Reîncarcă lista de servicii IMEDIAT după inserare pentru a avea join-ul cu services
+      await loadTrayItems(null)
+      
       toast.success('Serviciu adăugat cu succes')
       setAddServiceOpen(false)
-      setNewService({ service_id: '', instrument_id: '', qty: 1, discount_pct: 0, urgent: false })
-      
-      // Reîncarcă lista de servicii
-      await loadTrayItems(null)
+      setNewService({ service_id: '', instrument_id: '', discount_pct: 0, qty: 1 })
     } catch (error: any) {
       console.error('Eroare la adăugare serviciu:', error)
+      toast.error(`Eroare: ${error.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Deschide dialog-ul pentru editarea unui serviciu
+  const handleEditService = (item: TrayItem) => {
+    // Obține prețul curent (din notes dacă există override, altfel din service)
+    let currentPrice = 0
+    if (item.notes) {
+      try {
+        const notesData = JSON.parse(item.notes)
+        if (notesData.price && notesData.item_type === 'service') {
+          currentPrice = notesData.price
+        }
+      } catch (e) {}
+    }
+    
+    // Dacă nu există preț override, folosește prețul din service
+    if (currentPrice === 0) {
+      if (item.service?.price) {
+        currentPrice = item.service.price
+      } else if (item.service_id) {
+        const serviceFromState = services.find(s => s.id === item.service_id)
+        if (serviceFromState) {
+          currentPrice = serviceFromState.price
+        }
+      }
+    }
+    
+    setEditingServiceItem(item)
+    setEditService({
+      qty: item.qty || 1,
+      discount_pct: item.discount_pct || 0,
+      price: currentPrice,
+    })
+    setEditServiceOpen(true)
+  }
+
+  // Salvează editarea serviciului
+  const handleSaveEditService = async () => {
+    if (!editingServiceItem) return
+
+    setSaving(true)
+    try {
+      const item = editingServiceItem
+
+      // Reconstruiește notes JSON
+      const notesData: any = {
+        item_type: item.notes ? (() => {
+          try {
+            const parsed = JSON.parse(item.notes)
+            return parsed.item_type || 'service'
+          } catch {
+            return 'service'
+          }
+        })() : 'service',
+        discount_pct: editService.discount_pct || 0,
+        brand: item.brand || null,
+        serial_number: item.serial_number || null,
+        garantie: item.garantie || false,
+        price: editService.price, // Salvează prețul în notes pentru override
+      }
+
+      const updateData: any = {
+        qty: editService.qty,
+        notes: JSON.stringify(notesData),
+      }
+
+      const { error } = await supabase
+        .from('tray_items')
+        .update(updateData)
+        .eq('id', editingServiceItem.id)
+
+      if (error) throw error
+
+      toast.success('Serviciu actualizat cu succes')
+      setEditServiceOpen(false)
+      setEditingServiceItem(null)
+      await loadTrayItems(null)
+    } catch (error: any) {
+      console.error('Eroare la actualizare serviciu:', error)
       toast.error(`Eroare: ${error.message}`)
     } finally {
       setSaving(false)
@@ -671,10 +1365,9 @@ export default function TehnicianTrayPage() {
       const item = trayItems.find(i => i.id === itemId)
       if (!item) return
 
-      // Reconstruiește notes JSON
+      // Reconstruiește notes JSON (urgent se setează pe tăviță, nu pe item)
       const notesData = {
         discount_pct: field === 'discount_pct' ? value : (item.discount_pct || 0),
-        urgent: field === 'urgent' ? value : (item.urgent || false),
         brand: item.brand || null,
         serial_number: item.serial_number || null,
         garantie: item.garantie || false,
@@ -706,12 +1399,63 @@ export default function TehnicianTrayPage() {
     if (!confirm('Ești sigur că vrei să ștergi acest serviciu?')) return
 
     try {
-      const { error } = await supabase
-        .from('tray_items')
-        .delete()
-        .eq('id', itemId)
+      const item = trayItems.find(i => i.id === itemId)
+      if (!item) return
 
-      if (error) throw error
+      // Verifică dacă este ultimul serviciu/piesă pentru instrument
+      const itemsForInstrument = trayItems.filter(i => 
+        i.instrument_id === item.instrument_id && !isInstrumentOnly(i)
+      )
+      
+      // Dacă este ultimul serviciu/piesă, păstrează o înregistrare goală cu instrumentul
+      if (itemsForInstrument.length === 1 && item.instrument_id) {
+        // Găsește sau creează o înregistrare cu doar instrumentul
+        const instrumentOnlyItem = trayItems.find(i => 
+          i.instrument_id === item.instrument_id && isInstrumentOnly(i)
+        )
+        
+        if (instrumentOnlyItem) {
+          // Există deja o înregistrare cu doar instrumentul, șterge doar serviciul
+          const { error } = await supabase
+            .from('tray_items')
+            .delete()
+            .eq('id', itemId)
+
+          if (error) throw error
+        } else {
+          // Creează o înregistrare goală cu doar instrumentul înainte de a șterge serviciul
+          // Păstrează valorile care nu pot fi null din itemul original
+          const { error: createError } = await supabase
+            .from('tray_items')
+            .insert({
+              tray_id: trayId,
+              instrument_id: item.instrument_id,
+              service_id: null,
+              department_id: item.department_id, // Păstrează department_id
+              technician_id: item.technician_id || currentUserId,
+              qty: item.qty || 1, // Păstrează cantitatea instrumentului
+              notes: JSON.stringify({ item_type: null }),
+            })
+
+          if (createError) throw createError
+
+          // Acum șterge serviciul
+          const { error } = await supabase
+            .from('tray_items')
+            .delete()
+            .eq('id', itemId)
+
+          if (error) throw error
+        }
+      } else {
+        // Nu este ultimul serviciu, șterge normal
+        const { error } = await supabase
+          .from('tray_items')
+          .delete()
+          .eq('id', itemId)
+
+        if (error) throw error
+      }
 
       toast.success('Serviciu șters')
       await loadTrayItems(instrument?.id || null)
@@ -752,9 +1496,9 @@ export default function TehnicianTrayPage() {
   const lead = trayData.service_file.lead
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-background pb-20 px-[3px] md:px-0">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-background border-b p-4">
+      <header className="sticky top-0 z-10 bg-background border-b p-4 md:p-4">
         <div className="flex items-center justify-between mb-2">
           <Button
             variant="ghost"
@@ -771,46 +1515,99 @@ export default function TehnicianTrayPage() {
         </div>
         <div className="mb-3">
           <h1 className="text-lg md:text-xl font-semibold">
-            {lead.full_name || 'Fără nume'} · Fișa {trayData.service_file.number} · Tăviță {trayData.number}
+            Tăviță #{trayData.number}
           </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {trayData.size} • {trayData.status === 'in_receptie' ? 'În recepție' : 
+                              trayData.status === 'in_lucru' ? 'În lucru' : 
+                              trayData.status === 'gata' ? 'Gata' : trayData.status}
+          </p>
         </div>
         
-        {/* Status Buttons */}
+        {/* Status Buttons - Desktop: full buttons, Mobile: compact */}
         <div className="flex gap-2">
-          <Button
-            variant={trayData.status === 'in_receptie' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleStatusChange('in_receptie')}
-            disabled={updatingStatus}
-            className="flex-1 gap-1.5"
-          >
-            <Clock className="h-3.5 w-3.5" />
-            <span className="text-xs">Recepție</span>
-          </Button>
-          <Button
-            variant={trayData.status === 'in_lucru' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleStatusChange('in_lucru')}
-            disabled={updatingStatus}
-            className="flex-1 gap-1.5"
-          >
-            <CircleDot className="h-3.5 w-3.5" />
-            <span className="text-xs">În lucru</span>
-          </Button>
-          <Button
-            variant={trayData.status === 'gata' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleStatusChange('gata')}
-            disabled={updatingStatus}
-            className="flex-1 gap-1.5 bg-green-600 hover:bg-green-700 text-white"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            <span className="text-xs">Gata</span>
-          </Button>
+          {/* Desktop: Butoane complete */}
+          <div className="hidden md:flex gap-2 flex-1">
+            <Button
+              variant={trayData.status === 'in_receptie' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('in_receptie')}
+              disabled={updatingStatus}
+              className="flex-1 gap-1.5"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span className="text-xs">Preia Tavita</span>
+            </Button>
+            <Button
+              variant={trayData.status === 'in_lucru' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('in_lucru')}
+              disabled={updatingStatus}
+              className="flex-1 gap-1.5"
+            >
+              <CircleDot className="h-3.5 w-3.5" />
+              <span className="text-xs">Astept piesa</span>
+            </Button>
+            <Button
+              variant={trayData.status === 'gata' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('gata')}
+              disabled={updatingStatus}
+              className="flex-1 gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span className="text-xs">Gata</span>
+            </Button>
+          </div>
+          
+          {/* Mobile: Butoane compacte */}
+          <div className="md:hidden flex gap-1.5 flex-1">
+            <Button
+              variant={trayData.status === 'in_receptie' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('in_receptie')}
+              disabled={updatingStatus}
+              className="flex-1 h-9 px-2"
+              title="Preia Tavita"
+            >
+              <Clock className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={trayData.status === 'in_lucru' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('in_lucru')}
+              disabled={updatingStatus}
+              className="flex-1 h-9 px-2"
+              title="Astept piesa"
+            >
+              <CircleDot className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={trayData.status === 'gata' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusChange('gata')}
+              disabled={updatingStatus}
+              className="flex-1 h-9 px-2 bg-green-600 hover:bg-green-700 text-white"
+              title="Gata"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        
+        {/* Switch Urgent - pentru toată tăvița */}
+        <div className="flex items-center gap-2 mt-3">
+          <Switch
+            checked={trayData.urgent || false}
+            onCheckedChange={handleUrgentChange}
+          />
+          <Label className={cn("text-sm font-medium", trayData.urgent && "text-amber-600")}>
+            Urgent (+30%)
+          </Label>
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
+      <div className="max-w-4xl mx-auto p-[3px] md:p-6 space-y-4 md:space-y-6">
         {/* Bloc Instrument */}
         <Card>
           <CardHeader>
@@ -861,31 +1658,31 @@ export default function TehnicianTrayPage() {
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Servicii & Piese</CardTitle>
+              <CardTitle className="text-base md:text-lg">Servicii & Piese</CardTitle>
             </div>
             {/* Butoane de adăugare */}
-            <div className="flex gap-2 mt-2">
+            <div className="flex gap-2 mt-2 md:mt-3">
               <Button 
                 onClick={() => setAddServiceOpen(true)} 
-                className="flex-1"
+                className="flex-1 text-sm md:text-base"
                 size="sm"
               >
-                <Plus className="h-4 w-4 mr-1" />
+                <Plus className="h-4 w-4 md:h-5 md:w-5 mr-1" />
                 Serviciu
               </Button>
               <Button 
                 onClick={() => setAddPartOpen(true)} 
                 variant="outline"
-                className="flex-1"
+                className="flex-1 text-sm md:text-base"
                 size="sm"
               >
-                <Package className="h-4 w-4 mr-1" />
+                <Package className="h-4 w-4 md:h-5 md:w-5 mr-1" />
                 Piesă
               </Button>
             </div>
           </CardHeader>
           <CardContent>
-            {trayItems.length === 0 ? (
+            {trayItems.filter(item => !isInstrumentOnly(item)).length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 Nu există servicii sau piese adăugate.
               </div>
@@ -901,13 +1698,13 @@ export default function TehnicianTrayPage() {
                       <TableHead className="w-20">Cant.</TableHead>
                       <TableHead className="w-24">Preț</TableHead>
                       <TableHead className="w-20">Disc%</TableHead>
-                      <TableHead className="w-20">Urgent</TableHead>
+                      <TableHead className="w-32">Departament</TableHead>
                       <TableHead className="w-32">Tehnician</TableHead>
                       <TableHead className="w-20">Acțiuni</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {trayItems.map((item) => (
+                    {trayItems.filter(item => !isInstrumentOnly(item)).map((item) => (
                       <TableRow key={item.id}>
                         <TableCell className="font-medium">
                           {getItemName(item)}
@@ -940,25 +1737,30 @@ export default function TehnicianTrayPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          <Switch
-                            checked={item.urgent || false}
-                            onCheckedChange={(checked) => handleUpdateItem(item.id, 'urgent', checked)}
-                          />
-                        </TableCell>
-                        <TableCell>
                           {item.department?.name || '-'}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {item.technician_id ? (technicians[item.technician_id] || 'Necunoscut') : '-'}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteItem(item.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditService(item)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteItem(item.id)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -967,79 +1769,109 @@ export default function TehnicianTrayPage() {
               </div>
               
               {/* Mobile: Card-uri */}
-              <div className="md:hidden space-y-3">
-                {trayItems.map((item) => (
-                  <Card key={item.id} className="p-4">
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className="font-medium text-base">
-                              {getItemName(item)}
-                            </h4>
-                            <Badge variant={isPart(item) ? 'secondary' : 'outline'} className="text-[10px] px-1.5">
-                              {isPart(item) ? 'Piesă' : 'Serviciu'}
-                            </Badge>
+              <div className="md:hidden space-y-3 px-[3px]">
+                {trayItems.filter(item => !isInstrumentOnly(item)).map((item) => {
+                  // Obține numele instrumentului pentru serviciu
+                  let instrumentName = null
+                  if (item.service?.instrument_id) {
+                    const inst = allInstruments.find(i => i.id === item.service.instrument_id)
+                    instrumentName = inst?.name || null
+                  } else if (item.instrument_id) {
+                    const inst = allInstruments.find(i => i.id === item.instrument_id)
+                    instrumentName = inst?.name || null
+                  }
+                  
+                  const itemName = getItemName(item)
+                  // Nu afișa card-ul dacă nu are nume (este doar instrument)
+                  if (!itemName) return null
+                  
+                  return (
+                    <Card key={item.id} className="p-4">
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="font-medium text-base">
+                                {itemName}
+                              </h4>
+                              <Badge variant={isPart(item) ? 'secondary' : 'outline'} className="text-[10px] px-1.5">
+                                {isPart(item) ? 'Piesă' : 'Serviciu'}
+                              </Badge>
+                            </div>
+                            {instrumentName && (
+                              <p className="text-sm text-muted-foreground mb-1">
+                                Instrument: {instrumentName}
+                              </p>
+                            )}
+                            <p className="text-sm font-semibold text-primary">
+                              {calculatePrice(item).toFixed(2)} RON
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Cantitate: {item.qty} • Preț unitar: {(() => {
+                                // Verifică dacă există preț override în notes (pentru servicii sau piese)
+                                if (item.notes) {
+                                  try {
+                                    const notesData = JSON.parse(item.notes)
+                                    if (notesData.price) {
+                                      return notesData.price.toFixed(2)
+                                    }
+                                  } catch {
+                                    // Ignoră eroarea
+                                  }
+                                }
+                                // Pentru servicii, folosește prețul din service
+                                if (item.service?.price) {
+                                  return item.service.price.toFixed(2)
+                                }
+                                // Fallback pentru servicii din state
+                                if (item.service_id) {
+                                  const serviceFromState = services.find(s => s.id === item.service_id)
+                                  if (serviceFromState) {
+                                    return serviceFromState.price.toFixed(2)
+                                  }
+                                }
+                                return '0.00'
+                              })()} RON
+                            </p>
                           </div>
-                          <p className="text-sm font-semibold text-primary">
-                            {calculatePrice(item).toFixed(2)} RON
-                          </p>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditService(item)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteItem(item.id)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteItem(item.id)}
-                          className="h-8 w-8 p-0"
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Cantitate</Label>
-                          <Input
-                            type="number"
-                            value={item.qty}
-                            onChange={(e) => handleUpdateItem(item.id, 'qty', Number(e.target.value))}
-                            className="h-9"
-                            min="1"
-                          />
-                        </div>
+                        
                         <div>
                           <Label className="text-xs text-muted-foreground">Discount %</Label>
-                          <Input
-                            type="number"
-                            value={item.discount_pct || 0}
-                            onChange={(e) => handleUpdateItem(item.id, 'discount_pct', Number(e.target.value))}
-                            className="h-9"
-                            min="0"
-                            max="100"
-                          />
+                          <p className="text-sm font-medium">{item.discount_pct || 0}%</p>
                         </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={item.urgent || false}
-                            onCheckedChange={(checked) => handleUpdateItem(item.id, 'urgent', checked)}
-                          />
-                          <Label className="text-sm">Urgent (+30%)</Label>
-                        </div>
+                        
                         <div className="text-xs text-muted-foreground">
-                          {item.department?.name || '-'}
+                          Departament: {item.department?.name || '-'}
                         </div>
+                        
+                        {item.technician_id && (
+                          <div className="text-xs text-muted-foreground pt-2 border-t">
+                            Tehnician: {technicians[item.technician_id] || 'Necunoscut'}
+                          </div>
+                        )}
                       </div>
-                      
-                      {item.technician_id && (
-                        <div className="text-xs text-muted-foreground pt-2 border-t">
-                          Tehnician: {technicians[item.technician_id] || 'Necunoscut'}
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  )
+                })}
               </div>
               </>
             )}
@@ -1195,14 +2027,14 @@ export default function TehnicianTrayPage() {
 
       {/* Bottom Sheet - Adaugă serviciu */}
       <Sheet open={addServiceOpen} onOpenChange={setAddServiceOpen}>
-        <SheetContent side="bottom" className="h-auto max-h-[80vh] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Adaugă serviciu</SheetTitle>
-            <SheetDescription>
+        <SheetContent side="bottom" className="h-auto max-h-[85vh] overflow-y-auto px-4 md:px-6">
+          <SheetHeader className="pb-2">
+            <SheetTitle className="text-lg md:text-xl">Adaugă serviciu</SheetTitle>
+            <SheetDescription className="text-sm md:text-base">
               {instrument ? `Selectează un serviciu pentru ${instrument.name}` : 'Selectează un instrument și serviciu'}
             </SheetDescription>
           </SheetHeader>
-          <div className="mt-4 space-y-4 pb-4">
+          <div className="mt-4 space-y-4 pb-4 md:space-y-5">
             {/* Dropdown Instrument - afișat doar dacă nu avem instrument pre-setat */}
             {!instrument && (
               <div>
@@ -1252,34 +2084,26 @@ export default function TehnicianTrayPage() {
               </Select>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Cantitate</Label>
-                <Input
-                  type="number"
-                  value={newService.qty}
-                  onChange={(e) => setNewService({ ...newService, qty: Number(e.target.value) })}
-                  min="1"
-                />
-              </div>
-              <div>
-                <Label>Discount %</Label>
-                <Input
-                  type="number"
-                  value={newService.discount_pct}
-                  onChange={(e) => setNewService({ ...newService, discount_pct: Number(e.target.value) })}
-                  min="0"
-                  max="100"
-                />
-              </div>
+            <div>
+              <Label>Cantitate *</Label>
+              <Input
+                type="number"
+                value={newService.qty}
+                onChange={(e) => setNewService({ ...newService, qty: Number(e.target.value) || 1 })}
+                min="1"
+                required
+              />
             </div>
             
-            <div className="flex items-center gap-3">
-              <Switch
-                checked={newService.urgent}
-                onCheckedChange={(checked) => setNewService({ ...newService, urgent: checked })}
+            <div>
+              <Label>Discount %</Label>
+              <Input
+                type="number"
+                value={newService.discount_pct}
+                onChange={(e) => setNewService({ ...newService, discount_pct: Number(e.target.value) })}
+                min="0"
+                max="100"
               />
-              <Label>Urgent (+30%)</Label>
             </div>
             
             <div className="flex gap-2 pt-4">
@@ -1293,7 +2117,75 @@ export default function TehnicianTrayPage() {
               <Button
                 className="flex-1"
                 onClick={handleAddService}
-                disabled={!newService.service_id || (!instrument && !newService.instrument_id) || saving}
+                disabled={!newService.service_id || !newService.qty || newService.qty < 1 || (!instrument && !newService.instrument_id) || saving}
+              >
+                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Salvează
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Bottom Sheet - Editează serviciu */}
+      <Sheet open={editServiceOpen} onOpenChange={setEditServiceOpen}>
+        <SheetContent side="bottom" className="h-auto max-h-[85vh] overflow-y-auto px-4 md:px-6">
+          <SheetHeader className="pb-2">
+            <SheetTitle className="text-lg md:text-xl">Editează serviciu</SheetTitle>
+            <SheetDescription className="text-sm md:text-base">
+              {editingServiceItem && getItemName(editingServiceItem)}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-4 pb-4 md:space-y-5">
+            <div>
+              <Label>Cantitate *</Label>
+              <Input
+                type="number"
+                value={editService.qty}
+                onChange={(e) => setEditService({ ...editService, qty: Number(e.target.value) || 1 })}
+                min="1"
+                required
+              />
+            </div>
+            
+            <div>
+              <Label>Preț unitar (RON) *</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={editService.price}
+                onChange={(e) => setEditService({ ...editService, price: Number(e.target.value) || 0 })}
+                min="0"
+                required
+              />
+            </div>
+            
+            <div>
+              <Label>Discount %</Label>
+              <Input
+                type="number"
+                value={editService.discount_pct}
+                onChange={(e) => setEditService({ ...editService, discount_pct: Number(e.target.value) || 0 })}
+                min="0"
+                max="100"
+              />
+            </div>
+            
+            <div className="flex gap-2 pt-4">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setEditServiceOpen(false)
+                  setEditingServiceItem(null)
+                }}
+              >
+                Anulează
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleSaveEditService}
+                disabled={!editService.qty || editService.qty < 1 || !editService.price || editService.price <= 0 || saving}
               >
                 {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Salvează
@@ -1305,59 +2197,88 @@ export default function TehnicianTrayPage() {
 
       {/* Bottom Sheet - Adaugă piesă */}
       <Sheet open={addPartOpen} onOpenChange={setAddPartOpen}>
-        <SheetContent side="bottom" className="h-auto max-h-[80vh] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Adaugă piesă</SheetTitle>
-            <SheetDescription>
-              Adaugă o piesă sau material pentru această tăviță
+        <SheetContent side="bottom" className="h-auto max-h-[85vh] overflow-y-auto px-4 md:px-6">
+          <SheetHeader className="pb-2">
+            <SheetTitle className="text-lg md:text-xl">Adaugă piesă</SheetTitle>
+            <SheetDescription className="text-sm md:text-base">
+              Selectează o piesă din catalog. Prețul se va completa automat.
             </SheetDescription>
           </SheetHeader>
-          <div className="mt-4 space-y-4 pb-4">
+          <div className="mt-4 space-y-4 pb-4 md:space-y-5">
             <div>
-              <Label>Nume piesă *</Label>
+              <Label className="text-sm md:text-base mb-2 block">Piesă *</Label>
+              {loadingParts ? (
+                <div className="flex items-center gap-2 py-3">
+                  <Loader2 className="h-4 w-4 md:h-5 md:w-5 animate-spin" />
+                  <span className="text-sm md:text-base text-muted-foreground">Se încarcă piesele...</span>
+                </div>
+              ) : (
+                <Select
+                  value={newPart.part_id}
+                  onValueChange={(value) => setNewPart({ ...newPart, part_id: value })}
+                >
+                  <SelectTrigger className="w-full h-10 md:h-11 text-sm md:text-base">
+                    <SelectValue placeholder="Selectează o piesă" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {parts.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        Nu există piese disponibile
+                      </SelectItem>
+                    ) : (
+                      parts.map((part) => (
+                        <SelectItem key={part.id} value={part.id} className="text-sm md:text-base">
+                          <div className="flex items-center justify-between w-full">
+                            <span className="flex-1">{part.name}</span>
+                            <span className="ml-2 text-muted-foreground font-medium">
+                              {part.price.toFixed(2)} RON
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
+              {newPart.part_id && (
+                <div className="mt-3 p-3 bg-muted/50 rounded-lg border">
+                  <p className="text-sm md:text-base text-muted-foreground">
+                    Preț unitar: <span className="font-semibold text-foreground text-lg">
+                      {parts.find(p => p.id === newPart.part_id)?.price.toFixed(2) || '0.00'} RON
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            <div>
+              <Label className="text-sm md:text-base mb-2 block">Cantitate</Label>
               <Input
-                value={newPart.name}
-                onChange={(e) => setNewPart({ ...newPart, name: e.target.value })}
-                placeholder="Ex: Șurub M4, Cablu alimentare..."
+                type="number"
+                value={newPart.qty}
+                onChange={(e) => setNewPart({ ...newPart, qty: Number(e.target.value) || 1 })}
+                min="1"
+                className="w-full h-10 md:h-11 text-sm md:text-base"
               />
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Preț unitar (RON)</Label>
-                <Input
-                  type="number"
-                  value={newPart.price}
-                  onChange={(e) => setNewPart({ ...newPart, price: Number(e.target.value) })}
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              <div>
-                <Label>Cantitate</Label>
-                <Input
-                  type="number"
-                  value={newPart.qty}
-                  onChange={(e) => setNewPart({ ...newPart, qty: Number(e.target.value) })}
-                  min="1"
-                />
-              </div>
-            </div>
-            
-            <div className="flex gap-2 pt-4">
+            <div className="flex gap-3 pt-4 md:pt-6">
               <Button
                 variant="outline"
-                className="flex-1"
-                onClick={() => setAddPartOpen(false)}
+                className="flex-1 h-11 md:h-12 text-sm md:text-base"
+                onClick={() => {
+                  setAddPartOpen(false)
+                  setNewPart({ part_id: '', qty: 1 })
+                }}
               >
                 Anulează
               </Button>
               <Button
-                className="flex-1"
+                className="flex-1 h-11 md:h-12 text-sm md:text-base"
                 onClick={handleAddPart}
-                disabled={!newPart.name.trim() || saving}
+                disabled={!newPart.part_id || saving}
               >
-                {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {saving && <Loader2 className="h-4 w-4 md:h-5 md:w-5 mr-2 animate-spin" />}
                 Salvează
               </Button>
             </div>
@@ -1367,5 +2288,6 @@ export default function TehnicianTrayPage() {
     </div>
   )
 }
+
 
 

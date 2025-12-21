@@ -6,15 +6,16 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Textarea } from "@/components/ui/textarea"
 import { format } from "date-fns"
 import type { Lead } from "@/app/(crm)/dashboard/page" 
-import Preturi from '@/components/preturi';
+import Preturi, { type PreturiRef } from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { PrintView } from '@/components/print-view'
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import LeadMessenger from "@/components/lead-messenger"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
-import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, ChevronDown, ChevronRight, User, Building, Info, MapPin } from "lucide-react"
+import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, ChevronDown, ChevronRight, User, Building, Info, MapPin, CheckCircle, Clock, Wrench, Package } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { useRole } from "@/hooks/useRole"
@@ -28,6 +29,8 @@ import {
   type TrayItem,
   type Tray
 } from "@/lib/supabase/serviceFileOperations"
+import { moveItemToStage } from "@/lib/supabase/pipelineOperations"
+import { logItemEvent } from "@/lib/supabase/leadOperations"
 
 // Tipuri pentru UI (alias-uri pentru claritate)
 type ServiceSheet = ServiceFile & { fisa_index?: number }
@@ -93,28 +96,48 @@ const listQuotesForLead = async (leadId: string) => {
   return allTrays
 }
 
+// Funcție simplificată - încarcă items cu servicii din array
 const listQuoteItems = async (
-  quoteId: string, 
+  trayId: string, 
   services?: any[], 
   instrumentPipelineMap?: Map<string, string | null>,
-  pipelineMap?: Map<string, string>
+  pipelineMap?: Map<string, string>,
+  instrumentsMap?: Map<string, { id: string; name: string }>
 ): Promise<any[]> => {
-  const { data, error } = await listTrayItemsForTray(quoteId)
+  const supabaseClient = supabaseBrowser()
+  
+  // Query simplu fără join-uri (pentru a evita probleme RLS)
+  const { data, error } = await supabaseClient
+    .from('tray_items')
+    .select(`
+      id,
+      tray_id,
+      instrument_id,
+      service_id,
+      part_id,
+      department_id,
+      technician_id,
+      qty,
+      notes,
+      created_at,
+      tray_item_brands(id, brand, garantie, tray_item_brand_serials(id, serial_number))
+    `)
+    .eq('tray_id', trayId)
+    .order('created_at')
+
   if (error) {
-    console.error('Error loading tray items:', error)
+    console.error('[listQuoteItems] Error:', error)
     return []
   }
-  
-  // Transformă TrayItem în LeadQuoteItem pentru UI
-  return (data || []).map((item: TrayItem) => {
-    // Parsează notes pentru a obține informații suplimentare
+
+  // Procesează fiecare item - folosește services array pentru a găsi numele
+  return (data || []).map((item: any) => {
+    // Parsează notes
     let notesData: any = {}
     if (item.notes) {
       try {
         notesData = JSON.parse(item.notes)
-      } catch (e) {
-        // Notes nu este JSON, ignoră
-      }
+      } catch (e) {}
     }
     
     // Determină item_type
@@ -122,51 +145,94 @@ const listQuoteItems = async (
     if (!item_type) {
       if (item.service_id) {
         item_type = 'service'
-      } else if (notesData.name || !item.instrument_id) {
+        console.log('[listQuoteItems] Item type inferred as service from service_id:', item.service_id)
+      } else if (item.part_id) {
         item_type = 'part'
+        console.log('[listQuoteItems] Item type inferred as part from part_id:', item.part_id)
+      } else if (notesData.name) {
+        item_type = 'part'
+        console.log('[listQuoteItems] Item type inferred as part from notesData.name:', notesData.name)
       }
     }
     
-    // Obține prețul
+    // Găsește serviciul în array-ul services
+    let serviceName = ''
+    let servicePrice = 0
+    if (item.service_id && services && services.length > 0) {
+      const foundService = services.find((s: any) => s.id === item.service_id)
+      if (foundService) {
+        serviceName = foundService.name || ''
+        servicePrice = foundService.price || 0
+      } else {
+        console.warn('[listQuoteItems] Service not found for service_id:', item.service_id)
+      }
+    }
+    
+    // Obține numele - prioritate: service din array > notes
+    let displayName = ''
     let price = notesData.price || 0
-    if (!price && item_type === 'service' && item.service_id && services) {
-      const service = services.find((s: any) => s.id === item.service_id)
-      price = service?.price || 0
+    
+    if (serviceName) {
+      displayName = serviceName
+      price = servicePrice || price
+    } else if (notesData.name) {
+      displayName = notesData.name
     }
     
-    // Obține departamentul din instruments.pipeline
+    // Obține numele instrumentului din map
+    let instrumentName: string | null = null
+    if (item.instrument_id && instrumentsMap) {
+      const instr = instrumentsMap.get(item.instrument_id)
+      instrumentName = instr?.name || null
+    }
+    
+    // Obține departamentul
     let department: string | null = null
-    let instrumentId = item.instrument_id
-    
-    // Pentru servicii, obține instrument_id din serviciu dacă nu există direct pe item
-    if (!instrumentId && item_type === 'service' && item.service_id && services) {
-      const service = services.find((s: any) => s.id === item.service_id)
-      if (service?.instrument_id) {
-        instrumentId = service.instrument_id
-      }
-    }
-    
-    // Obține pipeline-ul din instrument și apoi numele departamentului
-    if (instrumentId && instrumentPipelineMap && pipelineMap) {
-      const pipelineId = instrumentPipelineMap.get(instrumentId)
+    if (item.instrument_id && instrumentPipelineMap && pipelineMap) {
+      const pipelineId = instrumentPipelineMap.get(item.instrument_id)
       if (pipelineId) {
         department = pipelineMap.get(pipelineId) || null
       }
     }
-    
+
     return {
-      ...item,
+      id: item.id,
+      tray_id: item.tray_id,
+      instrument_id: item.instrument_id,
+      service_id: item.service_id,
+      part_id: item.part_id,
+      department_id: item.department_id,
+      technician_id: item.technician_id,
+      qty: item.qty || 1,
+      notes: item.notes,
+      created_at: item.created_at,
+      // Câmpuri calculate
       item_type,
+      name_snapshot: displayName,
       price: price || 0,
       discount_pct: notesData.discount_pct || 0,
       urgent: notesData.urgent || false,
-      name_snapshot: notesData.name_snapshot || notesData.name || '',
-      brand: notesData.brand || null,
-      serial_number: notesData.serial_number || null,
-      garantie: notesData.garantie || false,
-      pipeline_id: notesData.pipeline_id || null,
-      department, // Departament preluat din instruments.pipeline
-      qty: item.qty || 1,
+      // Folosește brand și serial_number din câmpurile directe (pentru compatibilitate)
+      // sau din primul brand din tray_item_brands dacă există
+      brand: item.brand || (item.tray_item_brands && item.tray_item_brands.length > 0 
+        ? item.tray_item_brands[0].brand 
+        : null) || notesData.brand || null,
+      serial_number: item.serial_number || (item.tray_item_brands && item.tray_item_brands.length > 0 
+        && item.tray_item_brands[0].tray_item_brand_serials?.length > 0
+        ? item.tray_item_brands[0].tray_item_brand_serials[0].serial_number 
+        : null) || notesData.serial_number || null,
+      garantie: (item.tray_item_brands && item.tray_item_brands.length > 0 
+        ? item.tray_item_brands[0].garantie 
+        : false) || notesData.garantie || false,
+      // Include toate brand-urile cu serial numbers pentru afișare (noua structură)
+      brand_groups: (item.tray_item_brands || []).map((b: any) => ({
+        id: b.id,
+        brand: b.brand,
+        garantie: b.garantie,
+        serialNumbers: (b.tray_item_brand_serials || []).map((s: any) => s.serial_number)
+      })),
+      department,
+      instrument_name: instrumentName,
     }
   })
 }
@@ -239,10 +305,46 @@ export function LeadDetailsPanel({
     return pipelineSlug.toLowerCase().includes('receptie') || pipelineSlug.toLowerCase().includes('reception')
   }, [pipelineSlug])
 
+  // Verifică dacă suntem într-un pipeline departament (Saloane, Frizerii, Horeca, Reparatii)
+  const isDepartmentPipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    const slug = pipelineSlug.toLowerCase()
+    return slug.includes('saloane') || 
+           slug.includes('frizerii') || 
+           slug.includes('horeca') || 
+           slug.includes('reparatii')
+  }, [pipelineSlug])
+
+  // Verifică dacă suntem în pipeline Saloane/Frizerii/Horeca (nu Reparatii)
+  const isSaloaneHorecaFrizeriiPipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    const slug = pipelineSlug.toLowerCase()
+    return slug.includes('saloane') || 
+           slug.includes('frizerii') || 
+           slug.includes('horeca')
+  }, [pipelineSlug])
+
   // Obține rolul utilizatorului curent
   const { role, loading: roleLoading } = useRole()
   const { user } = useAuth()
   const [isTechnician, setIsTechnician] = useState(false)
+  
+  // Ref pentru componenta Preturi - pentru a apela salvarea la Close
+  const preturiRef = useRef<PreturiRef>(null)
+  
+  // Handler pentru Close care salvează înainte de a închide
+  const handleCloseWithSave = useCallback(async () => {
+    try {
+      // Salvează în istoric înainte de a închide
+      if (preturiRef.current) {
+        await preturiRef.current.save()
+      }
+    } catch (error) {
+      console.error('Eroare la salvare automată:', error)
+    }
+    // Închide panoul
+    onClose()
+  }, [onClose])
   
   // Verifică dacă utilizatorul există în app_members
   useEffect(() => {
@@ -265,6 +367,9 @@ export function LeadDetailsPanel({
   // Verifică dacă utilizatorul este vânzător (nu tehnician)
   const isVanzator = !isTechnician && (role === 'admin' || role === 'owner' || role === 'member')
 
+  // Verifică dacă utilizatorul poate muta în pipeline (doar owner și admin)
+  const canMovePipeline = role === 'owner' || role === 'admin'
+
   const [section, setSection] = useState<"fisa" | "istoric">("fisa")
   const [stage, setStage] = useState(lead.stage)
   const [copiedField, setCopiedField] = useState<string | null>(null)
@@ -274,6 +379,11 @@ export function LeadDetailsPanel({
   const [serviceSheets, setServiceSheets] = useState<ServiceSheet[]>([])
   const [selectedFisaId, setSelectedFisaId] = useState<string | null>(null)
   const [loadingSheets, setLoadingSheets] = useState(false)
+  
+  // State pentru tăvițe în pipeline-urile departament
+  const [allTrays, setAllTrays] = useState<Array<{ id: string; number: string; size: string; service_file_id: string }>>([])
+  const [selectedTrayId, setSelectedTrayId] = useState<string | null>(null)
+  const [loadingTrays, setLoadingTrays] = useState(false)
   
   // State pentru modalul de detalii fișă
   const [detailsModalOpen, setDetailsModalOpen] = useState(false)
@@ -323,6 +433,8 @@ export function LeadDetailsPanel({
 
   const [selectedPipes, setSelectedPipes] = useState<string[]>([])
   const [movingPipes, setMovingPipes] = useState(false)
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState<string>('')
+  const [passingTray, setPassingTray] = useState(false)
 
   // State pentru checkbox-uri generale
   const [callBack, setCallBack] = useState(false)
@@ -339,7 +451,15 @@ export function LeadDetailsPanel({
 
   // State pentru collapsible sections
   const [isContactOpen, setIsContactOpen] = useState(true)
+  const [isTrayInfoOpen, setIsTrayInfoOpen] = useState(true)
   const [isMessengerOpen, setIsMessengerOpen] = useState(false)
+  
+  // State pentru informații tavita - per tăviță
+  const [selectedTrayForDetails, setSelectedTrayForDetails] = useState<string>('')
+  const [trayDetailsMap, setTrayDetailsMap] = useState<Map<string, string>>(new Map())
+  const [trayDetails, setTrayDetails] = useState<string>('')
+  const [savingTrayDetails, setSavingTrayDetails] = useState(false)
+  const [loadingTrayDetails, setLoadingTrayDetails] = useState(false)
 
   const allPipeNames = pipelines ?? []
 
@@ -376,6 +496,36 @@ export function LeadDetailsPanel({
     }
     return null
   }, [lead])
+  
+  // Încarcă detaliile generale pentru tăvițele unui lead (folosit în Vânzări/Recepție/Curier)
+  useEffect(() => {
+    const loadLeadTrayDetails = async () => {
+      const leadId = getLeadId()
+      if (!leadId) return
+
+      try {
+        const { data, error } = await supabase
+          .from('leads')
+          .select('tray_details')
+          .eq('id', leadId)
+          .single()
+
+        if (!error && data) {
+          setTrayDetails((data as any).tray_details || '')
+        } else {
+          setTrayDetails('')
+        }
+      } catch (err) {
+        console.error('Error loading lead tray details:', err)
+        setTrayDetails('')
+      }
+    }
+
+    // În Vânzări / Recepție / Curier, folosim acest câmp ca „default” pentru noi detalii de tăviță
+    if (!isDepartmentPipeline) {
+      loadLeadTrayDetails()
+    }
+  }, [lead.id, getLeadId, supabase, isDepartmentPipeline])
 
   const togglePipe = (name: string) =>
     setSelectedPipes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name])
@@ -488,6 +638,115 @@ export function LeadDetailsPanel({
     
     loadData()
   }, [getLeadId, getServiceFileId, getTrayId, (lead as any)?.isQuote, (lead as any)?.quoteId, (lead as any)?.type, loadServiceSheets, selectedFisaId])
+
+  // Încarcă toate tăvițele pentru lead în pipeline-urile departament
+  useEffect(() => {
+    if (!isDepartmentPipeline) return
+    
+    const leadIdToUse = getLeadId()
+    if (!leadIdToUse) return
+    
+    const loadTrays = async () => {
+      setLoadingTrays(true)
+      try {
+        // Încarcă toate service_files pentru lead
+        const sheets = await loadServiceSheets(leadIdToUse)
+        
+        // Încarcă toate tăvițele din toate service_files
+        const allTraysList: Array<{ id: string; number: string; size: string; service_file_id: string }> = []
+        for (const sheet of sheets) {
+          const trays = await listTraysForServiceSheet(sheet.id)
+          allTraysList.push(...trays.map((t: any) => ({
+            id: t.id,
+            number: t.number,
+            size: t.size,
+            service_file_id: sheet.id
+          })))
+        }
+        
+        setAllTrays(allTraysList)
+        
+        // Dacă este un tray (vine din pipeline departament), selectează-l direct
+        const trayId = getTrayId()
+        if (trayId) {
+          const foundTray = allTraysList.find(t => t.id === trayId)
+          if (foundTray) {
+            setSelectedTrayId(trayId)
+            // Setează și service_file_id pentru Preturi
+            setSelectedFisaId(foundTray.service_file_id)
+          } else if (allTraysList.length > 0) {
+            // Selectează prima tăviță
+            setSelectedTrayId(allTraysList[0].id)
+            setSelectedFisaId(allTraysList[0].service_file_id)
+          }
+        } else if (allTraysList.length > 0 && !selectedTrayId) {
+          // Selectează prima tăviță dacă nu avem deja una selectată
+          setSelectedTrayId(allTraysList[0].id)
+          setSelectedFisaId(allTraysList[0].service_file_id)
+        }
+      } catch (error) {
+        console.error('Error loading trays:', error)
+        toast.error('Eroare la încărcarea tăvițelor')
+      } finally {
+        setLoadingTrays(false)
+      }
+    }
+    
+    loadTrays()
+  }, [isDepartmentPipeline, getLeadId, getTrayId, loadServiceSheets, selectedTrayId])
+
+  // Încarcă detaliile pentru toate tăvițele
+  useEffect(() => {
+    const loadTrayDetailsData = async () => {
+      if (allTrays.length === 0) return
+      
+      setLoadingTrayDetails(true)
+      try {
+        const supabaseClient = supabaseBrowser()
+        const trayIds = allTrays.map(t => t.id)
+        
+        // Citim detaliile din tray_items.details (nu din trays)
+        const { data: trayItemsData, error } = await supabaseClient
+          .from('tray_items')
+          .select('tray_id, details')
+          .in('tray_id', trayIds)
+        
+        if (error) {
+          console.error('Error loading tray details:', error)
+          return
+        }
+        
+        const newDetailsMap = new Map<string, string>()
+        trayItemsData?.forEach((ti: any) => {
+          if (ti.details && !newDetailsMap.has(ti.tray_id)) {
+            newDetailsMap.set(ti.tray_id, ti.details)
+          }
+        })
+        setTrayDetailsMap(newDetailsMap)
+        
+        // Dacă suntem tehnician și avem o tăviță selectată, încarcă detaliile ei
+        // Pentru vânzător, selectează prima tăviță dacă nu e selectată
+        if (!selectedTrayForDetails && allTrays.length > 0) {
+          // Dacă suntem pe un card de tăviță specific, selectează acea tăviță
+          const trayId = getTrayId()
+          if (trayId) {
+            setSelectedTrayForDetails(trayId)
+            setTrayDetails(newDetailsMap.get(trayId) || '')
+          } else if (isVanzator) {
+            // Pentru vânzător, selectează prima tăviță
+            setSelectedTrayForDetails(allTrays[0].id)
+            setTrayDetails(newDetailsMap.get(allTrays[0].id) || '')
+          }
+        }
+      } catch (err) {
+        console.error('Error loading tray details:', err)
+      } finally {
+        setLoadingTrayDetails(false)
+      }
+    }
+    
+    loadTrayDetailsData()
+  }, [allTrays, getTrayId, isVanzator])
 
   // Încarcă tehnicienii
   useEffect(() => {
@@ -649,6 +908,261 @@ export function LeadDetailsPanel({
     window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${email}&su=${subject}&body=${body}`, '_blank')
   }, [])
 
+  // Handler pentru butonul "Finalizare" (mută în stage-ul Finalizare)
+  const handleFinalizare = useCallback(async () => {
+    const leadAny = lead as any
+    
+    // Caută stage-ul "FINALIZARE" exact (case insensitive)
+    const finalizareStage = stages.find(s => 
+      s.toUpperCase() === 'FINALIZATA'
+    )
+    
+    if (!finalizareStage) {
+      toast.error('Stage-ul FINALIZATA nu există în acest pipeline')
+      return
+    }
+
+    // Pentru tray-uri din pipeline departament, folosim moveItemToStage
+    if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
+      try {
+        // Obține stage_id din baza de date
+        const { data: stageData, error: stageError } = await supabase
+          .from('stages')
+          .select('id')
+          .eq('pipeline_id', leadAny.pipelineId)
+          .eq('name', finalizareStage)
+          .single()
+        
+        if (stageError || !stageData) {
+          console.error('Error finding stage:', stageError, 'Looking for:', finalizareStage)
+          toast.error('Nu s-a putut găsi stage-ul în baza de date')
+          return
+        }
+
+        const { error } = await moveItemToStage(
+          'tray',
+          leadAny.id,
+          leadAny.pipelineId,
+          (stageData as any).id,
+          leadAny.stageId
+        )
+        
+        if (error) {
+          toast.error('Eroare la mutarea cardului')
+          console.error('Error moving to Finalizare:', error)
+          return
+        }
+        
+        toast.success('Card mutat în FINALIZATA')
+        // Actualizează UI-ul local
+        setStage(finalizareStage)
+      } catch (error) {
+        console.error('Error moving to Finalizare:', error)
+        toast.error('Eroare la mutarea cardului')
+      }
+    } else {
+      // Pentru lead-uri normale, folosim handleStageChange
+      handleStageChange(finalizareStage)
+      toast.success('Card mutat în Finalizare')
+    }
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, supabase])
+
+  // Handler pentru butonul "Aștept piese" (pentru Reparații)
+  const handleAsteptPiese = useCallback(async () => {
+    const leadAny = lead as any
+    
+    // Caută stage-ul "ASTEPT PIESE" exact (case insensitive)
+    const asteptPieseStage = stages.find(s => 
+      s.toUpperCase() === 'ASTEPT PIESE'
+    )
+    
+    if (!asteptPieseStage) {
+      toast.error('Stage-ul ASTEPT PIESE nu există în acest pipeline')
+      return
+    }
+
+    // Pentru tray-uri din pipeline departament, folosim moveItemToStage
+    if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
+      try {
+        // Obține stage_id din baza de date
+        const { data: stageData, error: stageError } = await supabase
+          .from('stages')
+          .select('id')
+          .eq('pipeline_id', leadAny.pipelineId)
+          .eq('name', asteptPieseStage)
+          .single()
+        
+        if (stageError || !stageData) {
+          console.error('Error finding stage:', stageError, 'Looking for:', asteptPieseStage)
+          toast.error('Nu s-a putut găsi stage-ul în baza de date')
+          return
+        }
+
+        const { error } = await moveItemToStage(
+          'tray',
+          leadAny.id,
+          leadAny.pipelineId,
+          (stageData as any).id,
+          leadAny.stageId
+        )
+        
+        if (error) {
+          toast.error('Eroare la mutarea cardului')
+          console.error('Error moving to Astept piese:', error)
+          return
+        }
+        
+        toast.success('Card mutat în ASTEPT PIESE')
+        // Actualizează UI-ul local
+        setStage(asteptPieseStage)
+      } catch (error) {
+        console.error('Error moving to Astept piese:', error)
+        toast.error('Eroare la mutarea cardului')
+      }
+    } else {
+      // Pentru lead-uri normale, folosim handleStageChange
+      handleStageChange(asteptPieseStage)
+      toast.success('Card mutat în Aștept piese')
+    }
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, supabase])
+
+  // Handler pentru butonul "În așteptare" (pentru Saloane/Horeca/Frizerii)
+  const handleInAsteptare = useCallback(async () => {
+    const leadAny = lead as any
+    
+    // Caută stage-ul "IN ASTEPTARE" exact (case insensitive)
+    const inAsteptareStage = stages.find(s => 
+      s.toUpperCase() === 'IN ASTEPTARE'
+    )
+    
+    if (!inAsteptareStage) {
+      toast.error('Stage-ul IN ASTEPTARE nu există în acest pipeline')
+      return
+    }
+
+    // Pentru tray-uri din pipeline departament, folosim moveItemToStage
+    if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
+      try {
+        // Obține stage_id din baza de date
+        const { data: stageData, error: stageError } = await supabase
+          .from('stages')
+          .select('id')
+          .eq('pipeline_id', leadAny.pipelineId)
+          .eq('name', inAsteptareStage)
+          .single()
+        
+        if (stageError || !stageData) {
+          console.error('Error finding stage:', stageError, 'Looking for:', inAsteptareStage)
+          toast.error('Nu s-a putut găsi stage-ul în baza de date')
+          return
+        }
+
+        const { error } = await moveItemToStage(
+          'tray',
+          leadAny.id,
+          leadAny.pipelineId,
+          (stageData as any).id,
+          leadAny.stageId
+        )
+        
+        if (error) {
+          toast.error('Eroare la mutarea cardului')
+          console.error('Error moving to In asteptare:', error)
+          return
+        }
+        
+        toast.success('Card mutat în IN ASTEPTARE')
+        // Actualizează UI-ul local
+        setStage(inAsteptareStage)
+      } catch (error) {
+        console.error('Error moving to In asteptare:', error)
+        toast.error('Eroare la mutarea cardului')
+      }
+    } else {
+      // Pentru lead-uri normale, folosim handleStageChange
+      handleStageChange(inAsteptareStage)
+      toast.success('Card mutat în În așteptare')
+    }
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, supabase])
+
+  // Handler pentru butonul "În lucru" (atribuie tăvița utilizatorului curent)
+  const handleInLucru = useCallback(async () => {
+    const leadAny = lead as any
+    
+    // Caută stage-ul "IN LUCRU" exact (case insensitive)
+    const inLucruStage = stages.find(s => 
+      s.toUpperCase() === 'IN LUCRU'
+    )
+    
+    if (!inLucruStage) {
+      toast.error('Stage-ul IN LUCRU nu există în acest pipeline')
+      return
+    }
+
+    // Pentru tray-uri din pipeline departament, folosim moveItemToStage
+    if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
+      try {
+        // Obține user_id curent
+        if (!user?.id) {
+          toast.error('Utilizatorul nu este autentificat')
+          return
+        }
+
+        // Obține stage_id din baza de date
+        const { data: stageData, error: stageError } = await supabase
+          .from('stages')
+          .select('id')
+          .eq('pipeline_id', leadAny.pipelineId)
+          .eq('name', inLucruStage)
+          .single()
+        
+        if (stageError || !stageData) {
+          console.error('Error finding stage:', stageError, 'Looking for:', inLucruStage)
+          toast.error('Nu s-a putut găsi stage-ul în baza de date')
+          return
+        }
+
+        // Mută cardul în stage-ul "IN LUCRU"
+        const { error: moveError } = await moveItemToStage(
+          'tray',
+          leadAny.id,
+          leadAny.pipelineId,
+          (stageData as any).id,
+          leadAny.stageId
+        )
+        
+        if (moveError) {
+          toast.error('Eroare la mutarea cardului')
+          console.error('Error moving to In lucru:', moveError)
+          return
+        }
+
+        // Atribuie toate tray_items din tăviță utilizatorului curent
+        const { error: updateError } = await supabase
+          .from('tray_items')
+          .update({ technician_id: user.id } as any)
+          .eq('tray_id', leadAny.id)
+        
+        if (updateError) {
+          console.error('Error assigning tray to user:', updateError)
+          toast.error('Eroare la atribuirea tăviței')
+          return
+        }
+        
+        toast.success('Tăvița a fost atribuită și mutată în IN LUCRU')
+        // Actualizează UI-ul local
+        setStage(inLucruStage)
+      } catch (error) {
+        console.error('Error moving to In lucru:', error)
+        toast.error('Eroare la mutarea cardului')
+      }
+    } else {
+      // Pentru lead-uri normale, folosim handleStageChange
+      handleStageChange(inLucruStage)
+      toast.success('Card mutat în IN LUCRU')
+    }
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, supabase, user])
+
   // Funcție pentru crearea unei fișe noi
   const handleCreateServiceSheet = useCallback(async () => {
     if (!lead?.id) {
@@ -704,9 +1218,12 @@ export function LeadDetailsPanel({
     try {
       // Încarcă serviciile, instrumentele și pipeline-urile pentru a obține prețurile și departamentele
       const supabaseClient = supabaseBrowser()
-      const [services, instrumentsResult, pipelinesResult] = await Promise.all([
-        listServices(),
-        supabaseClient.from('instruments').select('id,pipeline').then(({ data, error }) => {
+      const [servicesResult, instrumentsResult, pipelinesResult] = await Promise.all([
+        listServices().then(s => {
+          console.log('[loadTraysDetails] Loaded services:', s.length, 'first 5:', s.slice(0, 5).map(x => ({ id: x.id, name: x.name })))
+          return s
+        }),
+        supabaseClient.from('instruments').select('id,name,pipeline').then(({ data, error }) => {
           if (error) {
             console.error('Error loading instruments:', error)
             return []
@@ -728,14 +1245,20 @@ export function LeadDetailsPanel({
       // Creează un map pentru instrumente (id -> pipeline_id)
       const instrumentPipelineMap = new Map(instrumentsResult.map((i: any) => [i.id, i.pipeline]))
       
+      // Creează un map pentru instrumente (id -> { id, name })
+      const instrumentsMap = new Map(instrumentsResult.map((i: any) => [i.id, { id: i.id, name: i.name }]))
+      
       // Încarcă toate tăvițele din fișă
       const trays = await listTraysForServiceSheet(fisaId)
+      
+      const services = servicesResult
+      console.log('[loadTraysDetails] Using services array with', services.length, 'items')
       
       // Pentru fiecare tăviță, încarcă items-urile și calculează totalurile
       // Folosim exact aceeași logică ca în preturi.tsx
       const details = await Promise.all(
         trays.map(async (tray) => {
-          const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap)
+          const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap, instrumentsMap)
           
           // Exclude items-urile cu item_type: null (doar instrument, fără serviciu) din calculele de totaluri
           const visibleItems = items.filter(it => it.item_type !== null)
@@ -748,10 +1271,12 @@ export function LeadDetailsPanel({
             0
           )
           
-          const urgentAmount = visibleItems.reduce((acc, it) => {
+          // Urgent se preia de pe tăviță, nu de pe fiecare item
+          const isUrgent = tray.urgent || false
+          const urgentAmount = isUrgent ? visibleItems.reduce((acc, it) => {
             const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
-            return acc + (it.urgent ? afterDisc * (30 / 100) : 0) // 30% markup pentru urgent (URGENT_MARKUP_PCT)
-          }, 0)
+            return acc + afterDisc * (30 / 100) // 30% markup pentru urgent
+          }, 0) : 0
           
           // Calculează reducerile pentru abonament (10% servicii, 5% piese) - exact ca în preturi.tsx PrintViewData
           const subscriptionType = tray.subscription_type || null
@@ -763,7 +1288,7 @@ export function LeadDetailsPanel({
               const base = it.qty * it.price
               const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
               const afterDisc = base - disc
-              const urgent = it.urgent ? afterDisc * (30 / 100) : 0
+              const urgent = isUrgent ? afterDisc * (30 / 100) : 0
               return acc + afterDisc + urgent
             }, 0)
           
@@ -831,7 +1356,7 @@ export function LeadDetailsPanel({
       const supabaseClient = supabaseBrowser()
       const [services, instrumentsResult, pipelinesResult] = await Promise.all([
         listServices(),
-        supabaseClient.from('instruments').select('id,pipeline').then(({ data, error }) => {
+        supabaseClient.from('instruments').select('id,name,pipeline').then(({ data, error }) => {
           if (error) {
             console.error('Error loading instruments:', error)
             return []
@@ -853,12 +1378,15 @@ export function LeadDetailsPanel({
       // Creează un map pentru instrumente (id -> pipeline_id)
       const instrumentPipelineMap = new Map(instrumentsResult.map((i: any) => [i.id, i.pipeline]))
       
+      // Creează un map pentru instrumente (id -> { id, name })
+      const instrumentsMap = new Map(instrumentsResult.map((i: any) => [i.id, { id: i.id, name: i.name }]))
+      
       const trays = await listTraysForServiceSheet(fisaId)
       
       let totalSum = 0
       
       for (const tray of trays) {
-        const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap)
+        const items = await listQuoteItems(tray.id, services, instrumentPipelineMap, pipelineMap, instrumentsMap)
         
         // Exclude items-urile cu item_type: null (doar instrument, fără serviciu) din calculele de totaluri
         const visibleItems = items.filter(it => it.item_type !== null)
@@ -871,10 +1399,12 @@ export function LeadDetailsPanel({
           0
         )
         
-        const urgentAmount = visibleItems.reduce((acc, it) => {
+        // Urgent se preia de pe tăviță
+        const isUrgent = tray.urgent || false
+        const urgentAmount = isUrgent ? visibleItems.reduce((acc, it) => {
           const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
-          return acc + (it.urgent ? afterDisc * (30 / 100) : 0)
-        }, 0)
+          return acc + afterDisc * (30 / 100)
+        }, 0) : 0
         
         const subscriptionType = tray.subscription_type || null
         
@@ -884,7 +1414,7 @@ export function LeadDetailsPanel({
             const base = it.qty * it.price
             const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
             const afterDisc = base - disc
-            const urgent = it.urgent ? afterDisc * (30 / 100) : 0
+            const urgent = isUrgent ? afterDisc * (30 / 100) : 0
             return acc + afterDisc + urgent
           }, 0)
         
@@ -952,27 +1482,28 @@ export function LeadDetailsPanel({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose()
+        handleCloseWithSave()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [handleCloseWithSave])
   
   return (
     <section ref={panelRef} className="h-full flex flex-col bg-card">
-      <header className="border-b p-4">
-        <div className="flex items-start justify-between gap-4">
+      <header className="border-b p-2 sm:p-3 lg:p-4">
+        <div className="flex items-start justify-between gap-2 sm:gap-3 lg:gap-4">
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold truncate">{lead.name}</h2>
+            <h2 className="text-base sm:text-lg font-semibold truncate">{lead.name}</h2>
 
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-1.5 sm:mt-2 flex items-center gap-1.5 sm:gap-2">
               {/* Add tags button + multi-select */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-7 px-2">
-                    Add tags
-                    <ChevronsUpDown className="ml-1 h-4 w-4 opacity-60" />
+                  <Button variant="outline" size="sm" className="h-7 px-2 text-xs sm:text-sm">
+                    <span className="hidden sm:inline">Add tags</span>
+                    <span className="sm:hidden">Tags</span>
+                    <ChevronsUpDown className="ml-1 h-3.5 w-3.5 sm:h-4 sm:w-4 opacity-60" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-[260px]">
@@ -1038,46 +1569,53 @@ export function LeadDetailsPanel({
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 items-end">
-            <div className="flex items-center gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => {
-                  window.print()
-                }}
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                Print
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => {
-                  if (lead.email) {
-                    handleEmailClick(lead.email)
-                  } else {
-                    toast.error('Email indisponibil', {
-                      description: 'Lead-ul nu are adresă de email'
-                    })
-                  }
-                }}
-                disabled={!lead.email}
-                title={lead.email ? `Trimite email la ${lead.email}` : 'Email indisponibil'}
-              >
-                <Mail className="h-4 w-4 mr-2" />
-                Email
-              </Button>
-              <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+          <div className="flex flex-col gap-2 sm:gap-3 items-end">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* Butoane Print și Email - ascunse pentru tehnicieni în pipeline departament */}
+              {!isDepartmentPipeline && (
+                <>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => {
+                      window.print()
+                    }}
+                    className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                  >
+                    <Printer className="h-3.5 w-3.5 sm:h-4 sm:w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Print</span>
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => {
+                      if (lead.email) {
+                        handleEmailClick(lead.email)
+                      } else {
+                        toast.error('Email indisponibil', {
+                          description: 'Lead-ul nu are adresă de email'
+                        })
+                      }
+                    }}
+                    disabled={!lead.email}
+                    title={lead.email ? `Trimite email la ${lead.email}` : 'Email indisponibil'}
+                    className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                  >
+                    <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Email</span>
+                  </Button>
+                </>
+              )}
+              <Button variant="outline" size="sm" onClick={handleCloseWithSave} className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3">Close</Button>
             </div>
 
             {/* checkbox-uri cu butoane - vizibile doar in Receptie, Vanzari, Curier */}
             {showActionCheckboxes && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
                 {/* Checkbox-uri pentru Curier */}
                 {isCurierPipeline ? (
                   <>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
                       <Checkbox
                         id="curier-trimis"
                         checked={curierTrimis}
@@ -1087,6 +1625,7 @@ export function LeadDetailsPanel({
                         variant="outline"
                         size="sm"
                         onClick={() => setCurierTrimis(!curierTrimis)}
+                        className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
                       >
                         Curier trimis
                       </Button>
@@ -1170,55 +1709,60 @@ export function LeadDetailsPanel({
                 ) : (
                   <>
                     {/* Checkbox-uri pentru Receptie si Vanzari (fara Call back in Curier) */}
-                    {!isCurierPipeline && (
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      {!isCurierPipeline && (
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <Checkbox
+                            id="call-back"
+                            checked={callBack}
+                            onCheckedChange={(c: any) => setCallBack(!!c)}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCallBack(!callBack)}
+                            className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                          >
+                            Call back
+                          </Button>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center gap-1.5 sm:gap-2">
                         <Checkbox
-                          id="call-back"
-                          checked={callBack}
-                          onCheckedChange={(c: any) => setCallBack(!!c)}
+                          id="nu-raspunde"
+                          checked={nuRaspunde}
+                          onCheckedChange={(c: any) => handleNuRaspundeChange(!!c)}
                         />
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setCallBack(!callBack)}
+                          onClick={() => handleNuRaspundeChange(!nuRaspunde)}
+                          className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
                         >
-                          Call back
+                          Nu raspunde
                         </Button>
                       </div>
-                    )}
-                    
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="nu-raspunde"
-                        checked={nuRaspunde}
-                        onCheckedChange={(c: any) => handleNuRaspundeChange(!!c)}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleNuRaspundeChange(!nuRaspunde)}
-                      >
-                        Nu raspunde
-                      </Button>
+                      
+                      {/* "No deal" - doar pentru vânzători în pipeline-ul Vânzări */}
+                      {isVanzator && isVanzariPipeline && (
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <Checkbox
+                            id="no-deal"
+                            checked={noDeal}
+                            onCheckedChange={(c: any) => setNoDeal(!!c)}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setNoDeal(!noDeal)}
+                            className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                          >
+                            No deal
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    
-                    {/* "No deal" - doar pentru vânzători în pipeline-ul Vânzări */}
-                    {isVanzator && isVanzariPipeline && (
-                      <div className="flex items-center gap-2">
-                        <Checkbox
-                          id="no-deal"
-                          checked={noDeal}
-                          onCheckedChange={(c: any) => setNoDeal(!!c)}
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setNoDeal(!noDeal)}
-                        >
-                          No deal
-                        </Button>
-                      </div>
-                    )}
                   </>
                 )}
               </div>
@@ -1228,21 +1772,21 @@ export function LeadDetailsPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto">
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] gap-3 lg:gap-4 items-start p-2 sm:p-3 lg:p-4">
         {/* LEFT column — identity & meta */}
-        <div className="space-y-3">
+        <div className="space-y-2 sm:space-y-3">
           {/* Contact Info - Collapsible */}
           <Collapsible open={isContactOpen} onOpenChange={setIsContactOpen}>
             <div className="rounded-lg border bg-muted/30">
-              <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+              <CollapsibleTrigger className="flex items-center justify-between w-full p-2 sm:p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
                 <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-primary" />
-                  <span className="font-medium text-sm">Informații Contact</span>
+                  <User className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary" />
+                  <span className="font-medium text-xs sm:text-sm">Informații Contact</span>
                 </div>
-                {isContactOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {isContactOpen ? <ChevronDown className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
               </CollapsibleTrigger>
               
-              <CollapsibleContent className="px-3 pb-3 space-y-3">
+              <CollapsibleContent className="px-2 sm:px-3 pb-2 sm:pb-3 space-y-2 sm:space-y-3">
           <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase">Nume</label>
                   <p className="text-sm font-medium">{lead.name}</p>
@@ -1376,6 +1920,226 @@ export function LeadDetailsPanel({
             </div>
           </Collapsible>
 
+          {/* Informații Tavita - Collapsible */}
+          {/* Vizibil pentru:
+              - Pipeline-urile tehnice (departamente)
+              - Tehnicieni, dar doar pe card de tăviță
+              
+             NOTĂ:
+             Pentru Vânzări / Recepție / Curier, detaliile de tăviță sunt mutate în componenta `Preturi`
+             (în fișa de serviciu), pentru a fi introduse direct pe fiecare tăviță. */}
+          {(isDepartmentPipeline || (isTechnician && getTrayId())) && (
+          <Collapsible open={isTrayInfoOpen} onOpenChange={setIsTrayInfoOpen}>
+            <div className="rounded-lg border bg-muted/30">
+              <CollapsibleTrigger className="flex items-center justify-between w-full p-2 sm:p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-primary" />
+                  <span className="font-medium text-xs sm:text-sm">Informații Tavita</span>
+                </div>
+                {isTrayInfoOpen ? <ChevronDown className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent className="px-2 sm:px-3 pb-2 sm:pb-3 space-y-2 sm:space-y-3">
+                {/* VARIANTA 1: Pipeline-uri departament (Saloane, Frizerii, Horeca, Reparatii) - detalii per tăviță */}
+                {isDepartmentPipeline ? (
+                  <>
+                {/* Pentru tehnician, afișează doar tăvița curentă */}
+                {isTechnician && getTrayId() && (
+                  <div className="text-sm text-muted-foreground mb-2">
+                    <span className="font-medium">Tăviță curentă: </span>
+                    {allTrays.find(t => t.id === getTrayId())?.number || 'N/A'}
+                  </div>
+                )}
+
+                {/* Afișează detaliile doar dacă e selectată o tăviță */}
+                {(selectedTrayForDetails || (isTechnician && getTrayId())) && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
+                      Detalii comandă comunicate de client
+                    </label>
+                    {loadingTrayDetails ? (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <>
+                        <Textarea
+                          value={isTechnician && getTrayId() 
+                            ? (trayDetailsMap.get(getTrayId()!) || '') 
+                            : trayDetails}
+                          onChange={(e) => {
+                            if (!isTechnician) {
+                              setTrayDetails(e.target.value)
+                            }
+                          }}
+                          placeholder={isTechnician 
+                            ? "Detaliile comenzii pentru această tăviță..." 
+                            : "Introduceți detaliile comenzii comunicate de client..."
+                          }
+                          className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
+                          readOnly={isTechnician}
+                        />
+                        {/* Buton salvare doar pentru vânzători */}
+                        {isVanzator && selectedTrayForDetails && (
+                          <div className="flex justify-end mt-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                setSavingTrayDetails(true)
+                                try {
+                                  if (!selectedTrayForDetails) {
+                                    toast.error('Selectează o tăviță')
+                                    return
+                                  }
+                                  
+                                  // Salvăm detaliile în tray_items.details pentru tăvița selectată
+                                  const { data, error } = await supabase
+                                    .from('tray_items')
+                                    .update({ details: trayDetails } as any)
+                                    .eq('tray_id', selectedTrayForDetails)
+                                    .select('tray_id, details')
+                                    .limit(1)
+                                    .single()
+                                  
+                                  if (error) {
+                                    console.error('Error saving tray details:', error)
+                                    toast.error('Eroare la salvarea detaliilor: ' + error.message)
+                                  } else {
+                                    // Actualizează map-ul local
+                                    const newMap = new Map(trayDetailsMap)
+                                    newMap.set(selectedTrayForDetails, trayDetails)
+                                    setTrayDetailsMap(newMap)
+                                    toast.success('Detaliile tăviței au fost salvate')
+                                  }
+                                } catch (err: any) {
+                                  console.error('Error:', err)
+                                  toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
+                                } finally {
+                                  setSavingTrayDetails(false)
+                                }
+                              }}
+                              disabled={savingTrayDetails}
+                            >
+                              {savingTrayDetails ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                                  Salvare...
+                                </>
+                              ) : (
+                                'Salvează'
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+                
+                {/* Mesaj dacă nu sunt tăvițe */}
+                {isVanzator && allTrays.length === 0 && (
+                  <div className="text-sm text-muted-foreground text-center py-4">
+                    Nu există tăvițe pentru acest lead. Creează mai întâi o fișă de serviciu cu tăvițe.
+                  </div>
+                )}
+                  </>
+                ) : (
+                  <>
+                    {/* VARIANTA 2: Alte pipeline-uri (Vânzări, Recepție, Curier, etc.) - detalii la nivel de lead */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
+                        Detalii comandă comunicate de client
+                      </label>
+                      <Textarea
+                        value={trayDetails}
+                        onChange={(e) => setTrayDetails(e.target.value)}
+                        placeholder="Introduceți detaliile comenzii comunicate de client..."
+                        className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
+                      />
+                      <div className="flex justify-end mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            setSavingTrayDetails(true)
+                            try {
+                              const leadId = getLeadId()
+                              if (!leadId) {
+                                toast.error('ID lead invalid')
+                                return
+                              }
+                              
+                              // 1) Salvează detaliile la nivel de lead (pentru Vânzări / Recepție / Curier)
+                              const { data, error } = await supabase
+                                .from('leads')
+                                .update({ tray_details: trayDetails } as any)
+                                .eq('id', leadId)
+                                .select('tray_details')
+                                .single()
+                              
+                              if (error) {
+                                console.error('Error saving tray details:', error)
+                                toast.error('Eroare la salvarea detaliilor: ' + error.message)
+                              } else {
+                                const savedData = data as any
+                                if (savedData?.tray_details !== undefined) {
+                                  setTrayDetails(savedData.tray_details || '')
+                                }
+                                ;(lead as any).tray_details = trayDetails
+
+                                // 2) Propagă aceleași detalii către toate tăvițele (tray_items) din fișele acestui lead,
+                                //    astfel încât tehnicienii din departamente să le vadă pe tăvițe
+                                try {
+                                  const serviceSheets = await listServiceSheetsForLead(leadId)
+                                  const allTrayIds: string[] = []
+
+                                  for (const sheet of serviceSheets) {
+                                    const trays = await listTraysForServiceSheet(sheet.id)
+                                    trays.forEach((t: any) => {
+                                      if (t.id) allTrayIds.push(t.id)
+                                    })
+                                  }
+
+                                  if (allTrayIds.length > 0) {
+                                    await supabase
+                                      .from('tray_items')
+                                      .update({ details: trayDetails } as any)
+                                      .in('tray_id', allTrayIds)
+                                  }
+                                } catch (propagateError) {
+                                  console.error('Error propagating tray details to trays:', propagateError)
+                                }
+
+                                toast.success('Detaliile tăviței au fost salvate')
+                              }
+                            } catch (err: any) {
+                              console.error('Error:', err)
+                              toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
+                            } finally {
+                              setSavingTrayDetails(false)
+                            }
+                          }}
+                          disabled={savingTrayDetails}
+                        >
+                          {savingTrayDetails ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                              Salvare...
+                            </>
+                          ) : (
+                            'Salvează'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
+          )}
+
           {/* Acțiuni - Stage & Pipeline */}
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
               <div>
@@ -1390,6 +2154,8 @@ export function LeadDetailsPanel({
             </Select>
           </div>
 
+            {/* Mută în Pipeline - doar pentru owner și admin */}
+            {canMovePipeline && (
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
                 Mută în Pipeline
@@ -1458,6 +2224,126 @@ export function LeadDetailsPanel({
               </Button>
               </div>
             </div>
+            )}
+
+            {/* Pasare tăviță - pentru tăvițe din pipeline departament */}
+            {((lead as any)?.type === 'tray' || isDepartmentPipeline) && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
+                  Pasare Tăviță
+                </label>
+                <div className="flex items-center gap-2">
+                  <Select 
+                    value={selectedTechnicianId} 
+                    onValueChange={setSelectedTechnicianId}
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Alege tehnician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          {tech.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs"
+                    disabled={passingTray || !selectedTechnicianId}
+                    onClick={async () => {
+                      const leadAny = lead as any
+                      const trayId = getTrayId()
+                      
+                      if (!trayId) {
+                        toast.error('Tăvița nu a fost găsită')
+                        return
+                      }
+
+                      if (!selectedTechnicianId) {
+                        toast.error('Selectează un tehnician')
+                        return
+                      }
+
+                      setPassingTray(true)
+                      try {
+                        // Obține tehnicianul vechi (dacă există)
+                        const { data: prevTechRow, error: prevError } = await supabase
+                          .from('tray_items')
+                          .select('technician_id')
+                          .eq('tray_id', trayId)
+                          .not('technician_id', 'is', null)
+                          .limit(1)
+                          .single()
+
+                        if (prevError && prevError.code !== 'PGRST116') {
+                          console.error('Error loading previous technician for tray:', prevError)
+                        }
+
+                        const previousTechnicianId = (prevTechRow as any)?.technician_id || null
+
+                        // Actualizează technician_id pentru toate tray_items din tăviță
+                        const { error: updateError } = await supabase
+                          .from('tray_items')
+                          .update({ technician_id: selectedTechnicianId } as any)
+                          .eq('tray_id', trayId)
+                        
+                        if (updateError) {
+                          console.error('Error passing tray to technician:', updateError)
+                          toast.error('Eroare la pasarea tăviței')
+                          return
+                        }
+
+                        // Găsește numele tehnicienilor pentru mesaj
+                        const newTech = technicians.find(t => t.id === selectedTechnicianId)
+                        const newTechName = newTech?.name || 'tehnician necunoscut'
+                        const prevTech = previousTechnicianId
+                          ? technicians.find(t => t.id === previousTechnicianId)
+                          : undefined
+                        const prevTechName = previousTechnicianId
+                          ? (prevTech?.name || 'tehnician necunoscut')
+                          : 'Fără atribuire'
+
+                        // Loghează evenimentul în istoricul tăviței și al lead-ului
+                        try {
+                          await logItemEvent(
+                            'tray',
+                            trayId,
+                            `Tăvița a fost pasată de la "${prevTechName}" la "${newTechName}"`,
+                            'tray_passed',
+                            {
+                              from_technician_id: previousTechnicianId,
+                              to_technician_id: selectedTechnicianId,
+                              tray_id: trayId,
+                              lead_id: getLeadId(),
+                            }
+                          )
+                        } catch (logError) {
+                          console.error('Error logging tray pass event:', logError)
+                        }
+
+                        toast.success('Tăvița a fost atribuită cu succes')
+                        setSelectedTechnicianId('')
+                        
+                        // Reîncarcă datele pentru a reflecta modificările (dacă este deschis modalul de detalii)
+                        if (selectedFisaId && detailsModalOpen) {
+                          loadTraysDetails(selectedFisaId)
+                        }
+                      } catch (error) {
+                        console.error('Error passing tray:', error)
+                        toast.error('Eroare la pasarea tăviței')
+                      } finally {
+                        setPassingTray(false)
+                      }
+                    }}
+                  >
+                    {passingTray ? "Se atribuie…" : "Pasare"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Mesagerie - Collapsible */}
@@ -1495,72 +2381,194 @@ export function LeadDetailsPanel({
               </TabsList>
 
               <TabsContent value="fisa" className="mt-0">
-                {/* Selector de fișe de serviciu */}
+                {/* Butoane de acțiune pentru pipeline departament */}
+                {isDepartmentPipeline && (
+                  <div className="mb-4 flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                    <span className="text-sm font-medium text-muted-foreground">Acțiuni rapide:</span>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleInLucru}
+                      className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700"
+                    >
+                      <Wrench className="h-4 w-4" />
+                      În lucru
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleFinalizare}
+                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      Finalizare
+                    </Button>
+                    {isReparatiiPipeline && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAsteptPiese}
+                        className="flex items-center gap-2 border-amber-500 text-amber-600 hover:bg-amber-50"
+                      >
+                        <Clock className="h-4 w-4" />
+                        Aștept piese
+                      </Button>
+                    )}
+                    {isSaloaneHorecaFrizeriiPipeline && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleInAsteptare}
+                        className="flex items-center gap-2 border-blue-500 text-blue-600 hover:bg-blue-50"
+                      >
+                        <Clock className="h-4 w-4" />
+                        În așteptare
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Selector de tăvițe pentru pipeline-urile departament, selector de fișe pentru restul */}
                 <div className="mb-4 flex items-center gap-3">
                   <div className="flex-1">
-                    <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                      Selectează fișa de serviciu
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={selectedFisaId || ''}
-                        onValueChange={(value) => setSelectedFisaId(value)}
-                        disabled={loadingSheets}
-                      >
-                        <SelectTrigger className="w-full max-w-md">
-                          <SelectValue placeholder={loadingSheets ? "Se încarcă..." : "Selectează o fișă"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {serviceSheets.map((sheet) => {
-                            const createdDate = sheet.created_at 
-                              ? format(new Date(sheet.created_at), 'dd MMM yyyy')
-                              : '';
-                            const displayText = createdDate 
-                              ? `${sheet.number} - ${createdDate}`
-                              : sheet.number;
-                            return (
-                              <SelectItem key={sheet.id} value={sheet.id}>
-                                {displayText}
-                              </SelectItem>
-                            );
-                          })}
-                          {serviceSheets.length === 0 && !loadingSheets && (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              Nu există fișe de serviciu
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      {/* Buton "Fișă nouă" - pentru pipeline-urile Vânzări și Receptie */}
-                      {(isVanzariPipeline || isReceptiePipeline) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleCreateServiceSheet}
-                          className="flex items-center gap-2"
-                        >
-                          <Plus className="h-4 w-4" />
-                          Adaugă Fișă Serviciu
-                        </Button>
-                      )}
-                      {selectedFisaId && (
-                        <div className="flex items-center gap-3">
-                          <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
-                            <DialogTrigger asChild>
+                    {isDepartmentPipeline ? (
+                      <>
+                        {/* Pentru vânzători / admin / owner: selector de tăviță */}
+                        {!isTechnician ? (
+                          <>
+                            <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                              Selectează tăvița
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <Select
+                                value={selectedTrayId || ''}
+                                onValueChange={(value) => {
+                                  const tray = allTrays.find(t => t.id === value)
+                                  if (tray) {
+                                    setSelectedTrayId(tray.id)
+                                    setSelectedFisaId(tray.service_file_id)
+                                  }
+                                }}
+                                disabled={loadingTrays}
+                              >
+                                <SelectTrigger className="w-full max-w-md">
+                                  <SelectValue placeholder={loadingTrays ? "Se încarcă..." : "Selectează o tăviță"} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {allTrays.map((tray) => {
+                                    const displayText = `Tăviță #${tray.number} - ${tray.size}`
+                                    return (
+                                      <SelectItem key={tray.id} value={tray.id}>
+                                        {displayText}
+                                      </SelectItem>
+                                    );
+                                  })}
+                                  {allTrays.length === 0 && !loadingTrays && (
+                                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                      Nu există tăvițe
+                                    </div>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              {/* Buton "Fișă nouă" - pentru pipeline-urile departament (doar vânzători / admin / owner, nu tehnicieni) */}
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => {
-                                  setDetailsModalOpen(true)
-                                  loadTraysDetails(selectedFisaId)
-                                }}
+                                onClick={handleCreateServiceSheet}
                                 className="flex items-center gap-2"
                               >
-                                <Info className="h-5 w-5" />
-                                Detalii Fisa
+                                <Plus className="h-4 w-4" />
+                                Adaugă Fișă Serviciu
                               </Button>
-                            </DialogTrigger>
-                          <DialogContent 
+                            </div>
+                          </>
+                        ) : (
+                          /* Pentru tehnicieni: afișează doar tăvița curentă, fără dropdown */
+                          <div>
+                            <label className="text-sm font-medium text-muted-foreground mb-1 block">
+                              Tăviță curentă
+                            </label>
+                            <p className="text-sm font-medium">
+                              {allTrays.find(t => t.id === selectedTrayId)?.number
+                                ? `Tăviță #${allTrays.find(t => t.id === selectedTrayId)!.number} - ${allTrays.find(t => t.id === selectedTrayId)!.size}`
+                                : 'N/A'}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                          Selectează fișa de serviciu
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={selectedFisaId || ''}
+                            onValueChange={(value) => setSelectedFisaId(value)}
+                            disabled={loadingSheets}
+                          >
+                            <SelectTrigger className="w-full max-w-md">
+                              <SelectValue placeholder={loadingSheets ? "Se încarcă..." : "Selectează o fișă"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {serviceSheets.map((sheet) => {
+                                const createdDate = sheet.created_at 
+                                  ? format(new Date(sheet.created_at), 'dd MMM yyyy')
+                                  : '';
+                                const displayText = createdDate 
+                                  ? `${sheet.number} - ${createdDate}`
+                                  : sheet.number;
+                                return (
+                                  <SelectItem key={sheet.id} value={sheet.id}>
+                                    {displayText}
+                                  </SelectItem>
+                                );
+                              })}
+                              {serviceSheets.length === 0 && !loadingSheets && (
+                                <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                  Nu există fișe de serviciu
+                                </div>
+                              )}
+                            </SelectContent>
+                          </Select>
+                          {/* Buton "Fișă nouă" - pentru pipeline-ul Vânzări (toți utilizatorii) 
+                              și pentru Receptie (doar vânzători / admin / owner) */}
+                          {(
+                            isVanzariPipeline ||               // în Vânzări: întotdeauna vizibil
+                            (isReceptiePipeline && isVanzator) // în Receptie: doar pentru vânzători/admin/owner
+                          ) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCreateServiceSheet}
+                              className="flex items-center gap-2"
+                            >
+                              <Plus className="h-4 w-4" />
+                              Adaugă Fișă Serviciu
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {selectedFisaId && !isDepartmentPipeline && (
+                    <div className="flex items-center gap-3">
+                      <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
+                        <DialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setDetailsModalOpen(true)
+                              loadTraysDetails(selectedFisaId)
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <Info className="h-5 w-5" />
+                            Detalii Fisa
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent 
                             className="overflow-y-auto"
                             style={{ 
                               width: '95vw', 
@@ -1592,7 +2600,14 @@ export function LeadDetailsPanel({
                                     
                                     return (
                                       <div key={detail.tray.id} className="border rounded-lg p-4">
-                                        <h3 className="font-medium mb-3">Tăviță {index + 1}: {detail.tray.name}</h3>
+                                        <h3 className="font-medium mb-3 flex items-center gap-2">
+                                          Tăviță {index + 1}: {detail.tray.name}
+                                          {detail.tray.urgent && (
+                                            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
+                                              URGENT (+30%)
+                                            </span>
+                                          )}
+                                        </h3>
                                         
                                         {visibleItems.length === 0 ? (
                                         <p className="text-sm text-muted-foreground">Nu există poziții în această tăviță</p>
@@ -1603,11 +2618,11 @@ export function LeadDetailsPanel({
                                               <thead>
                                                 <tr className="border-b bg-muted/50">
                                                   <th className="text-left p-2 font-medium w-20">Tip</th>
-                                                  <th className="text-left p-2 font-medium min-w-[200px]">Nume</th>
+                                                  <th className="text-left p-2 font-medium min-w-[200px]">Serviciu/Piesă</th>
+                                                  <th className="text-left p-2 font-medium min-w-[150px]">Instrument</th>
                                                   <th className="text-center p-2 font-medium w-16">Cant.</th>
                                                   <th className="text-right p-2 font-medium w-24">Preț unitar</th>
                                                   <th className="text-center p-2 font-medium w-16">Disc%</th>
-                                                  <th className="text-center p-2 font-medium w-20">Urgent</th>
                                                   <th className="text-left p-2 font-medium w-28">Departament</th>
                                                   <th className="text-left p-2 font-medium min-w-[120px]">Tehnician</th>
                                                   <th className="text-left p-2 font-medium w-24">Brand</th>
@@ -1621,7 +2636,8 @@ export function LeadDetailsPanel({
                                                   const base = item.qty * item.price
                                                   const disc = base * (Math.min(100, Math.max(0, item.discount_pct)) / 100)
                                                   const afterDisc = base - disc
-                                                  const urgent = item.urgent ? afterDisc * 0.30 : 0
+                                                  // Urgent se preia de pe tăviță
+                                                  const urgent = detail.tray.urgent ? afterDisc * 0.30 : 0
                                                   const lineTotal = afterDisc + urgent
                                                   
                                                   return (
@@ -1635,17 +2651,11 @@ export function LeadDetailsPanel({
                                                           {item.item_type === 'service' ? 'Serviciu' : 'Piesă'}
                                                         </span>
                                                       </td>
-                                                      <td className="p-2">{item.name_snapshot}</td>
+                                                      <td className="p-2 font-medium">{item.name_snapshot || '—'}</td>
+                                                      <td className="p-2">{item.instrument_name || '—'}</td>
                                                       <td className="p-2 text-center">{item.qty}</td>
                                                       <td className="p-2 text-right">{item.price.toFixed(2)}</td>
                                                       <td className="p-2 text-center">{item.discount_pct.toFixed(0)}%</td>
-                                                      <td className="p-2 text-center">
-                                                        {item.urgent ? (
-                                                          <span className="text-amber-600 font-medium">Da</span>
-                                                        ) : (
-                                                          <span className="text-muted-foreground">—</span>
-                                                        )}
-                                                      </td>
                                                       <td className="p-2">{item.department || '—'}</td>
                                                       <td className="p-2">
                                                         {item.technician_id 
@@ -1780,33 +2790,33 @@ export function LeadDetailsPanel({
                             </div>
                           </DialogContent>
                         </Dialog>
-                          {loadingTotalSum ? (
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>Se calculează...</span>
-                            </div>
-                          ) : totalFisaSum !== null ? (
-                            <div className="text-sm font-semibold">
-                              <span className="text-muted-foreground">Suma totală: </span>
-                              <span className="text-lg">{totalFisaSum.toFixed(2)} RON</span>
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
+                        {loadingTotalSum ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Se calculează...</span>
+                          </div>
+                        ) : totalFisaSum !== null ? (
+                          <div className="text-sm font-semibold">
+                            <span className="text-muted-foreground">Suma totală: </span>
+                            <span className="text-lg">{totalFisaSum.toFixed(2)} RON</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
-                </div>
                 
                 {/* Componenta Preturi cu fisaId selectată */}
-                {selectedFisaId ? (
-                  <Preturi 
-                    leadId={getLeadId()} 
-                    lead={lead} 
-                    fisaId={selectedFisaId}
-                    initialQuoteId={(lead as any)?.isQuote ? (lead as any)?.quoteId : getTrayId() || undefined}
+                {(selectedFisaId || (isDepartmentPipeline && selectedTrayId)) ? (
+                  <Preturi
+                    ref={preturiRef}
+                    leadId={getLeadId()}
+                    lead={lead}
+                    fisaId={selectedFisaId || undefined}
+                    initialQuoteId={isDepartmentPipeline && selectedTrayId ? selectedTrayId : ((lead as any)?.isQuote ? (lead as any)?.quoteId : getTrayId() || undefined)}
                     pipelineSlug={pipelineSlug}
+                    isDepartmentPipeline={isDepartmentPipeline}
                   />
-                ) : serviceSheets.length === 0 ? (
+                ) : (serviceSheets.length === 0 && !isDepartmentPipeline) || (isDepartmentPipeline && allTrays.length === 0) ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <FileText className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-sm font-medium text-foreground mb-2">Nu există fișe de serviciu</p>
@@ -1825,7 +2835,9 @@ export function LeadDetailsPanel({
                   </div>
                 ) : (
                   <div className="flex items-center justify-center py-12">
-                    <p className="text-sm text-muted-foreground">Selectează o fișă de serviciu</p>
+                    <p className="text-sm text-muted-foreground">
+                      {isDepartmentPipeline ? 'Selectează o tăviță' : 'Selectează o fișă de serviciu'}
+                    </p>
                   </div>
                 )}
               </TabsContent>

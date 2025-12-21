@@ -245,39 +245,39 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
           {(lead.isQuote || (lead as any).type === 'tray') ? (
             // Afișare minimalistă pentru tăviță (tray)
             <>
-              {/* Header: Client + Total */}
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="font-medium text-foreground truncate text-sm">{lead.name}</h4>
-                {(lead as any).total !== undefined && (lead as any).total > 0 && (
-                  <span className="text-sm font-bold text-green-600 dark:text-green-400 whitespace-nowrap">
-                    {((lead as any).total as number).toFixed(2)} RON
-                  </span>
+              {/* Header: Client (fără suma în header) */}
+              <div className="flex-1 min-w-0">
+                <h4 className="font-medium text-sm text-foreground truncate">{lead.name}</h4>
+                {((lead as any).trayNumber || (lead as any).traySize) && (
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    {(lead as any).trayNumber && (
+                      <span className="text-xs text-muted-foreground">#{((lead as any).trayNumber)}</span>
+                    )}
+                    {(lead as any).traySize && (
+                      <span className="text-xs text-muted-foreground">{(lead as any).traySize}</span>
+                    )}
+                  </div>
                 )}
               </div>
               
-              {/* Info row: Tehnician + Status */}
-              <div className="flex items-center justify-between gap-2 mt-1">
-                {lead.technician ? (
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <User className="h-3 w-3" />
-                    <span className="truncate">{lead.technician}</span>
-                  </div>
-                ) : (
-                  <span className="text-xs text-muted-foreground/50 italic">Neatribuit</span>
-                )}
-                
-                {(lead as any).trayStatus && (
-                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    (lead as any).trayStatus === 'gata' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
-                    (lead as any).trayStatus === 'in_lucru' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
-                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
-                  }`}>
-                    {(lead as any).trayStatus === 'gata' ? '✓ Gata' : 
-                     (lead as any).trayStatus === 'in_lucru' ? '⏳ Lucru' : 
-                     (lead as any).trayStatus}
-                  </span>
-                )}
-              </div>
+              {/* Info row: Tehnician (simplificat) */}
+              {lead.technician && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs text-muted-foreground truncate">{lead.technician}</span>
+                </div>
+              )}
+              
+              {/* Timp în stage-ul "IN LUCRU" sau "IN ASTEPTARE" (minimalist) */}
+              {((lead as any).inLucruSince || (lead as any).inAsteptareSince) && (
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {(lead as any).inLucruSince && (
+                    <span>În lucru: {formatDistanceToNow(new Date((lead as any).inLucruSince), { addSuffix: false, locale: ro })}</span>
+                  )}
+                  {(lead as any).inAsteptareSince && (
+                    <span>În așteptare: {formatDistanceToNow(new Date((lead as any).inAsteptareSince), { addSuffix: false, locale: ro })}</span>
+                  )}
+                </div>
+              )}
             </>
           ) : (lead as any).type === 'service_file' ? (
             // Afișare minimalistă pentru fișă de serviciu
@@ -337,53 +337,39 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
           )}
           
           {lead.createdAt && (
-            <div className="space-y-1 mt-1">
-              <div className="flex items-center gap-1">
-                <Calendar className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                <p className="text-xs text-muted-foreground truncate">
-                  {formatSmartDate(new Date(lead.createdAt))}
-                </p>
-              </div>
-              
-              <div className="flex items-center gap-1">
-                <Clock className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                <p className="text-xs text-muted-foreground/80 truncate">
-                  Vechime: {formatDistanceToNow(new Date(lead.createdAt), { addSuffix: false, locale: ro })}
-                </p>
-              </div>
+            <div className="mt-1.5 space-y-0.5">
+              <p className="text-xs text-muted-foreground truncate">
+                {formatSmartDate(new Date(lead.createdAt))}
+              </p>
               
               {timeInStage && (
-                <div className="flex items-center gap-1">
-                  <Clock className="h-3 w-3 text-orange-500 flex-shrink-0" />
-                  <p className="text-xs text-orange-600 font-medium truncate">
-                    {timeInStage.label}: {timeInStage.timeText}
-                  </p>
-                </div>
+                <p className="text-xs text-orange-600 font-medium truncate">
+                  {timeInStage.label}: {timeInStage.timeText}
+                </p>
               )}
             </div>
           )}
           
           {(lead.tags?.length ?? 0) > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1 w-full">
+            <div className="mt-1.5 flex flex-wrap gap-1">
               {lead.tags!.map(tag => {
                 const isUrgentOrRetur = tag.name.toLowerCase() === 'urgent' || tag.name === 'RETUR'
                 if (isDepartmentTag(tag.name)) {
                   return (
                     <span
                       key={tag.id}
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${getDepartmentBadgeStyle(tag.name)} text-white shadow-sm border cursor-help ${isUrgentOrRetur ? 'animate-border-strobe' : ''}`}
+                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${getDepartmentBadgeStyle(tag.name)} text-white ${isUrgentOrRetur ? 'animate-border-strobe' : ''}`}
                     >
                       {tag.name}
                     </span>
                   )
                 }
-                // tag-uri speciale pentru urgent si RETUR cu background rosu si text alb
                 if (isUrgentOrRetur) {
                   return (
                     <Badge 
                       key={tag.id} 
                       variant="outline" 
-                      className={`bg-red-600 text-white border-red-600 animate-border-strobe rounded-sm`}
+                      className="bg-red-600 text-white border-red-600 text-[10px] px-1.5 py-0.5 animate-border-strobe"
                     >
                       {tag.name}
                     </Badge>
@@ -393,7 +379,7 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
                   <Badge 
                     key={tag.id} 
                     variant="outline" 
-                    className={tagClass(tag.color)}
+                    className={`${tagClass(tag.color)} text-[10px] px-1.5 py-0.5`}
                   >
                     {tag.name}
                   </Badge>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors, Wrench, Building, Target, Briefcase, Phone, Package, Sparkles, Shield, Settings } from "lucide-react"
+import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors, Wrench, Building, Target, Briefcase, Phone, Package, Sparkles, Shield, Settings, UserCircle, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
@@ -11,6 +11,8 @@ import { useRole } from "@/hooks/useRole"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { useAuth } from "@/hooks/useAuth"
+import { useAuthContext } from "@/lib/contexts/AuthContext"
+import { toast } from "sonner"
 
 interface SidebarProps {
   canManagePipelines?: boolean
@@ -48,30 +50,21 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
   const router = useRouter()
   const { isOwner, role: userRole } = useRole()
   const { user } = useAuth()
+  const { hasAccess, isMember } = useAuthContext()
   const supabase = supabaseBrowser()
 
-  const [pipeNames, setPipeNames] = useState<string[]>([])
-  const [isTechnician, setIsTechnician] = useState(false)
-
-  // Verifică dacă utilizatorul este tehnician
-  useEffect(() => {
-    async function checkTechnician() {
-      if (!user?.id) {
-        setIsTechnician(false)
-        return
-      }
-      // Verifică dacă utilizatorul există în app_members (tehnicienii sunt în app_members)
-      const { data } = await supabase
-        .from('app_members')
-        .select('user_id, role')
-        .eq('user_id', user.id)
-        .single()
-      
-      // Dacă există în app_members și nu este owner/admin, considerăm că este tehnician
-      setIsTechnician(!!data && data.role !== 'owner' && data.role !== 'admin')
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+      router.replace('/auth/sign-in')
+      toast.success('Te-ai deconectat cu succes')
+    } catch (error: any) {
+      console.error('Error signing out:', error)
+      toast.error('Eroare la deconectare')
     }
-    checkTechnician()
-  }, [user, supabase])
+  }
+
+  const [pipeNames, setPipeNames] = useState<string[]>([])
 
   // create pipeline dialog state
   const [createOpen, setCreateOpen] = useState(false)
@@ -97,21 +90,17 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
   const reloadPipes = useCallback(async () => {
     const { data, error } = await getPipelinesWithStages()
     if (!error && data) {
-      let allPipelines = data.map((p: any) => p.name)
+      let allPipelines = data.map((p: any) => ({ id: p.id, name: p.name }))
       
-      // Pentru tehnicieni, filtrează doar pipeline-urile departamentelor
-      if (isTechnician) {
-        const departmentPipelines = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
-        allPipelines = allPipelines.filter(p => 
-          departmentPipelines.some(dept => 
-            p.toLowerCase() === dept.toLowerCase()
-          )
-        )
+      // Pentru membri, filtrează doar pipeline-urile pentru care au permisiune
+      if (isMember()) {
+        allPipelines = allPipelines.filter(p => hasAccess(p.id))
       }
       
-      setPipeNames(allPipelines)
+      // Extrage doar numele pentru afișare
+      setPipeNames(allPipelines.map(p => p.name))
     }
-  }, [isTechnician])
+  }, [hasAccess, isMember])
 
   // Single unified effect: mount/route-change + custom event from editor/sidebar actions
   useEffect(() => {
@@ -228,6 +217,18 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
           >
             <LayoutDashboard className="h-4 w-4" />
             <span>Dashboard</span>
+          </Link>
+
+          {/* Link pentru profil - accesibil pentru toți */}
+          <Link
+            href="/profile"
+            className={cn(
+              "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
+              pathname === "/profile" && "bg-sidebar-accent"
+            )}
+          >
+            <UserCircle className="h-4 w-4" />
+            <span>Profil</span>
           </Link>
 
           {/* Link accesibil pentru owner și admin */}
@@ -366,7 +367,9 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
 
           <div aria-hidden className="mx-auto h-px w-30 rounded-full bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
 
-          <Link
+          {/* Configurari - doar pentru owner */}
+          {isOwner && (
+            <Link
               href="/configurari"
               className={cn(
                 "flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted",
@@ -375,65 +378,80 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
             >
               <Wrench className="h-4 w-4" />
               <span>Configurari</span>
-          </Link>
+            </Link>
+          )}
         </nav>
 
-        {/* Add members */}
-        <div>
+        {/* Add members - doar pentru owner */}
+        {isOwner && (
+          <div>
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent px-0 p-0"
+              onClick={() => setAddOpen(v => !v)}
+            >
+              <span>Add members</span>
+              <UserPlus className="h-4 w-4" />
+            </Button>
+
+            {addOpen && (
+              <form onSubmit={onAddMember} className="space-y-2">
+                <div className="space-y-1">
+                  <label className="block text-xs text-sidebar-foreground/70">Email</label>
+                  <input
+                    className="border rounded px-2 py-1 w-full bg-background"
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs text-sidebar-foreground/70">Temp password</label>
+                  <input
+                    className="border rounded px-2 py-1 w-full bg-background"
+                    type="password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                  />
+                  <p className="text-[10px] text-muted-foreground">They can change it after first login.</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs text-sidebar-foreground/70">Role</label>
+                  <select
+                    className="border rounded px-2 py-1 w-full bg-background"
+                    value={role}
+                    onChange={e => setRole(e.target.value as any)}
+                  >
+                    <option value="admin">admin</option>
+                    <option value="owner">owner</option>
+                    <option value="member">member</option>
+                  </select>
+                </div>
+
+                <Button className="w-full" disabled={submitting}>
+                  {submitting ? "Adding…" : "Add member"}
+                </Button>
+
+                {msg && <p className="text-xs">{msg}</p>}
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* Sign Out Button */}
+        <div className="mt-auto pt-4 border-t">
           <Button
             variant="ghost"
-            className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent px-0 p-0"
-            onClick={() => setAddOpen(v => !v)}
+            className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-destructive px-0 p-0"
+            onClick={handleSignOut}
           >
-            <span>Add members</span>
-            <UserPlus className="h-4 w-4" />
+            <LogOut className="h-4 w-4" />
+            <span>Deconectare</span>
           </Button>
-
-          {addOpen && (
-            <form onSubmit={onAddMember} className="space-y-2">
-              <div className="space-y-1">
-                <label className="block text-xs text-sidebar-foreground/70">Email</label>
-                <input
-                  className="border rounded px-2 py-1 w-full bg-background"
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-sidebar-foreground/70">Temp password</label>
-                <input
-                  className="border rounded px-2 py-1 w-full bg-background"
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  required
-                />
-                <p className="text-[10px] text-muted-foreground">They can change it after first login.</p>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-sidebar-foreground/70">Role</label>
-                <select
-                  className="border rounded px-2 py-1 w-full bg-background"
-                  value={role}
-                  onChange={e => setRole(e.target.value as any)}
-                >
-                  <option value="admin">admin</option>
-                  <option value="owner">owner</option>
-                  <option value="member">member</option>
-                </select>
-              </div>
-
-              <Button className="w-full" disabled={submitting}>
-                {submitting ? "Adding…" : "Add member"}
-              </Button>
-
-              {msg && <p className="text-xs">{msg}</p>}
-            </form>
-          )}
         </div>
       </div>
     </aside>

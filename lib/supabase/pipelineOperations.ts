@@ -266,12 +266,43 @@ export async function moveItemToStage(
 
     const actualFromStageId = fromStageId || (current as any).stage_id
 
+    // Obține numele stage-ului pentru a verifica dacă este "IN LUCRU" sau "IN ASTEPTARE"
+    const { data: stageData } = await supabase
+      .from('stages')
+      .select('name')
+      .eq('id', newStageId)
+      .single()
+
+    const stageName = stageData?.name?.toUpperCase() || ''
+    const isInLucru = stageName === 'IN LUCRU'
+    const isInAsteptare = stageName === 'IN ASTEPTARE'
+    
+    // Pregătește datele pentru update
+    const updateData: any = {
+      stage_id: newStageId,
+      updated_at: new Date().toISOString(),
+    }
+
+    // TODO: Salvare timestamp pentru stage-urile "IN LUCRU" și "IN ASTEPTARE"
+    // Când tăvița intră în "IN LUCRU" sau "IN ASTEPTARE", salvează timestamp-ul
+    // pentru a putea calcula timpul petrecut în acel stage
+    // Exemplu de implementare (necesită adăugarea câmpurilor în tabela pipeline_items):
+    // if (isInLucru) {
+    //   updateData.in_lucru_since = new Date().toISOString()
+    //   // Resetează timestamp-ul pentru "IN ASTEPTARE" dacă există
+    //   updateData.in_asteptare_since = null
+    // } else if (isInAsteptare) {
+    //   updateData.in_asteptare_since = new Date().toISOString()
+    //   // Resetează timestamp-ul pentru "IN LUCRU" dacă există
+    //   updateData.in_lucru_since = null
+    // } else {
+    //   // Dacă iese din "IN LUCRU" sau "IN ASTEPTARE", păstrează timestamp-ul pentru istoric
+    //   // Nu reseta timestamp-urile, doar nu le actualiza
+    // }
+
     const { data, error } = await supabase
       .from('pipeline_items')
-      .update({
-        stage_id: newStageId,
-        updated_at: new Date().toISOString(),
-      } as any)
+      .update(updateData)
       .eq('id', (current as any).id)
       .select()
       .single()
@@ -572,12 +603,17 @@ export type KanbanItem = {
   total?: number
   // Flag pentru a marca cardurile ca non-draggable (ex: service_files din Receptie bazat pe tăvițe)
   isReadOnly?: boolean
+  // Timestamp pentru stage-urile "IN LUCRU" și "IN ASTEPTARE"
+  inLucruSince?: string
+  inAsteptareSince?: string
 }
 
 /**
  * Obține toate items-urile Kanban pentru un pipeline - OPTIMIZED
+ * @param pipelineId - ID-ul pipeline-ului
+ * @param currentUserId - ID-ul utilizatorului curent (opțional, pentru filtrarea tăvițelor în pipeline-urile departament)
  */
-export async function getKanbanItems(pipelineId?: string): Promise<{ data: KanbanItem[]; error: any }> {
+export async function getKanbanItems(pipelineId?: string, currentUserId?: string): Promise<{ data: KanbanItem[]; error: any }> {
   try {
     const startTime = performance.now()
     
@@ -600,10 +636,15 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
     
     if (itemsError) throw itemsError
     
-    // Verifică dacă este pipeline-ul Receptie folosind cache-ul
+    // Verifică dacă este pipeline-ul Receptie sau Curier folosind cache-ul
     const currentPipeline = allPipelines.find((p: any) => p.id === pipelineId)
     const isReceptiePipeline = currentPipeline?.name?.toLowerCase().includes('receptie') || false
+    const isCurierPipeline = currentPipeline?.name?.toLowerCase().includes('curier') || false
     const receptiePipelineId = isReceptiePipeline ? pipelineId : null
+    
+    // Verifică dacă este un pipeline departament (Saloane, Frizerii, Horeca, Reparatii)
+    const departmentPipelines = ['Saloane', 'Horeca', 'Frizerii', 'Reparatii']
+    const isDepartmentPipeline = currentPipeline && departmentPipelines.includes(currentPipeline.name)
     
     console.log(`⚡ getKanbanItems - pipeline_items încărcate în ${(performance.now() - startTime).toFixed(0)}ms:`, pipelineItems?.length || 0)
 
@@ -702,7 +743,7 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
                     number,
                     status,
                     created_at,
-                    lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name)
+                    lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details)
                   )
                 `)
                 .in('id', trayIds)
@@ -889,6 +930,72 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
               }
             }
           }
+      }
+    }
+  }
+
+    // Pentru pipeline-urile departament (Saloane, Frizerii, Horeca, Reparatii):
+    // asigură-te că există câte un pipeline_item de tip 'tray' pentru toate tăvițele
+    // care au cel puțin un tray_item cu department_id = pipelineId.
+    if (isDepartmentPipeline && pipelineId) {
+      // 1) Găsește toate tray_id-urile care apar în tray_items cu department_id = pipelineId
+      const { data: deptTrayItems, error: deptTrayItemsError } = await supabase
+        .from('tray_items')
+        .select('tray_id')
+        .eq('department_id', pipelineId)
+
+      if (deptTrayItemsError) {
+        console.error('❌ Eroare la încărcarea tray_items pentru departament:', deptTrayItemsError)
+      } else if (deptTrayItems && deptTrayItems.length > 0) {
+        const deptTrayIds = [...new Set(deptTrayItems.map((ti: any) => ti.tray_id).filter(Boolean))]
+
+        if (deptTrayIds.length > 0) {
+          // 2) Verifică ce tăvițe NU au deja pipeline_item în pipeline-ul curent
+          const existingTrayIds = new Set(
+            pipelineItems
+              .filter((pi: any) => pi.type === 'tray' && pi.pipeline_id === pipelineId)
+              .map((pi: any) => pi.item_id)
+          )
+
+          const missingTrayIds = deptTrayIds.filter(id => !existingTrayIds.has(id))
+
+          if (missingTrayIds.length > 0) {
+            // 3) Găsește stage-ul implicit "Noua" (sau primul stage dacă nu există)
+            const stagesForPipeline = allStages.filter((s: any) => s.pipeline_id === pipelineId)
+            let defaultStage = stagesForPipeline.find((s: any) =>
+              (s.name || '').toLowerCase().includes('noua')
+            )
+            if (!defaultStage && stagesForPipeline.length > 0) {
+              defaultStage = stagesForPipeline[0]
+            }
+
+            if (defaultStage) {
+              // 4) Creează pipeline_items pentru tăvițele lipsă
+              const { data: createdPipelineItems, error: createError } = await supabase
+                .from('pipeline_items')
+                .insert(
+                  missingTrayIds.map(id => ({
+                    type: 'tray',
+                    item_id: id,
+                    pipeline_id: pipelineId,
+                    stage_id: defaultStage!.id,
+                  }))
+                )
+                .select()
+
+              if (createError) {
+                console.error('❌ Eroare la crearea pipeline_items pentru tăvițe:', createError)
+              } else if (createdPipelineItems && createdPipelineItems.length > 0) {
+                // 5) Actualizează map-urile locale pentru a include noile tăvițe
+                createdPipelineItems.forEach((pi: any) => {
+                  const key = `tray:${pi.item_id}`
+                  pipelineItemMap.set(key, pi)
+                  trays.push(pi.item_id)
+                })
+                console.log('➕ create pipeline_items pentru tăvițe lipsă în departament:', createdPipelineItems.length)
+              }
+            }
+          }
         }
       }
     }
@@ -900,18 +1007,18 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
     
     const [leadsResult, serviceFilesResult, traysResult] = await Promise.all([
       leads.length > 0 
-        ? supabase.from('leads').select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name').in('id', leads)
+        ? supabase.from('leads').select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details').in('id', leads)
         : Promise.resolve({ data: [] }),
       serviceFilesToFetch.length > 0
         ? supabase.from('service_files').select(`
             id, lead_id, number, status, created_at,
-            lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name)
+            lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details)
           `).in('id', serviceFilesToFetch)
         : Promise.resolve({ data: [] }),
       trays.length > 0
         ? supabase.from('trays').select(`
             id, number, size, status, created_at, service_file_id,
-            service_file:service_files!inner(lead_id, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name))
+            service_file:service_files!inner(lead_id, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details))
           `).in('id', trays)
         : Promise.resolve({ data: [] })
     ])
@@ -1076,7 +1183,81 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
             technicianMap.set(ti.tray_id, techName)
           }
         })
+        
+        // FILTRARE TĂVIȚE PENTRU PIPELINE-URILE DEPARTAMENT
+        // Crează un map cu toate technician_id-urile pentru fiecare tray
+        // Un tray poate fi vizualizat de un utilizator dacă:
+        // 1. Are cel puțin un item cu technician_id = currentUserId, SAU
+        // 2. Nu are niciun technician atribuit (toate technician_id-urile sunt null)
+        // EXCEPT: Tăvițele atribuite tehnicianului dar aflate în stadiul "Noua" NU sunt vizibile
+        if (isDepartmentPipeline && currentUserId) {
+          const trayTechnicianIdsMap = new Map<string, Set<string | null>>()
+          
+          allTrayItems.forEach((ti: any) => {
+            if (!trayTechnicianIdsMap.has(ti.tray_id)) {
+              trayTechnicianIdsMap.set(ti.tray_id, new Set())
+            }
+            trayTechnicianIdsMap.get(ti.tray_id)!.add(ti.technician_id || null)
+          })
+          
+          // Obține stage-urile pentru toate tăvițele din pipeline-ul curent
+          const trayStageMap = new Map<string, string>() // trayId -> stage name
+          pipelineItems.forEach((pi: any) => {
+            if (pi.type === 'tray' && pi.stage) {
+              const stageName = (pi.stage as any)?.name || ''
+              trayStageMap.set(pi.item_id, stageName.toLowerCase())
+            }
+          })
+          
+          // Filtrează lista de trays pentru a include doar cele vizibile pentru utilizatorul curent
+          const filteredTrays: string[] = []
+          trays.forEach((trayId: string) => {
+            const techIds = trayTechnicianIdsMap.get(trayId)
+            const stageName = trayStageMap.get(trayId) || ''
+            const isNouaStage = stageName.includes('noua')
+            
+            // Dacă nu există items pentru acest tray, îl includem (tăviță goală)
+            if (!techIds || techIds.size === 0) {
+              filteredTrays.push(trayId)
+              return
+            }
+            
+            // Verifică dacă utilizatorul curent are cel puțin un item atribuit
+            if (techIds.has(currentUserId)) {
+              // EXCEPT: Dacă tăvița este atribuită tehnicianului dar este în stadiul "Noua", NU o includem
+              if (isNouaStage) {
+                console.log(`🚫 Tăviță ${trayId} atribuită tehnicianului dar în stadiul "Noua" - exclusă`)
+                return
+              }
+              filteredTrays.push(trayId)
+              return
+            }
+            
+            // Verifică dacă toate items-urile sunt fără technician (null)
+            // Un tray fără tehnician atribuit poate fi văzut de toți
+            const hasOnlyNullTechnicians = techIds.size === 1 && techIds.has(null)
+            if (hasOnlyNullTechnicians) {
+              filteredTrays.push(trayId)
+              return
+            }
+          })
+          
+          // Actualizează lista de trays cu cele filtrate
+          trays.length = 0
+          trays.push(...filteredTrays)
+          
+          console.log(`🔒 Filtrare tăvițe pentru user ${currentUserId}: ${filteredTrays.length} din ${trayTechnicianIdsMap.size} tăvițe vizibile (excluse tăvițele din "Noua" atribuite tehnicianului)`)
+        }
       }
+    }
+    
+    // FILTRARE TRAYSDATA pentru pipeline-urile departament
+    // Asigură-te că traysData conține doar tăvițele filtrate
+    let filteredTraysData = traysData
+    if (isDepartmentPipeline && currentUserId && trays.length !== traysData.length) {
+      const filteredTrayIds = new Set(trays)
+      filteredTraysData = traysData.filter((t: any) => filteredTrayIds.has(t.id))
+      console.log(`🔒 TraysData filtrat: ${filteredTraysData.length} din ${traysData.length}`)
     }
 
     // Calculează totalurile pentru leads și service_files (suma tuturor tăvițelor asociate)
@@ -1258,31 +1439,33 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
     // Construiește rezultatul
     const kanbanItems: KanbanItem[] = []
 
-    // Procesează leads
-    leadsData.forEach((lead: any) => {
-      const pipelineItem = pipelineItemMap.get(`lead:${lead.id}`)
-      if (!pipelineItem) return
+    // Procesează leads (ignoră-le în pipeline-urile Receptie și Curier pentru a evita cardurile "comune" la nivel de lead)
+    if (!isReceptiePipeline && !isCurierPipeline) {
+      leadsData.forEach((lead: any) => {
+        const pipelineItem = pipelineItemMap.get(`lead:${lead.id}`)
+        if (!pipelineItem) return
 
-      kanbanItems.push({
-        id: lead.id,
-        name: lead.full_name || 'Unknown',
-        email: lead.email || '',
-        phone: lead.phone_number || '',
-        stage: (pipelineItem.stage as any)?.name || '',
-        createdAt: lead.created_at,
-        campaignName: lead.campaign_name,
-        adName: lead.ad_name,
-        formName: lead.form_name,
-        leadId: lead.id,
-        stageId: pipelineItem.stage_id,
-        pipelineId: pipelineItem.pipeline_id,
-        assignmentId: pipelineItem.id,
-        tags: tagMap.get(lead.id) || [],
-        stageMovedAt: pipelineItem.updated_at,
-        type: 'lead',
-        total: leadTotalMap.get(lead.id) || 0,
+        kanbanItems.push({
+          id: lead.id,
+          name: lead.full_name || 'Unknown',
+          email: lead.email || '',
+          phone: lead.phone_number || '',
+          stage: (pipelineItem.stage as any)?.name || '',
+          createdAt: lead.created_at,
+          campaignName: lead.campaign_name,
+          adName: lead.ad_name,
+          formName: lead.form_name,
+          leadId: lead.id,
+          stageId: pipelineItem.stage_id,
+          pipelineId: pipelineItem.pipeline_id,
+          assignmentId: pipelineItem.id,
+          tags: tagMap.get(lead.id) || [],
+          stageMovedAt: pipelineItem.updated_at,
+          type: 'lead',
+          total: leadTotalMap.get(lead.id) || 0,
+        })
       })
-    })
+    }
 
     // Procesează service_files
     serviceFilesData.forEach((serviceFile: any) => {
@@ -1315,12 +1498,24 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
       })
     })
 
-    // Procesează trays
-    traysData.forEach((tray: any) => {
+    // Procesează trays (folosește filteredTraysData pentru pipeline-urile departament)
+    filteredTraysData.forEach((tray: any) => {
       const pipelineItem = pipelineItemMap.get(`tray:${tray.id}`)
       if (!pipelineItem || !tray.service_file?.lead) return
 
       const lead = tray.service_file.lead
+
+      const stageName = ((pipelineItem.stage as any)?.name || '').toUpperCase()
+      const isInLucru = stageName === 'IN LUCRU'
+      const isInAsteptare = stageName === 'IN ASTEPTARE'
+      
+      // TODO: Când se vor adăuga câmpurile in_lucru_since și in_asteptare_since în pipeline_items,
+      // înlocuiește aceste linii cu:
+      // inLucruSince: (pipelineItem as any).in_lucru_since || (isInLucru ? pipelineItem.updated_at : undefined),
+      // inAsteptareSince: (pipelineItem as any).in_asteptare_since || (isInAsteptare ? pipelineItem.updated_at : undefined),
+      // Pentru moment, folosim updated_at dacă stage-ul este "IN LUCRU" sau "IN ASTEPTARE"
+      const inLucruSince = isInLucru ? pipelineItem.updated_at : undefined
+      const inAsteptareSince = isInAsteptare ? pipelineItem.updated_at : undefined
 
       kanbanItems.push({
         id: tray.id,
@@ -1344,6 +1539,8 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
         traySize: tray.size,
         trayStatus: tray.status,
         total: trayTotalMap.get(tray.id) || 0,
+        inLucruSince,
+        inAsteptareSince,
       })
     })
 
@@ -1444,7 +1641,7 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
                   service_file:service_files!inner(
                     id,
                     lead_id,
-                    lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name)
+                    lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details)
                   )
                 `)
                 .in('id', newTrayIds)
@@ -1583,6 +1780,10 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
                     assignmentId = `virtual-${tray.id}`
                   }
                   
+                  // TODO: Când se vor adăuga câmpurile in_lucru_since și in_asteptare_since în pipeline_items,
+                  // folosește timestamp-ul din pipeline_item în loc de stageMovedAt
+                  const inAsteptareSince = inAsteptareStage.name.toUpperCase() === 'IN ASTEPTARE' ? tray.created_at : undefined
+                  
                   kanbanItems.push({
                     id: tray.id,
                     name: lead.full_name || 'Unknown',
@@ -1605,6 +1806,7 @@ export async function getKanbanItems(pipelineId?: string): Promise<{ data: Kanba
                     traySize: tray.size,
                     trayStatus: tray.status,
                     total: trayTotalMap.get(tray.id) || 0,
+                    inAsteptareSince,
                     // Permite drag and drop pentru tăvițele din "In asteptare" în pipeline-urile Saloane, Frizerii, Horeca
                     isReadOnly: !isDeptPipeline, // Doar pentru pipeline-urile departamentelor (Saloane, Frizerii, Horeca) permitem drag and drop
                   })
@@ -1659,7 +1861,7 @@ export async function getSingleKanbanItem(
     if (type === 'lead') {
       const { data: lead } = await supabase
         .from('leads')
-        .select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name')
+        .select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details')
         .eq('id', itemId)
         .single()
 
@@ -1699,7 +1901,7 @@ export async function getSingleKanbanItem(
           number,
           status,
           created_at,
-          lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name)
+          lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details)
         `)
         .eq('id', itemId)
         .single()
@@ -1745,7 +1947,7 @@ export async function getSingleKanbanItem(
           status,
           created_at,
           service_file_id,
-          service_file:service_files!inner(lead_id, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name))
+          service_file:service_files!inner(lead_id, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details))
         `)
         .eq('id', itemId)
         .single()
@@ -1785,6 +1987,17 @@ export async function getSingleKanbanItem(
         }
       }
 
+      const stageName = ((pipelineItem.stage as any)?.name || '').toUpperCase()
+      const isInLucru = stageName === 'IN LUCRU'
+      const isInAsteptare = stageName === 'IN ASTEPTARE'
+      
+      // TODO: Când se vor adăuga câmpurile in_lucru_since și in_asteptare_since în pipeline_items,
+      // înlocuiește aceste linii cu:
+      // inLucruSince: (pipelineItem as any).in_lucru_since || (isInLucru ? pipelineItem.updated_at : undefined),
+      // inAsteptareSince: (pipelineItem as any).in_asteptare_since || (isInAsteptare ? pipelineItem.updated_at : undefined),
+      const inLucruSince = isInLucru ? pipelineItem.updated_at : undefined
+      const inAsteptareSince = isInAsteptare ? pipelineItem.updated_at : undefined
+
       kanbanItem = {
         id: tray.id,
         name: lead.full_name || 'Unknown',
@@ -1806,6 +2019,8 @@ export async function getSingleKanbanItem(
         trayNumber: tray.number,
         traySize: tray.size,
         trayStatus: tray.status,
+        inLucruSince,
+        inAsteptareSince,
       }
     }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, Filter, Menu, ChevronDown } from 'lucide-react'
+import { Search, Filter, Menu, ChevronDown, LogOut, Settings, UserCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -16,6 +16,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { useRouter } from 'next/navigation'
+import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+import { toast } from 'sonner'
 
 interface MobileBoardHeaderProps {
   pipelineName: string
@@ -24,6 +27,7 @@ interface MobileBoardHeaderProps {
   onSearchClick: () => void
   onFilterClick: () => void
   sidebarContent?: React.ReactNode
+  onCustomizeClick?: () => void
 }
 
 export function MobileBoardHeader({
@@ -33,7 +37,22 @@ export function MobileBoardHeader({
   onSearchClick,
   onFilterClick,
   sidebarContent,
+  onCustomizeClick,
 }: MobileBoardHeaderProps) {
+  const router = useRouter()
+  const supabase = supabaseBrowser()
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+      router.replace('/auth/sign-in')
+      toast.success('Te-ai deconectat cu succes')
+    } catch (error: any) {
+      console.error('Error signing out:', error)
+      toast.error('Eroare la deconectare')
+    }
+  }
+
   return (
     <header className="sticky top-0 z-20 bg-background border-b md:hidden">
       <div className="flex items-center justify-between px-4 py-3 gap-2">
@@ -62,6 +81,7 @@ export function MobileBoardHeader({
             size="sm"
             className="h-9 w-9 p-0"
             onClick={onSearchClick}
+            title="Căutare"
           >
             <Search className="h-4 w-4" />
           </Button>
@@ -70,8 +90,38 @@ export function MobileBoardHeader({
             size="sm"
             className="h-9 w-9 p-0"
             onClick={onFilterClick}
+            title="Filtre"
           >
             <Filter className="h-4 w-4" />
+          </Button>
+          {onCustomizeClick && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 w-9 p-0"
+              onClick={onCustomizeClick}
+              title="Customizare"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={() => router.push('/profile')}
+            title="Profil"
+          >
+            <UserCircle className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0"
+            onClick={handleSignOut}
+            title="Deconectare"
+          >
+            <LogOut className="h-4 w-4" />
           </Button>
           {sidebarContent && (
             <Sheet>
@@ -80,6 +130,7 @@ export function MobileBoardHeader({
                   variant="ghost"
                   size="sm"
                   className="h-9 w-9 p-0"
+                  title="Meniu"
                 >
                   <Menu className="h-4 w-4" />
                 </Button>

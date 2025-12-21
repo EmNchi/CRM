@@ -37,6 +37,7 @@ interface MobileBoardLayoutProps {
   sidebarContent?: React.ReactNode
   onSearchClick?: () => void
   onFilterClick?: () => void
+  onCustomizeClick?: () => void
 }
 
 export function MobileBoardLayout({
@@ -51,6 +52,7 @@ export function MobileBoardLayout({
   sidebarContent,
   onSearchClick,
   onFilterClick,
+  onCustomizeClick,
 }: MobileBoardLayoutProps) {
   const [currentStage, setCurrentStage] = useState(stages[0] || '')
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
@@ -125,6 +127,7 @@ export function MobileBoardLayout({
         onSearchClick={onSearchClick || (() => {})}
         onFilterClick={onFilterClick || (() => {})}
         sidebarContent={sidebarContent}
+        onCustomizeClick={onCustomizeClick}
       />
 
       {/* Stage tabs */}
@@ -173,6 +176,12 @@ export function MobileBoardLayout({
         lead={selectedLead}
         open={detailsOpen}
         onOpenChange={setDetailsOpen}
+        pipelineSlug={currentPipelineName.toLowerCase().replace(/\s+/g, '-')}
+        stages={stages}
+        onStageChange={(leadId, newStage) => {
+          onLeadMove(leadId, newStage)
+          setDetailsOpen(false)
+        }}
         onMove={() => {
           if (selectedLead) {
             setDetailsOpen(false)
