@@ -7,7 +7,7 @@ import type { PipelineItemType } from '@/lib/supabase/pipelineOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
 import type { Tag } from '@/lib/supabase/tagOperations'
-import { useRole } from '@/hooks/useRole'
+import { useRole } from '@/lib/contexts/AuthContext'
 
 const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
@@ -142,7 +142,8 @@ export function useKanbanData(pipelineSlug?: string) {
           // DAR NU pentru admin / owner care trebuie să vadă toate tăvițele
           const { data: itemsData, error: itemsError } = await getKanbanItems(
             currentPipeline.id, 
-            isDepartmentPipeline && !isAdminOrOwner ? currentUserId || undefined : undefined
+            isDepartmentPipeline ? currentUserId || undefined : undefined,
+            isAdminOrOwner
           )
           if (itemsError) throw itemsError
           allLeads = (itemsData || []) as any[]

@@ -20,8 +20,7 @@ import {
   type ServiceFile
 } from "@/lib/supabase/serviceFileOperations"
 import { addServiceFileToPipeline, addTrayToPipeline } from "@/lib/supabase/pipelineOperations"
-import { useRole } from "@/hooks/useRole"
-import { useAuth } from "@/hooks/useAuth"
+import { useRole, useAuth } from "@/lib/contexts/AuthContext"
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from "@/lib/supabase/imageOperations"
 import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp, Package } from "lucide-react"
 import { toast } from "sonner"

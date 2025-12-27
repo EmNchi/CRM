@@ -12,8 +12,7 @@ import { useParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus, Settings2, Filter, X, Search, GripVertical, ArrowUp, ArrowDown } from "lucide-react"
-import { useRole } from '@/hooks/useRole'
-import { useAuthContext } from '@/lib/contexts/AuthContext'
+import { useRole, useAuthContext } from '@/lib/contexts/AuthContext'
 import { Sidebar } from '@/components/sidebar'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, logLeadEvent } from "@/lib/supabase/leadOperations"
 import PipelineEditor from "@/components/pipeline-editor"

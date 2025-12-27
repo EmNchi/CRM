@@ -21,7 +21,7 @@ import { listServiceFilesForLead, listTraysForServiceFile, listTrayItemsForTray,
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from '@/lib/supabase/imageOperations'
 import { moveItemToStage } from '@/lib/supabase/pipelineOperations'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth } from '@/lib/contexts/AuthContext'
 import { toast } from 'sonner'
 import { useMemo, useCallback } from 'react'
 import { Input } from '@/components/ui/input'

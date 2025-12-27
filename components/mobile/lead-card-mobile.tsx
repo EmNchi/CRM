@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth } from '@/lib/contexts/AuthContext'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { useState, useEffect } from 'react'
 

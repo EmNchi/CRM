@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useRole } from '@/hooks/useRole'
+import { useRole } from '@/lib/contexts/AuthContext'
 import { listServices, createService, deleteService, type Service } from '@/lib/supabase/serviceOperations'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

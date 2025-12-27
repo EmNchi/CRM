@@ -268,9 +268,41 @@ export function useProfile() {
   return profile
 }
 
+/**
+ * useRole hook - provides role information with loading state
+ * This is the single source of truth for role data.
+ * 
+ * @returns {object} Role state object
+ * - role: 'owner' | 'admin' | 'member' | null
+ * - isOwner: boolean
+ * - isAdmin: boolean  
+ * - isMember: boolean
+ * - loading: boolean - true while auth/profile is loading
+ * - error: string | null - error message if any
+ */
 export function useRole() {
-  const { role, isOwner, isAdmin, isMember } = useAuthContext()
-  return { role, isOwner: isOwner(), isAdmin: isAdmin(), isMember: isMember() }
+  const { role, isOwner, isAdmin, isMember, loading, error } = useAuthContext()
+  return { 
+    role, 
+    isOwner: isOwner(), 
+    isAdmin: isAdmin(), 
+    isMember: isMember(),
+    loading,
+    error
+  }
+}
+
+/**
+ * useAuth hook - provides basic auth state
+ * This is the single source of truth for user authentication.
+ * 
+ * @returns {object} Auth state object
+ * - user: User | null - Supabase user object
+ * - loading: boolean - true while auth is loading
+ */
+export function useAuth() {
+  const { user, loading } = useAuthContext()
+  return { user, loading }
 }
 
 export function usePermissions() {

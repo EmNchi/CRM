@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useRole } from '@/hooks/useRole'
+import { useRole } from '@/lib/contexts/AuthContext'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'

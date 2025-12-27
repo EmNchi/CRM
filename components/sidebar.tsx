@@ -7,11 +7,9 @@ import { Plus, Users, UserPlus, LayoutDashboard, Trash2, ShoppingCart, Scissors,
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
-import { useRole } from "@/hooks/useRole"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
-import { useAuth } from "@/hooks/useAuth"
-import { useAuthContext } from "@/lib/contexts/AuthContext"
+import { useRole, useAuth, useAuthContext } from "@/lib/contexts/AuthContext"
 import { toast } from "sonner"
 
 interface SidebarProps {
@@ -199,7 +197,7 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
   }
 
   return (
-    <aside className="w-50 bg-sidebar border-r border-sidebar-border">
+    <aside className="w-50 bg-sidebar border-r border-sidebar-border h-full">
       <div className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Users className="h-5 w-5 text-sidebar-foreground" />

@@ -18,8 +18,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuChe
 import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, ChevronDown, ChevronRight, User, Building, Info, MapPin, CheckCircle, Clock, Wrench, Package } from "lucide-react"
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
-import { useRole } from "@/hooks/useRole"
-import { useAuth } from "@/hooks/useAuth"
+import { useRole, useAuth } from "@/lib/contexts/AuthContext"
 import { 
   listServiceFilesForLead, 
   createServiceFile, 

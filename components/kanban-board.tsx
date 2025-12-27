@@ -7,7 +7,7 @@ import { LeadCard } from "@/components/lead-card"
 import { cn } from "@/lib/utils"
 import type { KanbanLead } from "../lib/types/database"
 import { Trash2, Loader2, TrendingUp, Inbox, Move, X } from "lucide-react"
-import { useRole } from "@/hooks/useRole"
+import { useRole } from "@/lib/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,

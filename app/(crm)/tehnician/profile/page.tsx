@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, User, Lock, BarChart3, Clock, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth } from '@/lib/contexts/AuthContext'
 
 const supabase = supabaseBrowser()
 
