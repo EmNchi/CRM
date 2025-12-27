@@ -24,6 +24,7 @@ import { createLeadWithPipeline } from "@/lib/supabase/leadOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useUserPreferences } from "@/hooks/useUserPreferences"
+import { useTechnicians } from "@/hooks/queries/use-technicians"
 import {
   Sheet,
   SheetContent,
@@ -120,9 +121,17 @@ export default function CRMPage() {
     technicianId: null
   })
 
-  // State pentru lista de tehnicieni
-  const [technicians, setTechnicians] = useState<Technician[]>([])
-  const [loadingTechnicians, setLoadingTechnicians] = useState(false)
+  // Tehnicieni - folosim hook cu cache (30 min) pentru a evita API calls pe fiecare navigare
+  const { data: techniciansData, isLoading: loadingTechnicians } = useTechnicians()
+  
+  // Transformăm datele pentru a menține compatibilitatea cu restul componentei
+  const technicians: Technician[] = useMemo(() => {
+    if (!techniciansData) return []
+    return techniciansData.map(member => ({
+      id: member.user_id,
+      name: member.name || member.email?.split('@')[0] || `User ${member.user_id.slice(0, 8)}`
+    })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [techniciansData])
 
   const { leads, stages, pipelines: allPipelines, loading, error, handleLeadMove, refresh, patchLeadTags, handlePinToggle } = useKanbanData(pipelineSlug)
   
@@ -260,47 +269,6 @@ export default function CRMPage() {
 
     return result
   }, [leads, filters, technicians])
-
-  // Încarcă lista de tehnicieni din app_members
-  useEffect(() => {
-    const loadTechnicians = async () => {
-      setLoadingTechnicians(true)
-      try {
-        // ✅ Selectăm direct name și email din app_members
-        const { data: membersData, error } = await supabase
-          .from('app_members')
-          .select('user_id, name, email')
-          .order('name', { ascending: true })
-        
-        if (error) {
-          console.error('Error loading app_members:', error)
-          setTechnicians([])
-          return
-        }
-        
-        if (!membersData || membersData.length === 0) {
-          setTechnicians([])
-          return
-        }
-        
-        // ✅ Folosim datele direct din app_members (fără apeluri la auth API)
-        const techs: Technician[] = membersData.map((member: any) => ({
-          id: member.user_id,
-          name: member.name || member.email?.split('@')[0] || `User ${member.user_id.slice(0, 8)}`
-        }))
-        
-        // Sortează după nume
-        techs.sort((a, b) => a.name.localeCompare(b.name))
-        setTechnicians(techs)
-      } catch (error) {
-        console.error('Error loading technicians:', error)
-        setTechnicians([])
-      } finally {
-        setLoadingTechnicians(false)
-      }
-    }
-    loadTechnicians()
-  }, [])
 
   useEffect(() => {
     const setupSaloaneStages = async () => {
