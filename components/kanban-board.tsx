@@ -56,6 +56,9 @@ export function KanbanBoard({
   onBulkMoveToStage,
   onBulkMoveToPipeline
 }: KanbanBoardProps) {
+  const { role } = useRole()
+  const canMovePipeline = role === 'owner' || role === 'admin'
+  
   const [draggedLead, setDraggedLead] = useState<string | null>(null)
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set())
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
@@ -364,13 +367,18 @@ export function KanbanBoard({
   const handleBulkMove = useCallback(async () => {
     if (selectedLeads.size === 0) return
     
+    // Verifică permisiunea pentru mutarea în pipeline
+    if (moveType === 'pipeline' && !canMovePipeline) {
+      return
+    }
+    
     const leadIds = Array.from(selectedLeads)
     setIsMoving(true)
     
     try {
       if (moveType === 'stage' && selectedTargetStage && onBulkMoveToStage) {
         await onBulkMoveToStage(leadIds, selectedTargetStage)
-      } else if (moveType === 'pipeline' && selectedTargetPipeline && onBulkMoveToPipeline) {
+      } else if (moveType === 'pipeline' && selectedTargetPipeline && onBulkMoveToPipeline && canMovePipeline) {
         await onBulkMoveToPipeline(leadIds, selectedTargetPipeline)
       }
       
@@ -384,7 +392,7 @@ export function KanbanBoard({
     } finally {
       setIsMoving(false)
     }
-  }, [selectedLeads, moveType, selectedTargetStage, selectedTargetPipeline, onBulkMoveToStage, onBulkMoveToPipeline])
+  }, [selectedLeads, moveType, selectedTargetStage, selectedTargetPipeline, onBulkMoveToStage, onBulkMoveToPipeline, canMovePipeline])
 
   return (
     <>
@@ -450,7 +458,7 @@ export function KanbanBoard({
               <Move className="h-4 w-4 mr-1" />
               Mută în Stage
             </Button>
-            {pipelines.length > 0 && (
+            {pipelines.length > 0 && canMovePipeline && (
               <Button
                 variant="secondary"
                 size="sm"
@@ -945,7 +953,7 @@ export function KanbanBoard({
               </div>
             )}
             
-            {moveType === 'pipeline' && (
+            {moveType === 'pipeline' && canMovePipeline && (
               <div className="space-y-2">
                 <Label>Selectează Pipeline</Label>
                 <Select value={selectedTargetPipeline} onValueChange={setSelectedTargetPipeline}>

@@ -13,16 +13,24 @@ import type { NextRequest } from "next/server"
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs"
 
 export async function middleware(req: NextRequest) {
-  // Ignore prefetch/noise
+  // Ignore prefetch/noise și request-uri statice
   if (req.method === "HEAD" || req.method === "OPTIONS") {
     return NextResponse.next()
   }
 
+  // Ignore API routes și rute statice
   const { pathname } = req.nextUrl
+  if (pathname.startsWith('/api/') || 
+      pathname.startsWith('/_next/') || 
+      pathname.startsWith('/auth/') ||
+      pathname.includes('.')) {
+    return NextResponse.next()
+  }
+
   const res = NextResponse.next()
   const supabase = createMiddlewareClient({ req, res })
 
-  // Verifică dacă există session
+  // Verifică dacă există session (folosește cookies, nu face request la API)
   const { data: { session }, error } = await supabase.auth.getSession()
 
   // Dacă nu există session, redirectează la sign-in
@@ -38,22 +46,17 @@ export async function middleware(req: NextRequest) {
   return res
 }
 
-// Protect only real app pages
+// Protect only real app pages (exclude API routes, auth routes, static files)
 export const config = {
   matcher: [
-    "/",
-    "/dashboard/:path*",
-    "/dashboard",
-    "/configurari/:path*",
-    "/configurari",
-    "/leads/:path*",
-    "/leads",
-    "/pipelines/:path*",
-    "/pipelines",
-    "/settings/:path*",
-    "/settings",
-    "/profile/:path*",
-    "/profile",
-    "/tehnician/:path*",
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - auth (auth routes)
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico|auth).*)',
   ],
 }

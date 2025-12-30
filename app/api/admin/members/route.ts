@@ -1,193 +1,114 @@
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { createClient } from '@supabase/supabase-js'
+import { requireOwner } from '@/lib/supabase/api-helpers'
 
-// GET - Lista toți membrii cu email-uri
 export async function GET() {
   try {
-    // Verifică variabilele de mediu necesare
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error('Missing env vars: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-      return NextResponse.json({ 
-        ok: false, 
-        error: 'Server configuration error: Missing Supabase credentials.' 
-      }, { status: 500 })
-    }
+    const { admin } = await requireOwner()
 
-    // 1) Caller must be logged in
-    const supaUser = createRouteHandlerClient({ cookies })
-    const { data: { user: me } } = await supaUser.auth.getUser()
-    if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
-
-    // 2) Check if caller is owner
-    const { data: membership } = await supaUser
-      .from('app_members')
-      .select('role')
-      .eq('user_id', me.id)
-      .single()
-    
-    if (!membership || membership.role !== 'owner') {
-      return NextResponse.json({ ok: false, error: 'forbidden - only owners can list members' }, { status: 403 })
-    }
-
-    // 3) Admin client to get user emails from auth
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    )
-
-    // 4) Get all members
-    const { data: members, error: membersError } = await admin
+    const { data: members, error } = await admin
       .from('app_members')
       .select('*')
       .order('created_at', { ascending: true })
 
-    if (membersError) throw membersError
+    if (error) throw error
 
-    // 5) Get emails from auth.users
     const { data: authData } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-    const userEmails = new Map<string, string>()
+    const emails = new Map<string, string>()
+    const names = new Map<string, string>()
     
     authData?.users?.forEach(u => {
-      if (u.email) {
-        userEmails.set(u.id, u.email)
-      }
+      if (u.email) emails.set(u.id, u.email)
+      const name = u.user_metadata?.name || u.user_metadata?.full_name || null
+      if (name) names.set(u.id, name)
     })
 
-    // 6) Merge emails into members
-    const membersWithEmail = (members || []).map(m => ({
+    const result = (members || []).map(m => ({
       ...m,
-      email: m.email || userEmails.get(m.user_id) || `User ${m.user_id.slice(0, 8)}...`
+      email: emails.get(m.user_id) || `User ${m.user_id.slice(0, 8)}...`,
+      name: (m as any).name || names.get(m.user_id) || null
     }))
 
-    return NextResponse.json({ ok: true, members: membersWithEmail })
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'unexpected' }, { status: 500 })
+    return NextResponse.json({ ok: true, members: result })
+  } catch (error: any) {
+    if (error instanceof Response) return error
+    return NextResponse.json({ ok: false, error: error?.message || 'Error' }, { status: 500 })
   }
 }
 
-// DELETE - Șterge un membru
 export async function DELETE(req: Request) {
   try {
-    // Verifică variabilele de mediu necesare
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ ok: false, error: 'Server configuration error' }, { status: 500 })
-    }
-
     const { memberId } = await req.json()
     if (!memberId) {
-      return NextResponse.json({ ok: false, error: 'memberId is required' }, { status: 400 })
+      return NextResponse.json({ ok: false, error: 'memberId required' }, { status: 400 })
     }
 
-    // 1) Caller must be logged in
-    const supaUser = createRouteHandlerClient({ cookies })
-    const { data: { user: me } } = await supaUser.auth.getUser()
-    if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+    const { admin } = await requireOwner()
 
-    // 2) Check if caller is owner
-    const { data: membership } = await supaUser
+    const { data: target } = await admin
       .from('app_members')
       .select('role')
-      .eq('user_id', me.id)
-      .single()
-    
-    if (!membership || membership.role !== 'owner') {
-      return NextResponse.json({ ok: false, error: 'forbidden - only owners can delete members' }, { status: 403 })
-    }
-
-    // 3) Admin client
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    )
-
-    // 4) Check if member to delete is owner (folosim user_id ca PK)
-    const { data: targetMember } = await admin
-      .from('app_members')
-      .select('role, user_id')
       .eq('user_id', memberId)
       .single()
 
-    if (targetMember?.role === 'owner') {
-      return NextResponse.json({ ok: false, error: 'Cannot delete an owner' }, { status: 403 })
+    if (target?.role === 'owner') {
+      return NextResponse.json({ ok: false, error: 'Cannot delete owner' }, { status: 403 })
     }
 
-    // 5) Delete from app_members
-    const { error: deleteError } = await admin
+    const { error } = await admin
       .from('app_members')
       .delete()
       .eq('user_id', memberId)
 
-    if (deleteError) throw deleteError
-
+    if (error) throw error
     return NextResponse.json({ ok: true })
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'unexpected' }, { status: 500 })
+  } catch (error: any) {
+    if (error instanceof Response) return error
+    return NextResponse.json({ ok: false, error: error?.message || 'Error' }, { status: 500 })
   }
 }
 
-// PATCH - Actualizează rolul unui membru
 export async function PATCH(req: Request) {
   try {
-    // Verifică variabilele de mediu necesare
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ ok: false, error: 'Server configuration error' }, { status: 500 })
-    }
-
-    const { memberId, role } = await req.json()
-    if (!memberId || !role) {
-      return NextResponse.json({ ok: false, error: 'memberId and role are required' }, { status: 400 })
-    }
-
-    if (!['owner', 'admin', 'member'].includes(role)) {
-      return NextResponse.json({ ok: false, error: 'invalid role' }, { status: 400 })
-    }
-
-    // 1) Caller must be logged in
-    const supaUser = createRouteHandlerClient({ cookies })
-    const { data: { user: me } } = await supaUser.auth.getUser()
-    if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
-
-    // 2) Check if caller is owner
-    const { data: membership } = await supaUser
-      .from('app_members')
-      .select('role')
-      .eq('user_id', me.id)
-      .single()
+    const { memberId, role, name } = await req.json()
     
-    if (!membership || membership.role !== 'owner') {
-      return NextResponse.json({ ok: false, error: 'forbidden - only owners can update roles' }, { status: 403 })
+    if (!memberId) {
+      return NextResponse.json({ ok: false, error: 'memberId required' }, { status: 400 })
     }
 
-    // 3) Admin client
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    )
+    const { admin } = await requireOwner()
 
-    // 4) Update role (folosim user_id ca PK)
-    const { data: updateData, error: updateError } = await admin
+    const updates: any = {}
+    if (role && ['owner', 'admin', 'member'].includes(role)) {
+      updates.role = role
+    }
+    if (name !== undefined) {
+      updates.name = name
+      // Obține user_metadata existent pentru a-l păstra
+      const { data: existingUser } = await admin.auth.admin.getUserById(memberId)
+      const existingMetadata = existingUser?.user?.user_metadata || {}
+      await admin.auth.admin.updateUserById(memberId, {
+        user_metadata: { ...existingMetadata, name, full_name: name, display_name: name }
+      })
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ ok: false, error: 'No updates provided' }, { status: 400 })
+    }
+
+    const { data, error } = await admin
       .from('app_members')
-      .update({ role })
+      .update(updates)
       .eq('user_id', memberId)
       .select()
 
-    if (updateError) {
-      console.error('Update error:', updateError)
-      throw updateError
+    if (error) throw error
+    if (!data || data.length === 0) {
+      return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
     }
 
-    // Check if any row was actually updated
-    if (!updateData || updateData.length === 0) {
-      console.error('No rows updated for memberId (user_id):', memberId)
-      return NextResponse.json({ ok: false, error: 'Member not found' }, { status: 404 })
-    }
-
-    console.log('Role updated successfully:', updateData[0])
     return NextResponse.json({ ok: true })
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || 'unexpected' }, { status: 500 })
+  } catch (error: any) {
+    if (error instanceof Response) return error
+    return NextResponse.json({ ok: false, error: error?.message || 'Error' }, { status: 500 })
   }
 }
-

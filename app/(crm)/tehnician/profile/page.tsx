@@ -67,7 +67,7 @@ export default function TechnicianProfilePage() {
       // Obține datele din app_members
       const { data: member, error: memberError } = await supabase
         .from('app_members')
-        .select('name, email, role')
+        .select('name, role')
         .eq('user_id', user.id)
         .single()
 
@@ -75,8 +75,8 @@ export default function TechnicianProfilePage() {
         throw memberError
       }
 
-      // Dacă nu există în app_members, obține email-ul din auth
-      const email = member?.email || user.email || null
+      // Email-ul vine din auth.users, nu din app_members
+      const email = user.email || null
       const name = member?.name || email?.split('@')[0] || 'Necunoscut'
       const role = member?.role || null
 
@@ -261,7 +261,13 @@ export default function TechnicianProfilePage() {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-sm text-muted-foreground">Nume</Label>
-              <p className="font-medium">{profileData?.name || 'Necunoscut'}</p>
+              <p className="font-medium">
+                {(user?.user_metadata as any)?.display_name || 
+                 (user?.user_metadata as any)?.name || 
+                 (user?.user_metadata as any)?.full_name || 
+                 profileData?.name || 
+                 'Necunoscut'}
+              </p>
             </div>
             <div>
               <Label className="text-sm text-muted-foreground">Email</Label>

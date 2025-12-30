@@ -13,6 +13,7 @@ import Preturi, { type PreturiRef } from '@/components/preturi';
 import LeadHistory from "@/components/lead-history"
 import { PrintView } from '@/components/print-view'
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
+import { debounce } from "@/lib/utils"
 import LeadMessenger from "@/components/lead-messenger"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
 import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, History, MessageSquare, X as XIcon, ChevronDown, ChevronRight, User, Building, Info, MapPin, CheckCircle, Clock, Wrench, Package } from "lucide-react"
@@ -24,6 +25,7 @@ import {
   createServiceFile, 
   listTraysForServiceFile,
   listTrayItemsForTray,
+  getNextGlobalServiceFileNumber,
   type ServiceFile,
   type TrayItem,
   type Tray
@@ -52,13 +54,17 @@ const listServiceSheetsForLead = async (leadId: string): Promise<ServiceSheet[]>
 }
 
 const createServiceSheet = async (leadId: string, name?: string): Promise<string> => {
-  // Generează un număr pentru fișă
-  const { data: existing } = await listServiceFilesForLead(leadId)
-  const nextNumber = `${(existing?.length || 0) + 1}`
+  // Generează un număr global pentru fișă (nu local pentru lead)
+  const { data: nextGlobalNumber, error: numberError } = await getNextGlobalServiceFileNumber()
+  
+  if (numberError || nextGlobalNumber === null) {
+    console.error('Error getting next global service file number:', numberError)
+    throw numberError || new Error('Failed to get next global service file number')
+  }
   
   const serviceFileData = {
     lead_id: leadId,
-    number: name || `Fisa ${nextNumber}`,
+    number: name || `Fisa ${nextGlobalNumber}`,
     date: new Date().toISOString().split('T')[0],
     status: 'noua' as const,
     notes: null,
@@ -479,13 +485,32 @@ export function LeadDetailsPanel({
   }, [lead])
   
   // Helper pentru a obține fisaId-ul corect pentru service_files
-  const getServiceFileId = useCallback(() => {
+  // Acum detaliile sunt stocate la nivel de service_file, nu la nivel de tray
+  const getServiceFileId = useCallback(async () => {
     const leadAny = lead as any
     if (leadAny?.type === 'service_file') {
       return lead.id // Pentru service_file, id-ul cardului este fisaId
     }
+    // Dacă este tray, obținem service_file_id din tray
+    if (leadAny?.type === 'tray' || leadAny?.isQuote) {
+      const trayId = leadAny?.type === 'tray' ? lead.id : (leadAny?.quoteId || leadAny?.id)
+      if (trayId) {
+        const { data: tray } = await supabase
+          .from('trays')
+          .select('service_file_id')
+          .eq('id', trayId)
+          .single()
+        return tray?.service_file_id || null
+      }
+    }
+    // Dacă este lead, folosim prima fișă de serviciu
+    const leadId = getLeadId()
+    if (leadId) {
+      const sheets = await listServiceSheetsForLead(leadId)
+      return sheets.length > 0 ? sheets[0].id : null
+    }
     return null
-  }, [lead])
+  }, [lead, getLeadId])
   
   // Helper pentru a obține trayId-ul corect pentru trays
   const getTrayId = useCallback(() => {
@@ -496,35 +521,70 @@ export function LeadDetailsPanel({
     return null
   }, [lead])
   
-  // Încarcă detaliile generale pentru tăvițele unui lead (folosit în Vânzări/Recepție/Curier)
+  // Funcție pentru salvarea detaliilor
+  const saveServiceFileDetails = useCallback(async (details: string) => {
+    try {
+      const serviceFileId = await getServiceFileId()
+      if (!serviceFileId) {
+        console.warn('Cannot save details: service file not found')
+        return
+      }
+      
+      const { error } = await supabase
+        .from('service_files')
+        .update({ details } as any)
+        .eq('id', serviceFileId)
+      
+      if (error) {
+        console.error('Error saving service file details:', error)
+        toast.error('Eroare la salvarea automată: ' + error.message)
+      } else {
+        console.log('Details auto-saved successfully')
+      }
+    } catch (err: any) {
+      console.error('Error saving details:', err)
+    }
+  }, [getServiceFileId])
+
+  // Funcție debounced pentru auto-save
+  const debouncedSaveDetails = useMemo(
+    () => debounce((details: string) => {
+      saveServiceFileDetails(details)
+    }, 1000), // 1 secundă delay
+    [saveServiceFileDetails]
+  )
+
+  // Încarcă detaliile pentru fișa de serviciu (nu mai la nivel de lead)
+  // Această funcție este folosită pentru pipeline-urile Vânzări/Recepție/Curier
   useEffect(() => {
-    const loadLeadTrayDetails = async () => {
-      const leadId = getLeadId()
-      if (!leadId) return
+    const loadServiceFileDetails = async () => {
+      const serviceFileId = await getServiceFileId()
+      if (!serviceFileId) {
+        setTrayDetails('')
+        return
+      }
 
       try {
         const { data, error } = await supabase
-          .from('leads')
-          .select('tray_details')
-          .eq('id', leadId)
+          .from('service_files')
+          .select('details')
+          .eq('id', serviceFileId)
           .single()
 
         if (!error && data) {
-          setTrayDetails((data as any).tray_details || '')
+          setTrayDetails((data as any)?.details || '')
         } else {
           setTrayDetails('')
         }
       } catch (err) {
-        console.error('Error loading lead tray details:', err)
+        console.error('Error loading service file details:', err)
         setTrayDetails('')
       }
     }
 
-    // În Vânzări / Recepție / Curier, folosim acest câmp ca „default” pentru noi detalii de tăviță
-    if (!isDepartmentPipeline) {
-      loadLeadTrayDetails()
-    }
-  }, [lead.id, getLeadId, supabase, isDepartmentPipeline])
+    // Încarcă detaliile pentru toate pipeline-urile (nu doar pentru departamente)
+    loadServiceFileDetails()
+  }, [lead.id, getServiceFileId, supabase])
 
   const togglePipe = (name: string) =>
     setSelectedPipes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name])
@@ -552,7 +612,32 @@ export function LeadDetailsPanel({
 
   useEffect(() => {
     setStage(lead.stage)
-  }, [getLeadId(), lead.stage])
+    
+    // Setează starea checkbox-urilor pe baza stage-ului curent (doar în Vânzări)
+    if (isVanzariPipeline) {
+      const currentStage = lead.stage?.toUpperCase() || ''
+      
+      // Verifică dacă stage-ul curent corespunde unuia dintre checkbox-uri
+      if (currentStage.includes('NO DEAL') || currentStage.includes('NO-DEAL')) {
+        setNoDeal(true)
+        setCallBack(false)
+        setNuRaspunde(false)
+      } else if (currentStage.includes('CALLBACK') || currentStage.includes('CALL BACK') || currentStage.includes('CALL-BACK')) {
+        setNoDeal(false)
+        setCallBack(true)
+        setNuRaspunde(false)
+      } else if (currentStage.includes('RASPUNDE') || currentStage.includes('RASUNDE')) {
+        setNoDeal(false)
+        setCallBack(false)
+        setNuRaspunde(true)
+      } else {
+        // Dacă stage-ul nu corespunde niciunui checkbox, dezactivează toate
+        setNoDeal(false)
+        setCallBack(false)
+        setNuRaspunde(false)
+      }
+    }
+  }, [getLeadId(), lead.stage, isVanzariPipeline])
 
   // Funcție helper pentru încărcarea fișelor (folosită atât la inițializare cât și după creare)
   const loadServiceSheets = useCallback(async (leadId: string) => {
@@ -580,7 +665,7 @@ export function LeadDetailsPanel({
         setServiceSheets(sheets)
         
         // Dacă este un service_file (vine din pipeline Curier), selectează fișa direct
-        const serviceFileId = getServiceFileId()
+        const serviceFileId = await getServiceFileId()
         const trayId = getTrayId()
         
         if (serviceFileId) {
@@ -694,58 +779,42 @@ export function LeadDetailsPanel({
     loadTrays()
   }, [isDepartmentPipeline, getLeadId, getTrayId, loadServiceSheets, selectedTrayId])
 
-  // Încarcă detaliile pentru toate tăvițele
+  // Încarcă detaliile pentru fișa de serviciu (nu mai per tăviță)
   useEffect(() => {
-    const loadTrayDetailsData = async () => {
-      if (allTrays.length === 0) return
-      
+    const loadServiceFileDetails = async () => {
       setLoadingTrayDetails(true)
       try {
-        const supabaseClient = supabaseBrowser()
-        const trayIds = allTrays.map(t => t.id)
-        
-        // Citim detaliile din tray_items.details (nu din trays)
-        const { data: trayItemsData, error } = await supabaseClient
-          .from('tray_items')
-          .select('tray_id, details')
-          .in('tray_id', trayIds)
-        
-        if (error) {
-          console.error('Error loading tray details:', error)
+        const serviceFileId = await getServiceFileId()
+        if (!serviceFileId) {
+          setTrayDetails('')
           return
         }
         
-        const newDetailsMap = new Map<string, string>()
-        trayItemsData?.forEach((ti: any) => {
-          if (ti.details && !newDetailsMap.has(ti.tray_id)) {
-            newDetailsMap.set(ti.tray_id, ti.details)
-          }
-        })
-        setTrayDetailsMap(newDetailsMap)
+        const supabaseClient = supabaseBrowser()
+        // Citim detaliile din service_files.details
+        const { data: serviceFile, error } = await supabaseClient
+          .from('service_files')
+          .select('details')
+          .eq('id', serviceFileId)
+          .single()
         
-        // Dacă suntem tehnician și avem o tăviță selectată, încarcă detaliile ei
-        // Pentru vânzător, selectează prima tăviță dacă nu e selectată
-        if (!selectedTrayForDetails && allTrays.length > 0) {
-          // Dacă suntem pe un card de tăviță specific, selectează acea tăviță
-          const trayId = getTrayId()
-          if (trayId) {
-            setSelectedTrayForDetails(trayId)
-            setTrayDetails(newDetailsMap.get(trayId) || '')
-          } else if (isVanzator) {
-            // Pentru vânzător, selectează prima tăviță
-            setSelectedTrayForDetails(allTrays[0].id)
-            setTrayDetails(newDetailsMap.get(allTrays[0].id) || '')
-          }
+        if (error) {
+          console.error('Error loading service file details:', error)
+          setTrayDetails('')
+          return
         }
+        
+        setTrayDetails(serviceFile?.details || '')
       } catch (err) {
-        console.error('Error loading tray details:', err)
+        console.error('Error loading service file details:', err)
+        setTrayDetails('')
       } finally {
         setLoadingTrayDetails(false)
       }
     }
     
-    loadTrayDetailsData()
-  }, [allTrays, getTrayId, isVanzator])
+    loadServiceFileDetails()
+  }, [getServiceFileId])
 
   // Încarcă tehnicienii
   useEffect(() => {
@@ -755,44 +824,11 @@ export function LeadDetailsPanel({
         const supabaseClient = supabaseBrowser()
         const { data: membersData, error } = await supabaseClient
           .from('app_members')
-          .select('user_id, name, email')
+          .select('user_id, name')
           .order('created_at', { ascending: true })
         
         if (error) {
           console.error('Error loading app_members:', error)
-          // Încearcă să încarce doar user_id și email dacă name nu există
-          try {
-            const { data: fallbackData, error: fallbackError } = await supabaseClient
-              .from('app_members')
-              .select('user_id, email')
-              .order('created_at', { ascending: true })
-            
-            if (fallbackError) {
-              console.error('Error loading app_members with fallback:', fallbackError)
-              setTechnicians([])
-              return
-            }
-            
-            if (fallbackData && fallbackData.length > 0) {
-              const techs: Technician[] = fallbackData.map((m: any) => {
-                let name = 'Necunoscut'
-                if (m.email) {
-                  name = m.email.split('@')[0]
-                } else if (m.user_id) {
-                  name = `User ${m.user_id.slice(0, 8)}`
-                }
-                return {
-                  id: m.user_id,
-                  name: name
-                }
-              })
-              techs.sort((a, b) => a.name.localeCompare(b.name))
-              setTechnicians(techs)
-              return
-            }
-          } catch (fallbackError) {
-            console.error('Error loading app_members with fallback:', fallbackError)
-          }
           setTechnicians([])
           return
         }
@@ -804,20 +840,13 @@ export function LeadDetailsPanel({
         
         // Transformă membrii în tehnicieni folosind câmpul name
         const techs: Technician[] = (membersData || []).map((m: any) => {
-          // Folosește câmpul name, cu fallback la email sau user_id
+          // Folosește câmpul name, cu fallback la user_id
           let name = m.name || m.Name || null
-          if (!name && m.email) {
-            name = m.email.split('@')[0]
-          }
           if (!name && m.user_id) {
             name = `User ${m.user_id.slice(0, 8)}`
           }
           if (!name) {
             name = 'Necunoscut'
-          }
-          
-          if (name === 'Necunoscut' && m.email) {
-            name = m.email.split('@')[0]
           }
           
           return {
@@ -870,15 +899,77 @@ export function LeadDetailsPanel({
 
   // Funcție pentru gestionarea checkbox-ului "Nu raspunde"
   const handleNuRaspundeChange = (checked: boolean) => {
-    setNuRaspunde(checked)
-    
-    // Dacă checkbox-ul este activat și suntem în pipeline-ul Vânzări
-    if (checked && isVanzariPipeline) {
-      // Verifică dacă stage-ul "NU RASPUNDE" există în lista de stages
-      const nuRaspundeStage = stages.find(stage => stage === 'NU RASPUNDE')
-      if (nuRaspundeStage) {
-        handleStageChange('NU RASPUNDE')
+    // Dacă se bifează, dezactivează celelalte checkbox-uri
+    if (checked) {
+      setNoDeal(false)
+      setCallBack(false)
+      setNuRaspunde(true)
+      
+      // Dacă suntem în pipeline-ul Vânzări, mută lead-ul în stage-ul corespunzător
+      if (isVanzariPipeline) {
+        const nuRaspundeStage = stages.find(stage => 
+          stage.toUpperCase() === 'NU RASPUNDE' || 
+          stage.toUpperCase() === 'NU RASUNDE' ||
+          stage.toUpperCase().includes('RASPUNDE')
+        )
+        if (nuRaspundeStage) {
+          handleStageChange(nuRaspundeStage)
+          toast.success('Card mutat în ' + nuRaspundeStage)
+        }
       }
+    } else {
+      setNuRaspunde(false)
+    }
+  }
+
+  // Funcție pentru gestionarea checkbox-ului "No Deal"
+  const handleNoDealChange = (checked: boolean) => {
+    // Dacă se bifează, dezactivează celelalte checkbox-uri
+    if (checked) {
+      setNuRaspunde(false)
+      setCallBack(false)
+      setNoDeal(true)
+      
+      // Dacă suntem în pipeline-ul Vânzări, mută lead-ul în stage-ul corespunzător
+      if (isVanzariPipeline) {
+        const noDealStage = stages.find(stage => 
+          stage.toUpperCase() === 'NO DEAL' || 
+          stage.toUpperCase() === 'NO-DEAL' ||
+          stage.toUpperCase().includes('NO DEAL')
+        )
+        if (noDealStage) {
+          handleStageChange(noDealStage)
+          toast.success('Card mutat în ' + noDealStage)
+        }
+      }
+    } else {
+      setNoDeal(false)
+    }
+  }
+
+  // Funcție pentru gestionarea checkbox-ului "Call Back"
+  const handleCallBackChange = (checked: boolean) => {
+    // Dacă se bifează, dezactivează celelalte checkbox-uri
+    if (checked) {
+      setNoDeal(false)
+      setNuRaspunde(false)
+      setCallBack(true)
+      
+      // Dacă suntem în pipeline-ul Vânzări, mută lead-ul în stage-ul corespunzător
+      if (isVanzariPipeline) {
+        const callBackStage = stages.find(stage => 
+          stage.toUpperCase() === 'CALLBACK' || 
+          stage.toUpperCase() === 'CALL BACK' ||
+          stage.toUpperCase() === 'CALL-BACK' ||
+          stage.toUpperCase().includes('CALLBACK')
+        )
+        if (callBackStage) {
+          handleStageChange(callBackStage)
+          toast.success('Card mutat în ' + callBackStage)
+        }
+      }
+    } else {
+      setCallBack(false)
     }
   }
 
@@ -1712,14 +1803,31 @@ export function LeadDetailsPanel({
                       {!isCurierPipeline && (
                         <div className="flex items-center gap-1.5 sm:gap-2">
                           <Checkbox
-                            id="call-back"
-                            checked={callBack}
-                            onCheckedChange={(c: any) => setCallBack(!!c)}
+                            id="no-deal"
+                            checked={noDeal}
+                            onCheckedChange={(c: any) => handleNoDealChange(!!c)}
                           />
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setCallBack(!callBack)}
+                            onClick={() => handleNoDealChange(!noDeal)}
+                            className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                          >
+                            No Deal
+                          </Button>
+                        </div>
+                      )}
+                      {!isCurierPipeline && (
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <Checkbox
+                            id="call-back"
+                            checked={callBack}
+                            onCheckedChange={(c: any) => handleCallBackChange(!!c)}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCallBackChange(!callBack)}
                             className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
                           >
                             Call back
@@ -1743,24 +1851,8 @@ export function LeadDetailsPanel({
                         </Button>
                       </div>
                       
-                      {/* "No deal" - doar pentru vânzători în pipeline-ul Vânzări */}
-                      {isVanzator && isVanzariPipeline && (
-                        <div className="flex items-center gap-1.5 sm:gap-2">
-                          <Checkbox
-                            id="no-deal"
-                            checked={noDeal}
-                            onCheckedChange={(c: any) => setNoDeal(!!c)}
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setNoDeal(!noDeal)}
-                            className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
-                          >
-                            No deal
-                          </Button>
-                        </div>
-                      )}
+                     
+                      
                     </div>
                   </>
                 )}
@@ -1791,12 +1883,6 @@ export function LeadDetailsPanel({
                   <p className="text-sm font-medium">{lead.name}</p>
           </div>
 
-          {lead.company && (
-            <div>
-                    <label className="text-xs font-medium text-muted-foreground uppercase">Companie</label>
-                    <p className="text-sm">{lead.company}</p>
-            </div>
-          )}
 
           {lead.phone && (
             <div>
@@ -1862,30 +1948,78 @@ export function LeadDetailsPanel({
             </div>
           )}
 
-          {(lead as any).address && (
-            <div>
-                    <label className="text-xs font-medium text-muted-foreground uppercase">Adresă</label>
-                    <div className="flex items-center gap-2 group mt-1">
-                <div className="flex-1 flex items-center gap-2 text-sm bg-background rounded px-2 py-1.5 border">
-                        <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span className="truncate">{(lead as any).address}</span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                  onClick={() => handleCopy((lead as any).address, 'Adresă')}
-                  title="Copiază adresă"
-                >
-                  {copiedField === 'Adresă' ? (
-                    <Check className="h-3.5 w-3.5 text-green-600" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
+{lead.company_name && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Companie
+    </label>
+    <p className="text-sm">{lead.company_name}</p>
+  </div>
+)}
+
+{(lead as any).company_address && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Companie - adresă
+    </label>
+    <p className="text-sm">{(lead as any).company_address}</p>
+  </div>
+)}
+
+{(lead as any).address && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Adresă
+    </label>
+    <div className="flex items-center gap-2 group mt-1">
+      <div className="flex-1 flex items-center gap-2 text-sm bg-background rounded px-2 py-1.5 border">
+        <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="truncate">{(lead as any).address}</span>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+        onClick={() => handleCopy((lead as any).address, 'Adresă')}
+        title="Copiază adresă"
+      >
+        {copiedField === 'Adresă' ? (
+          <Check className="h-3.5 w-3.5 text-green-600" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
+      </Button>
+    </div>
+  </div>
+)}
+
+{(lead as any).address2 && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Adresă 2
+    </label>
+    <p className="text-sm">{(lead as any).address2}</p>
+  </div>
+)}
+
+{(lead as any).city && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Oraș
+    </label>
+    <p className="text-sm">{(lead as any).city}</p>
+  </div>
+)}
+
+{(lead as any).zip && (
+  <div>
+    <label className="text-xs font-medium text-muted-foreground uppercase">
+      Cod poștal
+    </label>
+    <p className="text-sm">{(lead as any).zip}</p>
+  </div>
+)}
+
 
           {lead.technician && (
             <div>
@@ -1950,91 +2084,81 @@ export function LeadDetailsPanel({
                   </div>
                 )}
 
-                {/* Afișează detaliile doar dacă e selectată o tăviță */}
-                {(selectedTrayForDetails || (isTechnician && getTrayId())) && (
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
-                      Detalii comandă comunicate de client
-                    </label>
-                    {loadingTrayDetails ? (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : (
-                      <>
-                        <Textarea
-                          value={isTechnician && getTrayId() 
-                            ? (trayDetailsMap.get(getTrayId()!) || '') 
-                            : trayDetails}
-                          onChange={(e) => {
-                            if (!isTechnician) {
-                              setTrayDetails(e.target.value)
-                            }
-                          }}
-                          placeholder={isTechnician 
-                            ? "Detaliile comenzii pentru această tăviță..." 
-                            : "Introduceți detaliile comenzii comunicate de client..."
+                {/* Afișează detaliile pentru fișa de serviciu (nu mai per tăviță) */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
+                    Detalii comandă comunicate de client
+                  </label>
+                  {loadingTrayDetails ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <>
+                      <Textarea
+                        value={trayDetails}
+                        onChange={(e) => {
+                          if (!isTechnician) {
+                            setTrayDetails(e.target.value)
                           }
-                          className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
-                          readOnly={isTechnician}
-                        />
-                        {/* Buton salvare doar pentru vânzători */}
-                        {isVanzator && selectedTrayForDetails && (
-                          <div className="flex justify-end mt-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={async () => {
-                                setSavingTrayDetails(true)
-                                try {
-                                  if (!selectedTrayForDetails) {
-                                    toast.error('Selectează o tăviță')
-                                    return
-                                  }
-                                  
-                                  // Salvăm detaliile în tray_items.details pentru tăvița selectată
-                                  const { data, error } = await supabase
-                                    .from('tray_items')
-                                    .update({ details: trayDetails } as any)
-                                    .eq('tray_id', selectedTrayForDetails)
-                                    .select('tray_id, details')
-                                    .limit(1)
-                                    .single()
-                                  
-                                  if (error) {
-                                    console.error('Error saving tray details:', error)
-                                    toast.error('Eroare la salvarea detaliilor: ' + error.message)
-                                  } else {
-                                    // Actualizează map-ul local
-                                    const newMap = new Map(trayDetailsMap)
-                                    newMap.set(selectedTrayForDetails, trayDetails)
-                                    setTrayDetailsMap(newMap)
-                                    toast.success('Detaliile tăviței au fost salvate')
-                                  }
-                                } catch (err: any) {
-                                  console.error('Error:', err)
-                                  toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
-                                } finally {
-                                  setSavingTrayDetails(false)
+                        }}
+                        placeholder="Introduceți detaliile comenzii comunicate de client pentru această fișă..."
+                        className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
+                        readOnly={isTechnician}
+                      />
+                      {/* Buton salvare doar pentru vânzători */}
+                      {isVanzator && (
+                        <div className="flex justify-end mt-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              setSavingTrayDetails(true)
+                              try {
+                                const serviceFileId = await getServiceFileId()
+                                if (!serviceFileId) {
+                                  toast.error('Fișa de serviciu nu a fost găsită')
+                                  return
                                 }
-                              }}
-                              disabled={savingTrayDetails}
-                            >
-                              {savingTrayDetails ? (
-                                <>
-                                  <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                                  Salvare...
-                                </>
-                              ) : (
-                                'Salvează'
-                              )}
-                            </Button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
+                                
+                                // Salvăm detaliile în service_files.details
+                                const { data, error } = await supabase
+                                  .from('service_files')
+                                  .update({ details: trayDetails } as any)
+                                  .eq('id', serviceFileId)
+                                  .select('details')
+                                  .single()
+                                
+                                if (error) {
+                                  console.error('Error saving service file details:', error)
+                                  toast.error('Eroare la salvarea detaliilor: ' + error.message)
+                                } else {
+                                  setTrayDetails(data?.details || '')
+                                  toast.success('Detaliile fișei au fost salvate')
+                                }
+                              } catch (err: any) {
+                                console.error('Error:', err)
+                                toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
+                              } finally {
+                                setSavingTrayDetails(false)
+                              }
+                            }}
+                            disabled={savingTrayDetails}
+                          >
+                            {savingTrayDetails ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                                Salvare...
+                              </>
+                            ) : (
+                              'Salvează'
+                            )}
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
                 
                 {/* Mesaj dacă nu sunt tăvițe */}
                 {isVanzator && allTrays.length === 0 && (
@@ -2045,15 +2169,20 @@ export function LeadDetailsPanel({
                   </>
                 ) : (
                   <>
-                    {/* VARIANTA 2: Alte pipeline-uri (Vânzări, Recepție, Curier, etc.) - detalii la nivel de lead */}
+                    {/* VARIANTA 2: Alte pipeline-uri (Vânzări, Recepție, Curier, etc.) - detalii la nivel de service_file */}
                     <div>
                       <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
                         Detalii comandă comunicate de client
                       </label>
                       <Textarea
                         value={trayDetails}
-                        onChange={(e) => setTrayDetails(e.target.value)}
-                        placeholder="Introduceți detaliile comenzii comunicate de client..."
+                        onChange={(e) => {
+                          const newValue = e.target.value
+                          setTrayDetails(newValue)
+                          // Auto-save cu debounce
+                          debouncedSaveDetails(newValue)
+                        }}
+                        placeholder="Introduceți detaliile comenzii comunicate de client pentru această fișă..."
                         className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
                       />
                       <div className="flex justify-end mt-2">
@@ -2063,54 +2192,26 @@ export function LeadDetailsPanel({
                           onClick={async () => {
                             setSavingTrayDetails(true)
                             try {
-                              const leadId = getLeadId()
-                              if (!leadId) {
-                                toast.error('ID lead invalid')
+                              const serviceFileId = await getServiceFileId()
+                              if (!serviceFileId) {
+                                toast.error('Fișa de serviciu nu a fost găsită')
                                 return
                               }
                               
-                              // 1) Salvează detaliile la nivel de lead (pentru Vânzări / Recepție / Curier)
+                              // Salvează detaliile în service_files.details
                               const { data, error } = await supabase
-                                .from('leads')
-                                .update({ tray_details: trayDetails } as any)
-                                .eq('id', leadId)
-                                .select('tray_details')
+                                .from('service_files')
+                                .update({ details: trayDetails } as any)
+                                .eq('id', serviceFileId)
+                                .select('details')
                                 .single()
                               
                               if (error) {
-                                console.error('Error saving tray details:', error)
+                                console.error('Error saving service file details:', error)
                                 toast.error('Eroare la salvarea detaliilor: ' + error.message)
                               } else {
-                                const savedData = data as any
-                                if (savedData?.tray_details !== undefined) {
-                                  setTrayDetails(savedData.tray_details || '')
-                                }
-                                ;(lead as any).tray_details = trayDetails
-
-                                // 2) Propagă aceleași detalii către toate tăvițele (tray_items) din fișele acestui lead,
-                                //    astfel încât tehnicienii din departamente să le vadă pe tăvițe
-                                try {
-                                  const serviceSheets = await listServiceSheetsForLead(leadId)
-                                  const allTrayIds: string[] = []
-
-                                  for (const sheet of serviceSheets) {
-                                    const trays = await listTraysForServiceSheet(sheet.id)
-                                    trays.forEach((t: any) => {
-                                      if (t.id) allTrayIds.push(t.id)
-                                    })
-                                  }
-
-                                  if (allTrayIds.length > 0) {
-                                    await supabase
-                                      .from('tray_items')
-                                      .update({ details: trayDetails } as any)
-                                      .in('tray_id', allTrayIds)
-                                  }
-                                } catch (propagateError) {
-                                  console.error('Error propagating tray details to trays:', propagateError)
-                                }
-
-                                toast.success('Detaliile tăviței au fost salvate')
+                                setTrayDetails(data?.details || '')
+                                toast.success('Detaliile fișei au fost salvate')
                               }
                             } catch (err: any) {
                               console.error('Error:', err)
@@ -2140,6 +2241,7 @@ export function LeadDetailsPanel({
           )}
 
           {/* Acțiuni - Stage & Pipeline */}
+          {!isVanzariPipeline && (
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
               <div>
               <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">Schimbă Etapa</label>
@@ -2224,6 +2326,8 @@ export function LeadDetailsPanel({
               </div>
             </div>
             )}
+          </div>
+          )}
 
             {/* Pasare tăviță - pentru tăvițe din pipeline departament */}
             {((lead as any)?.type === 'tray' || isDepartmentPipeline) && (
@@ -2343,7 +2447,6 @@ export function LeadDetailsPanel({
                 </div>
               </div>
             )}
-          </div>
 
           {/* Mesagerie - Collapsible */}
           <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
@@ -2366,12 +2469,16 @@ export function LeadDetailsPanel({
 
           {/* RIGHT — switchable content cu tabs */}
           <div className="min-w-0">
-            <Tabs value={section} onValueChange={(v) => setSection(v as "fisa" | "istoric")} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-4">
+            <Tabs value={section} onValueChange={(v) => setSection(v as "fisa" | "de-confirmat" | "istoric")} className="w-full">
+              <TabsList className="grid w-full grid-cols-3 mb-4">
                 <TabsTrigger value="fisa" className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
                   <span className="hidden sm:inline">Fișa de serviciu</span>
                   <span className="sm:hidden">Fișă</span>
+                </TabsTrigger>
+                <TabsTrigger value="de-confirmat" className="flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  <span>De Confirmat</span>
                 </TabsTrigger>
                 <TabsTrigger value="istoric" className="flex items-center gap-2">
                   <History className="h-4 w-4" />
@@ -2845,8 +2952,8 @@ export function LeadDetailsPanel({
               </TabsContent>
             </Tabs>
           </div>
-          </div>
         </div>
+      </div>
     </section>
   )
 }

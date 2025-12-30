@@ -26,6 +26,13 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     return () => unsub?.unsubscribe()
   }, [supabase])
 
+  // Redirect la login dacă nu este autentificat (trebuie să fie în useEffect)
+  useEffect(() => {
+    if (isAuthed === false) {
+      router.replace('/auth/sign-in')
+    }
+  }, [isAuthed, router])
+
   // Închide meniul mobil când se schimbă ruta
   useEffect(() => {
     setMobileMenuOpen(false)
@@ -34,9 +41,8 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
   // avoid mounting data hooks until we know auth state
   if (isAuthed === null) return null
 
-  // unauthenticated -> go to login (make sure /login is outside the (crm) group)
+  // unauthenticated -> return null (redirect-ul este în useEffect)
   if (!isAuthed) {
-    router.replace('/auth/sign-in')
     return null
   }
 

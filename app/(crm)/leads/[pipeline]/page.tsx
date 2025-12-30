@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
+import { debounce, normalizePhoneNumber, matchesPhoneNumber } from "@/lib/utils"
 import { KanbanBoard } from "@/components/kanban-board"
 import { MobileBoardLayout } from "@/components/mobile/mobile-board-layout"
 import dynamic from "next/dynamic"
@@ -95,7 +96,15 @@ export default function CRMPage() {
   const [newLeadData, setNewLeadData] = useState({
     full_name: '',
     email: '',
-    phone_number: ''
+    phone_number: '',
+    city: '',
+    company_name: '',
+    company_address: '',
+    address: '',
+    address2: '',
+    zip: '',
+    country: ''
+  
   })
   const [creatingLead, setCreatingLead] = useState(false)
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
@@ -212,13 +221,19 @@ export default function CRMPage() {
     // Căutare universală - caută în toate câmpurile disponibile
     if (filters.searchQuery.trim()) {
       const query = filters.searchQuery.toLowerCase().trim()
+      const normalizedQuery = normalizePhoneNumber(query)
+      
       result = result.filter(lead => {
         const leadAny = lead as any
         
         // Caută în câmpurile de bază
         if (lead.name?.toLowerCase().includes(query)) return true
         if (lead.email?.toLowerCase().includes(query)) return true
-        if (lead.phone?.toLowerCase().includes(query)) return true
+        
+        // Căutare normalizată pentru număr de telefon (suportă +40, 40, 0721, etc.)
+        if (normalizedQuery && matchesPhoneNumber(query, lead.phone)) return true
+        // Fallback la căutare normală dacă nu este un număr
+        if (!normalizedQuery && lead.phone?.toLowerCase().includes(query)) return true
         
         // Caută în câmpurile de campanie/ad/form
         if (lead.campaignName?.toLowerCase().includes(query)) return true
@@ -362,16 +377,36 @@ export default function CRMPage() {
   }
 
   async function handleDeleteStage(stageName: string) {
-    const res = await fetch("/api/stages", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pipelineSlug, stageName }),
-    })
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error || "Failed to delete stage")
-
-    toast({ title: "Stage deleted", description: `“${stageName}” and its leads were removed.` })
-    await refresh()
+    try {
+      const res = await fetch("/api/stages", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pipelineSlug, stageName }),
+      })
+      
+      if (!res.ok) {
+        const text = await res.text()
+        let json
+        try {
+          json = JSON.parse(text)
+        } catch {
+          throw new Error(text || "Failed to delete stage")
+        }
+        throw new Error(json.error || "Failed to delete stage")
+      }
+      
+      const json = await res.json()
+      toast({ title: "Stage deleted", description: `"${stageName}" and its leads were removed.` })
+      await refresh()
+    } catch (err: any) {
+      console.error('Error deleting stage:', err)
+      toast({ 
+        variant: "destructive", 
+        title: "Error", 
+        description: err.message || "Failed to delete stage" 
+      })
+      throw err
+    }
   }
   
   useEffect(() => {
@@ -965,12 +1000,94 @@ export default function CRMPage() {
                 placeholder="+40 123 456 789"
               />
             </div>
+            <div>
+              <Label htmlFor="lead-city">Oraș</Label>
+              <Input
+                id="lead-city"
+                value={newLeadData.city}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, city: e.target.value }))
+                }
+                placeholder="București"
+              />
+            </div>
+              
+            <div>
+              <Label htmlFor="lead-company-name">Nume companie</Label>
+              <Input
+                id="lead-company-name"
+                value={newLeadData.company_name}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, company_name: e.target.value }))
+                }
+                placeholder="Companie 1"
+              />
+            </div>
+              
+            <div>
+              <Label htmlFor="lead-company-address">Compania și adresa</Label>
+              <Input
+                id="lead-company-address"
+                value={newLeadData.company_address}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, company_address: e.target.value }))
+                }
+                placeholder="Compania și adresa"
+              />
+            </div>
+              
+            <div>
+              <Label htmlFor="lead-address">Adresă</Label>
+              <Input
+                id="lead-address"
+                value={newLeadData.address}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, address: e.target.value }))
+                }
+                placeholder="Obor"
+              />
+            </div>
+              
+            <div>
+              <Label htmlFor="lead-address2">Adresă 2</Label>
+              <Input
+                id="lead-address2"
+                value={newLeadData.address2}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, address2: e.target.value }))
+                }
+                placeholder="ap., etaj etc."
+              />
+            </div>
+              
+            <div>
+              <Label htmlFor="lead-zip">Cod poștal</Label>
+              <Input
+                id="lead-zip"
+                value={newLeadData.zip}
+                onChange={(e) =>
+                  setNewLeadData(prev => ({ ...prev, zip: e.target.value }))
+                }
+                placeholder="123333"
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
                   setCreateLeadOpen(false)
-                  setNewLeadData({ full_name: '', email: '', phone_number: '' })
+                  setNewLeadData({ 
+                    full_name: '', 
+                    email: '', 
+                    phone_number: '',
+                    city: '',
+                    company_name: '',
+                    company_address: '',
+                    address: '',
+                    address2: '',
+                    zip: '',
+                    country: ''
+                  })
                 }}
               >
                 Anuleaza
@@ -983,6 +1100,11 @@ export default function CRMPage() {
                       description: "Numele este obligatoriu",
                       variant: "destructive"
                     })
+                    return
+                  }
+
+                  // Previne dublarea comenzii
+                  if (creatingLead) {
                     return
                   }
 
@@ -1007,6 +1129,12 @@ export default function CRMPage() {
                         full_name: newLeadData.full_name.trim(),
                         email: newLeadData.email.trim() || null,
                         phone_number: newLeadData.phone_number.trim() || null,
+                        city: newLeadData.city.trim() || null,
+                        company_name: newLeadData.company_name.trim() || null,
+                        company_address: newLeadData.company_address.trim() || null,
+                        address: newLeadData.address.trim() || null,
+                        address2: newLeadData.address2.trim() || null,
+                        zip: newLeadData.zip.trim() || null,
                         platform: 'manual',
                         created_at: new Date().toISOString()
                       },
@@ -1024,7 +1152,18 @@ export default function CRMPage() {
                     })
 
                     setCreateLeadOpen(false)
-                    setNewLeadData({ full_name: '', email: '', phone_number: '' })
+                    setNewLeadData({ 
+                      full_name: '', 
+                      email: '', 
+                      phone_number: '',
+                      city: '',
+                      company_name: '',
+                      company_address: '',
+                      address: '',
+                      address2: '',
+                      zip: '',
+                      country: ''
+                    })
                     await refresh()
                     router.refresh?.()
                   } catch (error: any) {

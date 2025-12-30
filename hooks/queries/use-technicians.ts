@@ -8,7 +8,6 @@ const supabase = supabaseBrowser()
 interface Technician {
   user_id: string
   name: string | null
-  email: string | null
 }
 
 // ✅ Query Keys
@@ -24,7 +23,7 @@ export function useTechnicians() {
     queryFn: async (): Promise<Technician[]> => {
       const { data, error } = await supabase
         .from('app_members')
-        .select('user_id, name, email')
+        .select('user_id, name')
         .order('name')
 
       if (error) throw error
@@ -41,7 +40,7 @@ export function useTechniciansMap() {
   
   const map: Record<string, string> = {}
   technicians?.forEach(t => {
-    const name = t.name || t.email?.split('@')[0] || `User ${t.user_id.slice(0, 8)}`
+    const name = t.name || `User ${t.user_id.slice(0, 8)}`
     map[t.user_id] = name
   })
   

@@ -18,8 +18,14 @@ export default function AuthStatus() {
     return name.substring(0, 2).toUpperCase()
   }
 
-  // Obține numele pentru afișare
-  const displayName = profile?.name || user?.email?.split('@')[0] || 'User'
+  // Obține numele pentru afișare (prioritate: display_name din auth > name din app_members > email)
+  const displayName = 
+    (user?.user_metadata as any)?.display_name || 
+    (user?.user_metadata as any)?.name || 
+    (user?.user_metadata as any)?.full_name ||
+    profile?.name || 
+    user?.email?.split('@')[0] || 
+    'User'
 
   if (loading) return null
   if (!user) return <Link className="text-sm underline" href="/auth/sign-in">Sign in</Link>

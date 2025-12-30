@@ -12,6 +12,7 @@ export type ServiceFile = {
   date: string
   status: 'noua' | 'in_lucru' | 'finalizata'
   notes: string | null
+  details: string | null // Detalii comandă comunicate de client, specifice pentru această fișă
   office_direct: boolean // Checkbox pentru "Office direct"
   curier_trimis: boolean // Checkbox pentru "Curier Trimis"
   no_deal: boolean       // Checkbox pentru "No Deal" în Vânzări
@@ -40,7 +41,6 @@ export type TrayItem = {
   qty: number
   notes: string | null
   pipeline: string | null
-  details?: string | null
   // Joined data
   service?: {
     id: string
@@ -61,6 +61,23 @@ export type TrayItem = {
 
 // ==================== SERVICE FILES ====================
 
+/**
+ * Creează o nouă fișă de serviciu (service file) asociată cu un lead.
+ * O fișă de serviciu reprezintă un document de lucru care conține detalii despre serviciile
+ * care trebuie efectuate pentru un client. Poate include status, note și flag-uri pentru
+ * "Office direct", "Curier Trimis" și "No Deal".
+ * 
+ * @param data - Datele fișei de serviciu:
+ *   - lead_id: ID-ul lead-ului pentru care se creează fișa
+ *   - number: Numărul fișei (ex: "Fisa 1")
+ *   - date: Data fișei (format ISO)
+ *   - status: Statusul fișei ('noua', 'in_lucru', 'finalizata') - implicit 'noua'
+ *   - notes: Note opționale despre fișă
+ *   - office_direct: Flag pentru "Office direct" - implicit false
+ *   - curier_trimis: Flag pentru "Curier Trimis" - implicit false
+ *   - no_deal: Flag pentru "No Deal" în pipeline-ul Vânzări - implicit false
+ * @returns Obiect cu data fișei create sau null și eroarea dacă există
+ */
 export async function createServiceFile(data: {
   lead_id: string
   number: string
@@ -94,6 +111,13 @@ export async function createServiceFile(data: {
   }
 }
 
+/**
+ * Obține o fișă de serviciu după ID-ul său.
+ * Funcția returnează toate detaliile unei fișe de serviciu, inclusiv status, note și flag-uri.
+ * 
+ * @param serviceFileId - ID-ul unic al fișei de serviciu
+ * @returns Obiect cu data fișei sau null dacă nu există, și eroarea dacă există
+ */
 export async function getServiceFile(serviceFileId: string): Promise<{ data: ServiceFile | null; error: any }> {
   try {
     const { data, error } = await supabase
@@ -109,6 +133,35 @@ export async function getServiceFile(serviceFileId: string): Promise<{ data: Ser
   }
 }
 
+/**
+ * Obține următorul număr global pentru o fișă de serviciu.
+ * Numărul este global pentru toate fișele din sistem, nu doar pentru un lead specific.
+ * 
+ * @returns Următorul număr global disponibil
+ */
+export async function getNextGlobalServiceFileNumber(): Promise<{ data: number | null; error: any }> {
+  try {
+    // Numără toate fișele existente pentru a obține următorul număr global
+    const { count, error } = await supabase
+      .from('service_files')
+      .select('*', { count: 'exact', head: true })
+
+    if (error) throw error
+    const nextNumber = (count ?? 0) + 1
+    return { data: nextNumber, error: null }
+  } catch (error) {
+    return { data: null, error }
+  }
+}
+
+/**
+ * Listează toate fișele de serviciu asociate cu un lead specificat.
+ * Fișele sunt returnate în ordine descrescătoare după data creării (cele mai noi primele).
+ * Această funcție este folosită pentru a afișa toate fișele unui client în panoul de detalii.
+ * 
+ * @param leadId - ID-ul lead-ului pentru care se caută fișele
+ * @returns Array cu toate fișele de serviciu ale lead-ului sau array gol dacă nu există
+ */
 export async function listServiceFilesForLead(leadId: string): Promise<{ data: ServiceFile[]; error: any }> {
   try {
     const { data, error } = await supabase
@@ -124,9 +177,25 @@ export async function listServiceFilesForLead(leadId: string): Promise<{ data: S
   }
 }
 
+/**
+ * Actualizează o fișă de serviciu existentă.
+ * Permite modificarea oricărui câmp al fișei: număr, dată, status, note sau flag-uri.
+ * Funcția actualizează automat câmpul updated_at cu data curentă.
+ * 
+ * @param serviceFileId - ID-ul fișei de serviciu de actualizat
+ * @param updates - Obiect parțial cu câmpurile de actualizat:
+ *   - number: Numărul fișei
+ *   - date: Data fișei
+ *   - status: Statusul fișei ('noua', 'in_lucru', 'finalizata')
+ *   - notes: Note despre fișă
+ *   - office_direct: Flag pentru "Office direct"
+ *   - curier_trimis: Flag pentru "Curier Trimis"
+ *   - no_deal: Flag pentru "No Deal"
+ * @returns Obiect cu data fișei actualizate sau null și eroarea dacă există
+ */
 export async function updateServiceFile(
   serviceFileId: string,
-  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'office_direct' | 'curier_trimis' | 'no_deal'>>
+  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal'>>
 ): Promise<{ data: ServiceFile | null; error: any }> {
   try {
     const { data, error } = await supabase
@@ -146,6 +215,14 @@ export async function updateServiceFile(
   }
 }
 
+/**
+ * Șterge o fișă de serviciu din baza de date.
+ * ATENȚIE: Ștergerea unei fișe va șterge și toate tăvițele (trays) asociate cu aceasta.
+ * Folosiți cu precauție, deoarece operația este ireversibilă.
+ * 
+ * @param serviceFileId - ID-ul fișei de serviciu de șters
+ * @returns Obiect cu success: true dacă ștergerea a reușit, false altfel, și eroarea dacă există
+ */
 export async function deleteServiceFile(serviceFileId: string): Promise<{ success: boolean; error: any }> {
   try {
     const { error } = await supabase
@@ -162,6 +239,19 @@ export async function deleteServiceFile(serviceFileId: string): Promise<{ succes
 
 // ==================== TRAYS ====================
 
+/**
+ * Creează o nouă tăviță (tray) asociată cu o fișă de serviciu.
+ * O tăviță reprezintă un container fizic sau logic care conține item-uri de lucru.
+ * Funcția verifică dacă există deja o tăviță cu același număr, mărime și fișă de serviciu,
+ * și dacă da, returnează tăvița existentă în loc să creeze una duplicată.
+ * 
+ * @param data - Datele tăviței:
+ *   - number: Numărul tăviței (ex: "Tăbliță 1")
+ *   - size: Mărimea tăviței (ex: "M", "L", "XL")
+ *   - service_file_id: ID-ul fișei de serviciu căreia îi aparține tăvița
+ *   - status: Statusul tăviței ('in_receptie', 'in_lucru', 'gata') - implicit 'in_receptie'
+ * @returns Obiect cu data tăviței create sau existente, sau null și eroarea dacă există
+ */
 export async function createTray(data: {
   number: string
   size: string
@@ -200,6 +290,13 @@ export async function createTray(data: {
   }
 }
 
+/**
+ * Obține o tăviță după ID-ul său.
+ * Returnează toate detaliile unei tăvițe, inclusiv număr, mărime, status și flag-ul urgent.
+ * 
+ * @param trayId - ID-ul unic al tăviței
+ * @returns Obiect cu data tăviței sau null dacă nu există, și eroarea dacă există
+ */
 export async function getTray(trayId: string): Promise<{ data: Tray | null; error: any }> {
   try {
     const { data, error } = await supabase
@@ -215,6 +312,14 @@ export async function getTray(trayId: string): Promise<{ data: Tray | null; erro
   }
 }
 
+/**
+ * Listează toate tăvițele asociate cu o fișă de serviciu specificată.
+ * Tăvițele sunt returnate în ordine crescătoare după data creării (cele mai vechi primele).
+ * Această funcție este folosită pentru a afișa toate tăvițele unei fișe în panoul de detalii.
+ * 
+ * @param serviceFileId - ID-ul fișei de serviciu pentru care se caută tăvițele
+ * @returns Array cu toate tăvițele fișei sau array gol dacă nu există
+ */
 export async function listTraysForServiceFile(serviceFileId: string): Promise<{ data: Tray[]; error: any }> {
   try {
     const { data, error } = await supabase
@@ -230,9 +335,22 @@ export async function listTraysForServiceFile(serviceFileId: string): Promise<{ 
   }
 }
 
+/**
+ * Actualizează o tăviță existentă.
+ * Permite modificarea oricărui câmp al tăviței: număr, mărime, status, flag urgent sau detalii.
+ * Dacă nu sunt furnizate actualizări, funcția returnează tăvița existentă fără modificări.
+ * 
+ * @param trayId - ID-ul tăviței de actualizat
+ * @param updates - Obiect parțial cu câmpurile de actualizat:
+ *   - number: Numărul tăviței
+ *   - size: Mărimea tăviței
+ *   - status: Statusul tăviței ('in_receptie', 'in_lucru', 'gata')
+ *   - urgent: Flag pentru tăviță urgentă
+ * @returns Obiect cu data tăviței actualizate sau existente, sau null și eroarea dacă există
+ */
 export async function updateTray(
   trayId: string,
-  updates: Partial<Pick<Tray, 'number' | 'size' | 'status' | 'urgent' | 'details'>>
+  updates: Partial<Pick<Tray, 'number' | 'size' | 'status' | 'urgent' >>
 ): Promise<{ data: Tray | null; error: any }> {
   try {
     // Verifică dacă există actualizări
@@ -255,6 +373,14 @@ export async function updateTray(
   }
 }
 
+/**
+ * Șterge o tăviță din baza de date.
+ * ATENȚIE: Ștergerea unei tăvițe va șterge și toate item-urile (tray_items) asociate cu aceasta.
+ * Folosiți cu precauție, deoarece operația este ireversibilă.
+ * 
+ * @param trayId - ID-ul tăviței de șters
+ * @returns Obiect cu success: true dacă ștergerea a reușit, false altfel, și eroarea dacă există
+ */
 export async function deleteTray(trayId: string): Promise<{ success: boolean; error: any }> {
   try {
     const { error } = await supabase
@@ -271,6 +397,26 @@ export async function deleteTray(trayId: string): Promise<{ success: boolean; er
 
 // ==================== TRAY ITEMS ====================
 
+/**
+ * Creează un nou item într-o tăviță (tray item).
+ * Un tray item reprezintă un serviciu, piese sau instrument care trebuie procesat în cadrul unei tăvițe.
+ * Funcția suportă noua structură cu brand-uri și serial numbers, salvând datele în tabelele
+ * tray_item_brands și tray_item_brand_serials. Dacă aceste tabele nu există, funcția va funcționa
+ * doar cu câmpurile de bază.
+ * 
+ * @param data - Datele item-ului:
+ *   - tray_id: ID-ul tăviței căreia îi aparține item-ul
+ *   - department_id: ID-ul departamentului (opțional)
+ *   - instrument_id: ID-ul instrumentului (opțional)
+ *   - service_id: ID-ul serviciului (opțional)
+ *   - part_id: ID-ul piesei (opțional)
+ *   - technician_id: ID-ul tehnicianului atribuit (opțional)
+ *   - qty: Cantitatea item-ului
+ *   - notes: Note JSON cu detalii (preț, discount, urgent, item_type, brand, serial_number)
+ *   - pipeline: Pipeline-ul asociat (opțional)
+ *   - brandSerialGroups: Array cu grupuri de brand-uri și serial numbers (noua structură)
+ * @returns Obiect cu data item-ului creat sau null și eroarea dacă există
+ */
 export async function createTrayItem(data: {
   tray_id: string
   department_id?: string | null
@@ -303,7 +449,7 @@ export async function createTrayItem(data: {
         qty: data.qty,
         notes: data.notes || null,
         pipeline: data.pipeline || null,
-        details: (data as any).details ?? null,
+        
       }])
       .select()
       .single()
@@ -385,6 +531,13 @@ export async function createTrayItem(data: {
   }
 }
 
+/**
+ * Obține un item de tăviță după ID-ul său.
+ * Returnează toate detaliile unui item, inclusiv relațiile cu servicii, brand-uri și serial numbers.
+ * 
+ * @param trayItemId - ID-ul unic al item-ului de tăviță
+ * @returns Obiect cu data item-ului sau null dacă nu există, și eroarea dacă există
+ */
 export async function getTrayItem(trayItemId: string): Promise<{ data: TrayItem | null; error: any }> {
   try {
     const { data, error } = await supabase
@@ -400,6 +553,17 @@ export async function getTrayItem(trayItemId: string): Promise<{ data: TrayItem 
   }
 }
 
+/**
+ * Listează toate item-urile dintr-o tăviță specificată.
+ * Funcția încearcă să folosească noua structură cu tray_item_brands și tray_item_brand_serials.
+ * Dacă aceste tabele nu există sau apar erori, funcția face fallback la structura veche.
+ * Item-urile sunt returnate în ordine crescătoare după ID (ordinea creării).
+ * Funcția gestionează și cazurile în care RLS (Row Level Security) blochează join-urile cu services,
+ * încărcând serviciile separat dacă este necesar.
+ * 
+ * @param trayId - ID-ul tăviței pentru care se caută item-urile
+ * @returns Array cu toate item-urile tăviței sau array gol dacă nu există
+ */
 export async function listTrayItemsForTray(trayId: string): Promise<{ data: TrayItem[]; error: any }> {
   try {
     // Încearcă mai întâi noua structură cu tray_item_brands
@@ -523,6 +687,24 @@ export async function listTrayItemsForTray(trayId: string): Promise<{ data: Tray
   }
 }
 
+/**
+ * Actualizează un item de tăviță existent.
+ * Permite modificarea oricărui câmp al item-ului: departament, instrument, serviciu, piesă,
+ * tehnician, cantitate, note sau pipeline. Note-urile pot conține JSON cu detalii suplimentare
+ * (preț, discount, urgent, item_type, brand, serial_number).
+ * 
+ * @param trayItemId - ID-ul item-ului de actualizat
+ * @param updates - Obiect parțial cu câmpurile de actualizat:
+ *   - department_id: ID-ul departamentului
+ *   - instrument_id: ID-ul instrumentului
+ *   - service_id: ID-ul serviciului
+ *   - part_id: ID-ul piesei
+ *   - technician_id: ID-ul tehnicianului
+ *   - qty: Cantitatea item-ului
+ *   - notes: Note JSON cu detalii
+ *   - pipeline: Pipeline-ul asociat
+ * @returns Obiect cu data item-ului actualizat sau null și eroarea dacă există
+ */
 export async function updateTrayItem(
   trayItemId: string,
   updates: Partial<Pick<TrayItem, 'department_id' | 'instrument_id' | 'service_id' | 'part_id' | 'technician_id' | 'qty' | 'notes' | 'pipeline'>>
@@ -542,6 +724,14 @@ export async function updateTrayItem(
   }
 }
 
+/**
+ * Șterge un item de tăviță din baza de date.
+ * ATENȚIE: Ștergerea unui item este ireversibilă și va șterge și toate brand-urile și
+ * serial numbers asociate (dacă există noua structură).
+ * 
+ * @param trayItemId - ID-ul item-ului de șters
+ * @returns Obiect cu success: true dacă ștergerea a reușit, false altfel, și eroarea dacă există
+ */
 export async function deleteTrayItem(trayItemId: string): Promise<{ success: boolean; error: any }> {
   try {
     const { error } = await supabase

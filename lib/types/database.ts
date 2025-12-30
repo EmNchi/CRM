@@ -104,6 +104,13 @@ export interface KanbanLead {
     // Câmpuri pentru fișe (când isFisa = true)
     isFisa?: boolean // true dacă acest card reprezintă o fișă de serviciu
     fisaId?: string // ID-ul fișei (când isFisa = true)
+    // Câmpuri adresă și companie
+    city?: string | null
+    company_name?: string | null
+    company_address?: string | null
+    address?: string | null
+    address2?: string | null
+    zip?: string | null
 }
 
 export interface KanbanQuote {

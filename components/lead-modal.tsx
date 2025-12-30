@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { format } from "date-fns"
 import type { Lead } from "@/app/(crm)/dashboard/page"
+import { useRole } from "@/lib/contexts/AuthContext"
 
 interface LeadModalProps {
   lead: Lead | null
@@ -31,6 +32,8 @@ export function LeadModal({
   onMoveToPipeline,
   pipelineOptions
 }: LeadModalProps) {
+  const { role } = useRole()
+  const canMovePipeline = role === 'owner' || role === 'admin'
 
   const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
@@ -126,6 +129,7 @@ export function LeadModal({
             </Select>
           </div>
 
+          {canMovePipeline && (
           <div className="mt-4">
             <label className="font-medium text-foreground mb-2 block">Move to another Pipeline</label>
             <Select
@@ -152,6 +156,7 @@ export function LeadModal({
               </SelectContent>
             </Select>
           </div>
+          )}
 
           <div className="flex justify-end">
             <Button variant="outline" onClick={onClose}>Close</Button>

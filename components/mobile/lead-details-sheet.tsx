@@ -109,9 +109,8 @@ export function LeadDetailsSheet({
   const [uploadingImage, setUploadingImage] = useState(false)
   const [loadingImages, setLoadingImages] = useState(false)
   
-  // State pentru detalii tăviță
+  // State pentru detalii fișă client (nu mai per tăviță)
   const [trayDetails, setTrayDetails] = useState<string>('')
-  const [trayDetailsMap, setTrayDetailsMap] = useState<Map<string, string>>(new Map())
   const [loadingTrayDetails, setLoadingTrayDetails] = useState(false)
   const [savingTrayDetails, setSavingTrayDetails] = useState(false)
   
@@ -512,24 +511,30 @@ export function LeadDetailsSheet({
           setTrayImages([])
         }
 
-        // Încarcă detaliile tăviței
+        // Încarcă detaliile fișei de serviciu (nu mai per tăviță)
         try {
-          const { data: trayItemsData, error: detailsError } = await supabase
-            .from('tray_items')
-            .select('tray_id, details')
-            .eq('tray_id', trayId)
-            .limit(1)
+          // Obține service_file_id din tray
+          const { data: trayData, error: trayError } = await supabase
+            .from('trays')
+            .select('service_file_id')
+            .eq('id', trayId)
             .single()
           
-          if (!detailsError && trayItemsData) {
-            const details = (trayItemsData as any).details || ''
-            setTrayDetails(details)
-            const newMap = new Map(trayDetailsMap)
-            newMap.set(trayId, details)
-            setTrayDetailsMap(newMap)
+          if (!trayError && trayData?.service_file_id) {
+            // Încarcă detaliile din service_files.details
+            const { data: serviceFileData, error: detailsError } = await supabase
+              .from('service_files')
+              .select('details')
+              .eq('id', trayData.service_file_id)
+              .single()
+            
+            if (!detailsError && serviceFileData) {
+              const details = (serviceFileData as any).details || ''
+              setTrayDetails(details)
+            }
           }
         } catch (error) {
-          console.error('Eroare la încărcare detalii tăviță:', error)
+          console.error('Eroare la încărcare detalii fișă:', error)
         }
 
         // Încarcă informațiile despre tăviță
@@ -1113,10 +1118,72 @@ export function LeadDetailsSheet({
                                 setTrayDetails(e.target.value)
                               }
                             }}
-                            placeholder="Detaliile comenzii pentru această tăviță..."
+                            placeholder="Detaliile comenzii pentru această fișă (vizibile pentru toate tăvițele din fișă)..."
                             className="min-h-[100px] text-xs sm:text-sm resize-none"
                             readOnly={isTechnician}
                           />
+                        )}
+                        {/* Buton salvare doar pentru vânzători */}
+                        {!isTechnician && (
+                          <div className="flex justify-end mt-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                setSavingTrayDetails(true)
+                                try {
+                                  const trayId = getTrayId()
+                                  if (!trayId) {
+                                    toast.error('Tăvița nu a fost găsită')
+                                    return
+                                  }
+
+                                  // Obține service_file_id din tray
+                                  const { data: trayData, error: trayError } = await supabase
+                                    .from('trays')
+                                    .select('service_file_id')
+                                    .eq('id', trayId)
+                                    .single()
+
+                                  if (trayError || !trayData?.service_file_id) {
+                                    toast.error('Fișa de serviciu nu a fost găsită')
+                                    return
+                                  }
+
+                                  // Salvează detaliile în service_files.details
+                                  const { data, error } = await supabase
+                                    .from('service_files')
+                                    .update({ details: trayDetails } as any)
+                                    .eq('id', trayData.service_file_id)
+                                    .select('details')
+                                    .single()
+
+                                  if (error) {
+                                    console.error('Error saving service file details:', error)
+                                    toast.error('Eroare la salvarea detaliilor: ' + error.message)
+                                  } else {
+                                    setTrayDetails(data?.details || '')
+                                    toast.success('Detaliile fișei au fost salvate')
+                                  }
+                                } catch (err: any) {
+                                  console.error('Error:', err)
+                                  toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
+                                } finally {
+                                  setSavingTrayDetails(false)
+                                }
+                              }}
+                              disabled={savingTrayDetails}
+                            >
+                              {savingTrayDetails ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                                  Salvare...
+                                </>
+                              ) : (
+                                'Salvează'
+                              )}
+                            </Button>
+                          </div>
                         )}
                       </div>
 

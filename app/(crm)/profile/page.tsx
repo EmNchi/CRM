@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, User, Lock, BarChart3, Clock, Loader2, Palette, Moon, Sun, Monitor } from 'lucide-react'
+import { ArrowLeft, User, Lock, BarChart3, Clock, Loader2, Palette, Moon, Sun, Monitor, Edit2, X, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuthContext } from '@/lib/contexts/AuthContext'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
@@ -27,7 +27,7 @@ interface Statistics {
 
 export default function ProfilePage() {
   const router = useRouter()
-  const { user, profile, role, loading: authLoading, isMember } = useAuthContext()
+  const { user, profile, role, loading: authLoading, isMember, refreshProfile } = useAuthContext()
   const { preferences, updatePreferences } = useUserPreferences()
   
   const [statistics, setStatistics] = useState<Statistics>({
@@ -47,6 +47,11 @@ export default function ProfilePage() {
     confirmPassword: '',
   })
   const [showPasswordForm, setShowPasswordForm] = useState(false)
+  
+  // State pentru editarea display_name
+  const [editingDisplayName, setEditingDisplayName] = useState(false)
+  const [displayNameValue, setDisplayNameValue] = useState("")
+  const [savingDisplayName, setSavingDisplayName] = useState(false)
   
   // Aplică tema când se schimbă preferințele
   useEffect(() => {
@@ -219,6 +224,40 @@ export default function ProfilePage() {
     return `${hours} h ${mins} min`
   }
 
+  const getDisplayName = () => {
+    return (user?.user_metadata as any)?.display_name || 
+           (user?.user_metadata as any)?.name || 
+           (user?.user_metadata as any)?.full_name || 
+           profile?.name || 
+           'Necunoscut'
+  }
+
+  const handleUpdateDisplayName = async () => {
+    if (!displayNameValue.trim()) {
+      toast.error("Display name-ul nu poate fi gol")
+      return
+    }
+    setSavingDisplayName(true)
+    try {
+      const res = await fetch("/api/profile/update-display-name", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: displayNameValue.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || "Error")
+      toast.success("Display name actualizat")
+      setEditingDisplayName(false)
+      setDisplayNameValue("")
+      // Reîncarcă profilul pentru a reflecta schimbările
+      await refreshProfile()
+    } catch (error: any) {
+      toast.error(error.message || "Eroare la actualizare")
+    } finally {
+      setSavingDisplayName(false)
+    }
+  }
+
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -278,7 +317,58 @@ export default function ProfilePage() {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-sm text-muted-foreground">Nume</Label>
-              <p className="font-medium">{profile.name || 'Necunoscut'}</p>
+              {editingDisplayName ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <Input
+                    value={displayNameValue}
+                    onChange={(e) => setDisplayNameValue(e.target.value)}
+                    className="flex-1"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleUpdateDisplayName()
+                      if (e.key === 'Escape') {
+                        setEditingDisplayName(false)
+                        setDisplayNameValue("")
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleUpdateDisplayName}
+                    disabled={savingDisplayName}
+                    className="shrink-0"
+                  >
+                    {savingDisplayName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingDisplayName(false)
+                      setDisplayNameValue("")
+                    }}
+                    className="shrink-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="font-medium flex-1">{getDisplayName()}</p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingDisplayName(true)
+                      setDisplayNameValue(getDisplayName())
+                    }}
+                    className="shrink-0"
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-sm text-muted-foreground">Email</Label>

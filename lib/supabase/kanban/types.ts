@@ -61,6 +61,13 @@ export interface KanbanItem {
   // Timestamps for specific stages
   inLucruSince?: string
   inAsteptareSince?: string
+  // Câmpuri adresă și companie
+  city?: string | null
+  company_name?: string | null
+  company_address?: string | null
+  address?: string | null
+  address2?: string | null
+  zip?: string | null
 }
 
 export interface KanbanTag {
@@ -81,6 +88,12 @@ export interface RawLead {
   ad_name?: string | null
   form_name?: string | null
   tray_details?: any
+  city?: string | null
+  company_name?: string | null
+  company_address?: string | null
+  address?: string | null
+  address2?: string | null
+  zip?: string | null
 }
 
 export interface RawServiceFile {

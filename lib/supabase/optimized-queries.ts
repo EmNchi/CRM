@@ -245,7 +245,7 @@ export async function loadStaticData() {
     
     supabase
       .from('app_members')
-      .select('user_id, name, email')
+      .select('user_id, name')
       .order('name'),
   ])
 

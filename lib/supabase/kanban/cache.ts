@@ -23,11 +23,11 @@ export async function loadTechnicianCache(): Promise<void> {
     const supabase = supabaseBrowser()
     const { data: members } = await supabase
       .from('app_members')
-      .select('user_id, name, email')
+      .select('user_id, name')
     
     if (members) {
       members.forEach((m: any) => {
-        const name = m.name || m.email?.split('@')[0] || 'Necunoscut'
+        const name = m.name || `User ${m.user_id.slice(0, 8)}` || 'Necunoscut'
         technicianCache.set(m.user_id, name)
       })
     }

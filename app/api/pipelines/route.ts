@@ -7,7 +7,8 @@ export async function POST(req: Request) {
   const trimmed = (name ?? "").trim()
   if (!trimmed) return NextResponse.json({ error: "Pipeline name is required" }, { status: 400 })
 
-  const supabase = createRouteHandlerClient({ cookies })
+  const cookieStore = cookies()
+  const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
@@ -41,7 +42,8 @@ export async function DELETE(req: Request) {
     const trimmed = (name ?? "").trim()
     if (!trimmed) return NextResponse.json({ error: "Pipeline name is required" }, { status: 400 })
   
-    const supabase = createRouteHandlerClient({ cookies })
+    const cookieStore = cookies()
+  const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
     const { data: { user }, error: authErr } = await supabase.auth.getUser()
     if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   

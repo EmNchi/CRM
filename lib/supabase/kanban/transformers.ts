@@ -20,7 +20,16 @@ import { URGENT_MARKUP_PCT, matchesStagePattern } from './constants'
 // ==================== LEAD TRANSFORMER ====================
 
 /**
- * Transform a raw lead into a KanbanItem
+ * Transformă un lead brut într-un KanbanItem pentru afișare în board-ul Kanban.
+ * Această funcție convertește datele unui lead din formatul bazei de date în formatul
+ * standardizat KanbanItem, care include informații despre lead, stage-ul curent, tag-uri
+ * și totalul calculat. Funcția este folosită pentru a afișa lead-urile în interfața Kanban.
+ * 
+ * @param lead - Lead-ul brut din baza de date
+ * @param pipelineItem - Item-ul din pipeline care conține informații despre stage și pipeline
+ * @param tags - Array cu tag-urile asociate lead-ului (implicit array gol)
+ * @param total - Totalul calculat pentru lead (suma tuturor fișelor și tăvițelor) - implicit 0
+ * @returns KanbanItem formatat pentru afișare în board-ul Kanban
  */
 export function transformLeadToKanbanItem(
   lead: RawLead,
@@ -46,13 +55,30 @@ export function transformLeadToKanbanItem(
     stageMovedAt: pipelineItem.updated_at,
     type: 'lead',
     total,
+    city: lead.city || null,
+    company_name: lead.company_name || null,
+    company_address: lead.company_address || null,
+    address: lead.address || null,
+    address2: lead.address2 || null,
+    zip: lead.zip || null,
   }
 }
 
 // ==================== SERVICE FILE TRANSFORMER ====================
 
 /**
- * Transform a raw service file into a KanbanItem
+ * Transformă o fișă de serviciu brută într-un KanbanItem pentru afișare în board-ul Kanban.
+ * Această funcție convertește datele unei fișe de serviciu din formatul bazei de date în
+ * formatul standardizat KanbanItem. Fișa de serviciu este afișată cu informații despre lead-ul
+ * asociat, numărul fișei, status și totalul calculat. Funcția suportă și flag-ul isReadOnly
+ * pentru a indica dacă fișa poate fi modificată sau nu.
+ * 
+ * @param serviceFile - Fișa de serviciu brută din baza de date
+ * @param pipelineItem - Item-ul din pipeline care conține informații despre stage și pipeline
+ * @param tags - Array cu tag-urile asociate lead-ului (implicit array gol)
+ * @param total - Totalul calculat pentru fișă (suma tuturor tăvițelor) - implicit 0
+ * @param isReadOnly - Flag care indică dacă fișa este read-only (nu poate fi modificată) - implicit false
+ * @returns KanbanItem formatat pentru afișare în board-ul Kanban
  */
 export function transformServiceFileToKanbanItem(
   serviceFile: RawServiceFile,
@@ -84,13 +110,31 @@ export function transformServiceFileToKanbanItem(
     serviceFileStatus: serviceFile.status,
     isReadOnly,
     total,
+    city: lead?.city || null,
+    company_name: lead?.company_name || null,
+    company_address: lead?.company_address || null,
+    address: lead?.address || null,
+    address2: lead?.address2 || null,
+    zip: lead?.zip || null,
   }
 }
 
 // ==================== TRAY TRANSFORMER ====================
 
 /**
- * Transform a raw tray into a KanbanItem
+ * Transformă o tăviță brută într-un KanbanItem pentru afișare în board-ul Kanban.
+ * Această funcție convertește datele unei tăvițe din formatul bazei de date în formatul
+ * standardizat KanbanItem. Tăvița este afișată cu informații despre lead-ul asociat (prin
+ * fișa de serviciu), numărul tăviței, mărime, status, tehnician atribuit și totalul calculat.
+ * Funcția calculează automat câmpurile inLucruSince și inAsteptareSince bazate pe stage-ul curent.
+ * 
+ * @param tray - Tăvița brută din baza de date
+ * @param pipelineItem - Item-ul din pipeline care conține informații despre stage și pipeline
+ * @param tags - Array cu tag-urile asociate lead-ului (implicit array gol)
+ * @param technician - Numele tehnicianului atribuit tăviței (implicit null)
+ * @param total - Totalul calculat pentru tăviță (suma tuturor item-urilor) - implicit 0
+ * @param isReadOnly - Flag care indică dacă tăvița este read-only (nu poate fi modificată) - implicit false
+ * @returns KanbanItem formatat pentru afișare în board-ul Kanban
  */
 export function transformTrayToKanbanItem(
   tray: RawTray,
@@ -132,14 +176,26 @@ export function transformTrayToKanbanItem(
     isReadOnly,
     inLucruSince: isInLucru ? pipelineItem.updated_at : undefined,
     inAsteptareSince: isInAsteptare ? pipelineItem.updated_at : undefined,
+    city: lead?.city || null,
+    company_name: lead?.company_name || null,
+    company_address: lead?.company_address || null,
+    address: lead?.address || null,
+    address2: lead?.address2 || null,
+    zip: lead?.zip || null,
   }
 }
 
 // ==================== TECHNICIAN EXTRACTION ====================
 
 /**
- * Extract technician mapping from tray items
- * Returns a map of tray_id -> technician name
+ * Extrage maparea tehnicianilor din item-urile de tăviță.
+ * Această funcție analizează item-urile de tăviță și creează o mapare între ID-ul tăviței
+ * și numele tehnicianului atribuit. Dacă o tăviță are mai mulți item-uri cu tehniciani
+ * diferiți, se folosește primul tehnician găsit. Funcția folosește cache-ul de tehniciani
+ * pentru a obține numele tehnicianului din ID.
+ * 
+ * @param trayItems - Array cu item-urile de tăviță care conțin technician_id
+ * @returns Map cu cheia tray_id și valoarea numele tehnicianului (sau string gol dacă nu există)
  */
 export function extractTechnicianMap(
   trayItems: RawTrayItem[]
@@ -168,7 +224,17 @@ interface TrayItemWithParsedNotes extends RawTrayItem {
 }
 
 /**
- * Calculate total for a single tray
+ * Calculează totalul pentru o singură tăviță.
+ * Această funcție calculează prețul total al unei tăvițe bazându-se pe item-urile sale.
+ * Funcția procesează item-urile vizibile (cele cu item_type în notes), aplică discount-uri,
+ * markup-uri pentru urgent, și discount-uri pentru abonamente. Calculează separat totalurile
+ * pentru servicii și piese pentru a aplica discount-uri diferite pentru abonamente.
+ * 
+ * @param trayId - ID-ul tăviței pentru care se calculează totalul
+ * @param trayItems - Array cu toate item-urile de tăviță (se filtrează după tray_id)
+ * @param servicePrices - Map cu prețurile serviciilor (service_id -> price)
+ * @param subscriptionType - Tipul abonamentului ('services', 'parts', 'both' sau '') - implicit ''
+ * @returns Totalul calculat pentru tăviță (subtotal - discount + urgent markup - subscription discount)
  */
 export function calculateTrayTotal(
   trayId: string,
@@ -255,8 +321,16 @@ export function calculateTrayTotal(
 }
 
 /**
- * Calculate totals for multiple trays
- * Returns a map of tray_id -> total
+ * Calculează totalurile pentru mai multe tăvițe.
+ * Această funcție este o variantă optimizată care calculează totalurile pentru mai multe
+ * tăvițe într-un singur apel. Folosește calculateTrayTotal pentru fiecare tăviță și
+ * returnează un Map cu rezultatele. Este folosită pentru a calcula totalurile tuturor
+ * tăvițelor dintr-un pipeline într-o singură operație.
+ * 
+ * @param trayIds - Array cu ID-urile tăvițelor pentru care se calculează totalurile
+ * @param trayItems - Array cu toate item-urile de tăviță (se filtrează pentru fiecare tray_id)
+ * @param servicePrices - Map cu prețurile serviciilor (service_id -> price)
+ * @returns Map cu cheia tray_id și valoarea totalul calculat pentru fiecare tăviță
  */
 export function calculateTrayTotals(
   trayIds: string[],
@@ -275,11 +349,19 @@ export function calculateTrayTotals(
 // ==================== TRAY FILTERING ====================
 
 /**
- * Filter trays for department pipelines based on technician assignment
- * Rules:
- * - User can see trays where they have at least one item assigned
- * - User can see trays with no technician assigned
- * - Trays in "Noua" stage are NOT visible to the assigned technician
+ * Filtrează tăvițele pentru pipeline-urile de departament bazat pe atribuirea tehnicianului.
+ * Această funcție implementă logica de filtrare pentru pipeline-urile de departament (Saloane,
+ * Horeca, Frizerii, Reparatii), unde utilizatorii non-admin pot vedea doar tăvițele care
+ * le sunt atribuite. Regulile de filtrare sunt:
+ * - Utilizatorul poate vedea tăvițe unde are cel puțin un item atribuit
+ * - Utilizatorul poate vedea tăvițe fără tehnician atribuit (vizibile pentru toți)
+ * - Tăvițele în stage-ul "Noua" NU sunt vizibile pentru tehnicianul atribuit (excepție specială)
+ * 
+ * @param trayIds - Array cu ID-urile tăvițelor de filtrat
+ * @param trayItems - Array cu toate item-urile de tăviță (pentru a identifica atribuirile)
+ * @param pipelineItems - Array cu item-urile din pipeline (pentru a identifica stage-urile)
+ * @param currentUserId - ID-ul utilizatorului curent pentru care se face filtrarea
+ * @returns Array filtrat cu ID-urile tăvițelor vizibile pentru utilizator
  */
 export function filterTraysForUser(
   trayIds: string[],
@@ -337,7 +419,17 @@ export function filterTraysForUser(
 // ==================== PIPELINE ITEM GROUPING ====================
 
 /**
- * Group pipeline items by type
+ * Grupează item-urile din pipeline după tip.
+ * Această funcție separă item-urile din pipeline în trei categorii: leads, service files
+ * și trays. De asemenea, creează un Map pentru acces rapid la item-uri după tip și ID.
+ * Funcția este folosită pentru a organiza datele înainte de a le transforma în KanbanItems.
+ * 
+ * @param pipelineItems - Array cu toate item-urile din pipeline
+ * @returns Obiect cu:
+ *   - leads: Array cu ID-urile lead-urilor
+ *   - serviceFiles: Array cu ID-urile fișelor de serviciu
+ *   - trays: Array cu ID-urile tăvițelor
+ *   - itemMap: Map cu cheia "type:id" și valoarea PipelineItemWithStage pentru acces rapid
  */
 export function groupPipelineItemsByType(
   pipelineItems: PipelineItemWithStage[]
@@ -365,7 +457,15 @@ export function groupPipelineItemsByType(
 }
 
 /**
- * Get pipeline item from map
+ * Obține un item din pipeline din map-ul de item-uri.
+ * Această funcție este un helper pentru a obține rapid un item din pipeline folosind
+ * tipul și ID-ul item-ului. Folosește map-ul creat de groupPipelineItemsByType pentru
+ * acces O(1) la item-uri.
+ * 
+ * @param itemMap - Map-ul de item-uri creat de groupPipelineItemsByType
+ * @param type - Tipul item-ului: 'lead', 'service_file' sau 'tray'
+ * @param itemId - ID-ul item-ului de obținut
+ * @returns PipelineItemWithStage dacă există, sau undefined dacă nu există
  */
 export function getPipelineItem(
   itemMap: Map<string, PipelineItemWithStage>,

@@ -11,7 +11,16 @@ export type PipelineOption = { id: string; name: string; is_active: boolean; act
 export type { MoveItemResult }
 export type MoveResult = MoveItemResult
 
-// functie helper pentru atribuirea automata a tag-urilor de departament
+/**
+ * Funcție helper pentru atribuirea automată a tag-urilor de departament unui lead.
+ * Această funcție analizează numele pipeline-ului și atribuie automat tag-ul corespunzător
+ * departamentului (Horeca, Saloane, Frizerii, Reparatii). Dacă tag-ul nu există, îl creează.
+ * Un lead poate avea doar un singur tag de departament, deci funcția elimină automat
+ * celelalte tag-uri de departament înainte de a atribui noul tag.
+ * 
+ * @param leadId - ID-ul lead-ului căruia i se atribuie tag-ul
+ * @param pipelineName - Numele pipeline-ului din care se deduce departamentul
+ */
 async function assignDepartmentTagToLead(leadId: string, pipelineName: string) {
   const departmentTags = [
     { name: 'Horeca', color: 'orange' as const },
@@ -94,12 +103,35 @@ async function assignDepartmentTagToLead(leadId: string, pipelineName: string) {
 }
 
 
+/**
+ * Obține lista de opțiuni de pipeline-uri disponibile.
+ * Folosește o funcție RPC (Remote Procedure Call) din Supabase pentru a obține
+ * pipeline-urile active cu numărul de stage-uri active pentru fiecare.
+ * Această funcție este folosită în dropdown-uri și selecții de pipeline-uri.
+ * 
+ * @returns Array cu opțiunile de pipeline-uri, fiecare conținând:
+ *   - id: ID-ul pipeline-ului
+ *   - name: Numele pipeline-ului
+ *   - is_active: Dacă pipeline-ul este activ
+ *   - active_stages: Numărul de stage-uri active din pipeline
+ * @throws Eroare dacă apelul RPC eșuează
+ */
 export async function getPipelineOptions(): Promise<PipelineOption[]> {
   const { data, error } = await supabase.rpc('get_pipeline_options')
   if (error) throw error
   return (data ?? []) as PipelineOption[]
 }
 
+/**
+ * Obține toate pipeline-urile active cu stage-urile lor asociate.
+ * Funcția încarcă pipeline-urile și stage-urile active, apoi grupează stage-urile
+ * sub pipeline-urile corespunzătoare. Rezultatul este folosit pentru a construi
+ * structura completă a pipeline-urilor în interfață.
+ * 
+ * @returns Obiect cu:
+ *   - data: Array de pipeline-uri, fiecare cu un array de stage-uri asociate
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function getPipelinesWithStages() {
   try {
     const { data: pipelines, error: pipelineError } = await supabase
@@ -129,6 +161,17 @@ export async function getPipelinesWithStages() {
   }
 }
 
+/**
+ * Creează un nou lead în baza de date.
+ * Un lead reprezintă un potențial client care a completat un formular sau a fost
+ * adăugat manual în sistem. Lead-ul conține informații de contact (nume, email, telefon)
+ * și detalii despre sursa lead-ului (campanie, anunț, formular, etc.).
+ * 
+ * @param leadData - Datele lead-ului de creat (orice câmpuri din tabelul leads)
+ * @returns Obiect cu:
+ *   - data: Lead-ul creat sau null dacă apare o eroare
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function createLead(leadData: any) {
   try {
     const { data, error } = await supabase
@@ -145,7 +188,17 @@ export async function createLead(leadData: any) {
 }
 
 /**
- * Creează un lead și îl adaugă automat într-un pipeline
+ * Creează un lead și îl adaugă automat într-un pipeline specificat.
+ * Această funcție combină crearea lead-ului cu adăugarea sa într-un pipeline,
+ * asigurând că lead-ul este imediat disponibil în workflow-ul corespunzător.
+ * După creare, atribuie automat tag-ul de departament bazat pe numele pipeline-ului.
+ * 
+ * @param leadData - Datele lead-ului de creat
+ * @param pipelineId - ID-ul pipeline-ului în care se adaugă lead-ul
+ * @param stageId - ID-ul stage-ului inițial în care se plasează lead-ul
+ * @returns Obiect cu:
+ *   - data: Obiect cu lead-ul creat și assignment-ul în pipeline, sau null dacă apare o eroare
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
  */
 export async function createLeadWithPipeline(
   leadData: any,
@@ -193,7 +246,16 @@ export async function createLeadWithPipeline(
 }
 
 /**
- * Mută un lead într-un pipeline (folosește noua arhitectură cu pipeline_items)
+ * Mută un lead într-un pipeline specificat (folosește noua arhitectură cu pipeline_items).
+ * Această funcție mută un lead dintr-un pipeline în altul, sau îl adaugă într-un pipeline
+ * dacă nu era deja într-unul. Lead-ul este plasat automat în primul stage activ al pipeline-ului
+ * țintă dacă nu se specifică un stage. După mutare, atribuie automat tag-ul de departament
+ * bazat pe numele noului pipeline.
+ * 
+ * @param leadId - ID-ul lead-ului de mutat
+ * @param targetPipelineId - ID-ul pipeline-ului țintă
+ * @param notes - Note opționale despre mutare (pentru istoric)
+ * @returns Rezultatul mutării cu ok: true/false, data cu pipeline_item_id și new_stage_id, sau eroare
  */
 export async function moveLeadToPipeline(
   leadId: string,
@@ -219,7 +281,15 @@ export async function moveLeadToPipeline(
 }
 
 /**
- * Mută un lead într-un pipeline pe baza numelui pipeline-ului
+ * Mută un lead într-un pipeline identificat după nume (nu după ID).
+ * Această funcție este o variantă convenabilă care permite mutarea unui lead folosind
+ * numele pipeline-ului în loc de ID. Funcția caută pipeline-ul activ cu numele specificat
+ * și apoi apelează moveLeadToPipeline cu ID-ul găsit.
+ * 
+ * @param leadId - ID-ul lead-ului de mutat
+ * @param targetPipelineName - Numele pipeline-ului țintă (trebuie să fie exact)
+ * @param notes - Note opționale despre mutare (pentru istoric)
+ * @returns Rezultatul mutării cu ok: true/false, data cu pipeline_item_id și new_stage_id, sau eroare
  */
 export async function moveLeadToPipelineByName(
   leadId: string,
@@ -242,6 +312,17 @@ export async function moveLeadToPipelineByName(
 }
 
 
+/**
+ * Actualizează un lead existent în baza de date.
+ * Permite modificarea oricăror câmpuri ale lead-ului: nume, email, telefon, detalii despre
+ * campanie, anunț, formular, etc. Funcția este folosită pentru editarea informațiilor unui client.
+ * 
+ * @param leadId - ID-ul lead-ului de actualizat
+ * @param updates - Obiect cu câmpurile de actualizat (orice câmpuri din tabelul leads)
+ * @returns Obiect cu:
+ *   - data: Lead-ul actualizat sau null dacă apare o eroare
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function updateLead(leadId: string, updates: any) {
   try {
     const { data, error } = await supabase
@@ -258,6 +339,17 @@ export async function updateLead(leadId: string, updates: any) {
   }
 }
 
+/**
+ * Șterge un lead din baza de date.
+ * ATENȚIE: Ștergerea unui lead este ireversibilă și va șterge toate datele asociate:
+ * fișe de serviciu, tăvițe, item-uri, evenimente, tag-uri, etc.
+ * Folosiți cu precauție, deoarece operația este permanentă.
+ * 
+ * @param leadId - ID-ul lead-ului de șters
+ * @returns Obiect cu:
+ *   - success: true dacă ștergerea a reușit, false altfel
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function deleteLead(leadId: string) {
   try {
     const { error } = await supabase
@@ -272,6 +364,18 @@ export async function deleteLead(leadId: string) {
   }
 }
 
+/**
+ * Caută lead-uri după un termen de căutare.
+ * Funcția caută în trei câmpuri principale: nume complet, email și număr de telefon.
+ * Căutarea este case-insensitive și folosește pattern matching (ilike) pentru a găsi
+ * potriviri parțiale. Rezultatele includ toate lead-urile care conțin termenul de căutare
+ * în oricare dintre cele trei câmpuri.
+ * 
+ * @param searchTerm - Termenul de căutare (se caută în nume, email, telefon)
+ * @returns Obiect cu:
+ *   - data: Array cu lead-urile găsite sau null dacă apare o eroare
+ *   - error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function searchLeads(searchTerm: string) {
   try {
     const { data, error } = await supabase
@@ -286,6 +390,17 @@ export async function searchLeads(searchTerm: string) {
   }
 }
 
+/**
+ * Actualizează un pipeline și reordonează stage-urile sale.
+ * Această funcție permite modificarea numelui unui pipeline și reordonarea stage-urilor
+ * într-o singură operație atomică. Folosește o funcție RPC din Supabase pentru a asigura
+ * consistența datelor. Stage-urile sunt reordonate în funcție de ordinea în array-ul furnizat.
+ * 
+ * @param pipelineId - ID-ul pipeline-ului de actualizat
+ * @param pipelineName - Noul nume al pipeline-ului (sau null pentru a păstra numele actual)
+ * @param stages - Array cu stage-urile în ordinea finală dorită (fiecare cu id și name)
+ * @returns Obiect cu error: null dacă reușește, sau eroarea dacă apare o problemă
+ */
 export async function updatePipelineAndStages(
   pipelineId: string,
   pipelineName: string,                     // pass current/new name
@@ -301,8 +416,19 @@ export async function updatePipelineAndStages(
 }
 
 /**
- * Loghează un eveniment pentru un item (lead, service_file sau tray)
- * Folosește tabelul polimorf items_events
+ * Loghează un eveniment pentru un item (lead, service_file sau tray).
+ * Această funcție creează o înregistrare în tabelul items_events pentru a urmări istoricul
+ * acțiunilor și schimbărilor asupra unui item. Evenimentele pot fi mesaje, mutări de stage,
+ * actualizări, etc. Funcția identifică automat utilizatorul curent și încearcă să obțină
+ * numele acestuia din app_members sau user_metadata.
+ * 
+ * @param itemType - Tipul item-ului: 'lead', 'service_file' sau 'tray'
+ * @param itemId - ID-ul item-ului pentru care se loghează evenimentul
+ * @param message - Mesajul evenimentului (descrierea acțiunii)
+ * @param eventType - Tipul evenimentului (ex: 'message', 'stage_change', 'update') - implicit 'message'
+ * @param payload - Obiect JSON opțional cu date suplimentare despre eveniment
+ * @returns Datele evenimentului creat (id, type, item_id, event_type, message, actor_name, created_at)
+ * @throws Eroare dacă crearea evenimentului eșuează
  */
 export async function logItemEvent(
   itemType: 'lead' | 'service_file' | 'tray',
@@ -357,8 +483,16 @@ export async function logItemEvent(
 }
 
 /**
- * Loghează un eveniment pentru un lead
- * Folosește items_events pentru logging
+ * Loghează un eveniment pentru un lead (wrapper peste logItemEvent).
+ * Această funcție este un wrapper convenabil care apelează logItemEvent cu itemType='lead'.
+ * Este folosită pentru a simplifica logarea evenimentelor specifice lead-urilor.
+ * 
+ * @param leadId - ID-ul lead-ului pentru care se loghează evenimentul
+ * @param message - Mesajul evenimentului (descrierea acțiunii)
+ * @param eventType - Tipul evenimentului (ex: 'message', 'stage_change', 'update') - implicit 'message'
+ * @param payload - Obiect JSON opțional cu date suplimentare despre eveniment
+ * @returns Datele evenimentului creat (id, type, item_id, event_type, message, actor_name, created_at)
+ * @throws Eroare dacă crearea evenimentului eșuează
  */
 export async function logLeadEvent(
   leadId: string,

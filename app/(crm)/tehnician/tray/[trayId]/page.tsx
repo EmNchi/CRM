@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ArrowLeft, Plus, Trash2, Save, Loader2, Wrench, ImageIcon, ImagePlus, X, Download, ChevronUp, ChevronDown, Camera, Package, CircleDot, CheckCircle2, Clock, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Save, Loader2, Wrench, ImageIcon, ImagePlus, X, Download, ChevronUp, ChevronDown, Camera, Package, CircleDot, CheckCircle2, Clock, Pencil, UserCog } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { 
@@ -37,7 +37,7 @@ import {
 } from '@/lib/supabase/imageOperations'
 import { listParts, type Part } from '@/lib/supabase/partOperations'
 import { moveItemToStage } from '@/lib/supabase/pipelineOperations'
-import { getPipelinesWithStages } from '@/lib/supabase/leadOperations'
+import { getPipelinesWithStages, logItemEvent } from '@/lib/supabase/leadOperations'
 
 const supabase = supabaseBrowser()
 
@@ -153,6 +153,10 @@ export default function TehnicianTrayPage() {
     discount_pct: 0,
     price: 0,
   })
+
+  // State pentru pasare tăviță către alt tehnician
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState<string>('')
+  const [passingTray, setPassingTray] = useState(false)
 
   // Încărcare date
   useEffect(() => {
@@ -286,12 +290,12 @@ export default function TehnicianTrayPage() {
       // Încarcă tehnicienii din app_members
       const { data: membersData, error: membersError } = await supabase
         .from('app_members')
-        .select('user_id, name, email')
+        .select('user_id, name')
 
       if (!membersError && membersData) {
         const techMap: Record<string, string> = {}
         membersData.forEach((m: any) => {
-          const name = m.name || m.email?.split('@')[0] || `User ${m.user_id.slice(0, 8)}`
+          const name = m.name || `User ${m.user_id.slice(0, 8)}`
           techMap[m.user_id] = name
         })
         setTechnicians(techMap)
@@ -1651,6 +1655,135 @@ export default function TehnicianTrayPage() {
                 Nu există instrument asociat. Adaugă un serviciu pentru a selecta instrumentul.
               </p>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Bloc Pasare Tăviță către Alt Tehnician */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserCog className="h-5 w-5" />
+              Pasare Tăviță
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Label className="text-sm">Selectează tehnician</Label>
+              <div className="flex items-center gap-2">
+                <Select 
+                  value={selectedTechnicianId} 
+                  onValueChange={setSelectedTechnicianId}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Alege tehnician" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(technicians)
+                      .filter(([id]) => id !== currentUserId) // Exclude utilizatorul curent
+                      .map(([id, name]) => (
+                        <SelectItem key={id} value={id}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={async () => {
+                    if (!trayId) {
+                      toast.error('Tăvița nu a fost găsită')
+                      return
+                    }
+
+                    if (!selectedTechnicianId) {
+                      toast.error('Selectează un tehnician')
+                      return
+                    }
+
+                    setPassingTray(true)
+                    try {
+                      // Obține tehnicianul vechi (dacă există)
+                      const { data: prevTechRow, error: prevError } = await supabase
+                        .from('tray_items')
+                        .select('technician_id')
+                        .eq('tray_id', trayId)
+                        .not('technician_id', 'is', null)
+                        .limit(1)
+                        .single()
+
+                      if (prevError && prevError.code !== 'PGRST116') {
+                        console.error('Error loading previous technician for tray:', prevError)
+                      }
+
+                      const previousTechnicianId = (prevTechRow as any)?.technician_id || null
+
+                      // Actualizează technician_id pentru toate tray_items din tăviță
+                      const { error: updateError } = await supabase
+                        .from('tray_items')
+                        .update({ technician_id: selectedTechnicianId } as any)
+                        .eq('tray_id', trayId)
+                      
+                      if (updateError) {
+                        console.error('Error passing tray to technician:', updateError)
+                        toast.error('Eroare la pasarea tăviței')
+                        return
+                      }
+
+                      // Găsește numele tehnicienilor pentru mesaj
+                      const newTechName = technicians[selectedTechnicianId] || 'tehnician necunoscut'
+                      const prevTechName = previousTechnicianId
+                        ? (technicians[previousTechnicianId] || 'tehnician necunoscut')
+                        : 'Fără atribuire'
+
+                      // Loghează evenimentul în istoricul tăviței
+                      try {
+                        const leadId = trayData?.service_file?.lead?.id
+                        if (leadId) {
+                          await logItemEvent(
+                            'tray',
+                            trayId,
+                            `Tăvița a fost pasată de la "${prevTechName}" la "${newTechName}"`,
+                            'tray_passed',
+                            {
+                              from_technician_id: previousTechnicianId,
+                              to_technician_id: selectedTechnicianId,
+                              tray_id: trayId,
+                              lead_id: leadId,
+                            }
+                          )
+                        }
+                      } catch (logError) {
+                        console.error('Error logging tray pass event:', logError)
+                      }
+
+                      toast.success(`Tăvița a fost atribuită cu succes către ${newTechName}`)
+                      setSelectedTechnicianId('')
+                      
+                      // Reîncarcă datele pentru a reflecta modificările
+                      await loadTrayItems(instrument?.id || null)
+                    } catch (error) {
+                      console.error('Error passing tray:', error)
+                      toast.error('Eroare la pasarea tăviței')
+                    } finally {
+                      setPassingTray(false)
+                    }
+                  }}
+                  disabled={passingTray || !selectedTechnicianId}
+                  className="h-10"
+                >
+                  {passingTray ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Se atribuie...
+                    </>
+                  ) : (
+                    'Pasare'
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Transferă tăvița către alt tehnician. Toate item-urile din tăviță vor fi atribuite noului tehnician.
+              </p>
+            </div>
           </CardContent>
         </Card>
 
