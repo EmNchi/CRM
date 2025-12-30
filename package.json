@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev",
-    "dev:network": "next dev -H 0.0.0.0",
-    "network": "next dev -H 0.0.0.0",
+    "dev": "next dev --turbo",
+    "dev:network": "next dev --turbo -H 0.0.0.0",
+    "network": "next dev --turbo -H 0.0.0.0",
     "lint": "next lint",
     "start": "next start",
     "perf": "node scripts/performance-monitor.js",

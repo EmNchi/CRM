@@ -904,6 +904,17 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     if (!fisaId || pipelinesWithIds.length === 0) return
 
     try {
+      // Actualizează checkbox-urile în baza de date
+      const { error: updateError } = await updateServiceFile(fisaId, {
+        office_direct: isOfficeDirect,
+        curier_trimis: !isOfficeDirect,
+      })
+      
+      if (updateError) {
+        toast.error('Eroare la salvarea checkbox-urilor')
+        return
+      }
+
       const targetPipelineName = isOfficeDirect ? 'receptie' : 'curier'
       const pipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes(targetPipelineName))
       if (!pipeline) {
@@ -918,22 +929,33 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         return
       }
 
-      const stageSearchTerms = isOfficeDirect 
-        ? ['office', 'direct'] 
-        : ['curier', 'trimis']
+      // Normalizează numele stage-urilor pentru căutare (elimină spații, cratime, etc.)
+      const normalizeStageName = (name: string) => {
+        return name.toLowerCase().replace(/[\s\-_]/g, '')
+      }
+
+      // Caută stage-ul exact
+      const targetStageName = isOfficeDirect ? 'officedirect' : 'curiertrimis'
       
       let stage = pipelineData.stages.find((s: any) => {
         if (s.is_active === false) return false
-        const name = s.name.toLowerCase()
-        return stageSearchTerms.every(term => name.includes(term))
+        const normalized = normalizeStageName(s.name)
+        return normalized === targetStageName || normalized.includes(targetStageName)
       })
 
+      // Dacă nu găsește exact, încearcă o căutare mai flexibilă
       if (!stage) {
-        stage = pipelineData.stages.find((s: any) => s.is_active !== false)
+        const searchTerms = isOfficeDirect ? ['office', 'direct'] : ['curier', 'trimis']
+        stage = pipelineData.stages.find((s: any) => {
+          if (s.is_active === false) return false
+          const normalized = normalizeStageName(s.name)
+          return searchTerms.every(term => normalized.includes(term))
+        })
       }
       
       if (!stage) {
-        toast.error(`Nu s-a găsit un stage activ în pipeline-ul "${pipeline.name}"`)
+        console.error('Stage-uri disponibile:', pipelineData.stages.map((s: any) => s.name))
+        toast.error(`Nu s-a găsit stage-ul "${isOfficeDirect ? 'OFFICE DIRECT' : 'CURIER TRIMIS'}" în pipeline-ul "${pipeline.name}"`)
         return
       }
 
