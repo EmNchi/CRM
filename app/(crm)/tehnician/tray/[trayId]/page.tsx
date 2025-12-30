@@ -581,6 +581,16 @@ export default function TehnicianTrayPage() {
       console.log('[TrayPage] Processed items:', items.length, items)
       setTrayItems(items as TrayItem[])
       console.log('[TrayPage] loadTrayItems SUCCESS - set', items.length, 'items')
+      
+      // Verifică dacă există item-uri atribuite utilizatorului curent
+      const hasAssignedItems = items.some(item => item.technician_id === currentUserId)
+      const assignedTechnicianIds = [...new Set(items.map(item => item.technician_id).filter(Boolean))]
+      console.log('[TrayPage] Tray assignment check:', {
+        currentUserId,
+        hasAssignedItems,
+        assignedTechnicianIds,
+        itemsCount: items.length
+      })
     } catch (error: any) {
       // Log detaliat al erorii
       const errorDetails = {
@@ -1758,8 +1768,8 @@ export default function TehnicianTrayPage() {
                       toast.success(`Tăvița a fost atribuită cu succes către ${newTechName}`)
                       setSelectedTechnicianId('')
                       
-                      // Reîncarcă datele pentru a reflecta modificările
-                      await loadTrayItems(instrument?.id || null)
+                      // Reîncarcă toate datele pentru a reflecta modificările
+                      await loadData()
                     } catch (error) {
                       console.error('Error passing tray:', error)
                       toast.error('Eroare la pasarea tăviței')

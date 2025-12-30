@@ -16,6 +16,8 @@ export type ServiceFile = {
   office_direct: boolean // Checkbox pentru "Office direct"
   curier_trimis: boolean // Checkbox pentru "Curier Trimis"
   no_deal: boolean       // Checkbox pentru "No Deal" în Vânzări
+  urgent: boolean        // Flag urgent pentru toate tăvițele din fișă
+  subscription_type: 'services' | 'parts' | 'both' | null // Abonament pentru toate tăvițele din fișă
   created_at: string
   updated_at: string
 }
@@ -195,7 +197,7 @@ export async function listServiceFilesForLead(leadId: string): Promise<{ data: S
  */
 export async function updateServiceFile(
   serviceFileId: string,
-  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal'>>
+  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal' | 'urgent' | 'subscription_type'>>
 ): Promise<{ data: ServiceFile | null; error: any }> {
   try {
     const { data, error } = await supabase

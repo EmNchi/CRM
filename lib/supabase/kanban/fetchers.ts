@@ -124,7 +124,7 @@ export async function fetchServiceFilesByIds(
   const { data, error } = await supabase
     .from('service_files')
     .select(`
-      id, lead_id, number, status, created_at,
+      id, lead_id, number, status, created_at, office_direct, curier_trimis,
       lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip)
     `)
     .in('id', serviceFileIds)

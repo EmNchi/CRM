@@ -102,6 +102,8 @@ export interface RawServiceFile {
   number: string
   status: string
   created_at: string
+  office_direct?: boolean
+  curier_trimis?: boolean
   lead?: RawLead | null
 }
 

@@ -26,6 +26,7 @@ interface LeadCardMobileProps {
   onMove?: () => void
   onEdit?: () => void
   onArchive?: () => void
+  pipelineName?: string
 }
 
 export function LeadCardMobile({ 
@@ -33,7 +34,8 @@ export function LeadCardMobile({
   onClick, 
   onMove, 
   onEdit, 
-  onArchive 
+  onArchive,
+  pipelineName 
 }: LeadCardMobileProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -147,7 +149,15 @@ export function LeadCardMobile({
           {displayTags.length > 0 && (
             <div className="flex flex-wrap items-center gap-1">
               {displayTags.map((tag) => {
-                const isUrgentOrRetur = tag.name.toLowerCase() === 'urgent' || tag.name === 'RETUR'
+                const isUrgent = tag.name.toLowerCase() === 'urgent'
+                const isRetur = tag.name === 'RETUR'
+                const isUrgentOrRetur = isUrgent || isRetur
+                
+                // Nu afișa tag-ul urgent în pipeline-ul Vanzari
+                if (isUrgent && pipelineName && pipelineName.toLowerCase().includes('vanzari')) {
+                  return null
+                }
+                
                 return (
                   <Badge
                     key={tag.id}

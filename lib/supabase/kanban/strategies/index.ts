@@ -10,6 +10,7 @@ import type { KanbanContext } from '../types'
 import { StandardPipelineStrategy } from './standard'
 import { DepartmentPipelineStrategy } from './department'
 import { ReceptiePipelineStrategy } from './receptie'
+import { CurierPipelineStrategy } from './curier'
 
 export { buildContext } from './base'
 export type { PipelineStrategy }
@@ -18,10 +19,12 @@ export type { PipelineStrategy }
 const standardStrategy = new StandardPipelineStrategy()
 const departmentStrategy = new DepartmentPipelineStrategy()
 const receptieStrategy = new ReceptiePipelineStrategy()
+const curierStrategy = new CurierPipelineStrategy()
 
 // All strategies in priority order
 const strategies: PipelineStrategy[] = [
   receptieStrategy,
+  curierStrategy,
   departmentStrategy,
   standardStrategy, // Fallback
 ]

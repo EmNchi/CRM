@@ -337,20 +337,6 @@ export function LeadDetailsPanel({
   // Ref pentru componenta Preturi - pentru a apela salvarea la Close
   const preturiRef = useRef<PreturiRef>(null)
   
-  // Handler pentru Close care salvează înainte de a închide
-  const handleCloseWithSave = useCallback(async () => {
-    try {
-      // Salvează în istoric înainte de a închide
-      if (preturiRef.current) {
-        await preturiRef.current.save()
-      }
-    } catch (error) {
-      console.error('Eroare la salvare automată:', error)
-    }
-    // Închide panoul
-    onClose()
-  }, [onClose])
-  
   // Verifică dacă utilizatorul există în app_members
   useEffect(() => {
     async function checkTechnician() {
@@ -553,6 +539,26 @@ export function LeadDetailsPanel({
     }, 1000), // 1 secundă delay
     [saveServiceFileDetails]
   )
+
+  // Handler pentru Close care salvează înainte de a închide
+  const handleCloseWithSave = useCallback(async () => {
+    try {
+      // Salvează detaliile înainte de a închide
+      const serviceFileId = await getServiceFileId()
+      if (serviceFileId && trayDetails !== undefined) {
+        await saveServiceFileDetails(trayDetails)
+      }
+      
+      // Salvează în istoric înainte de a închide
+      if (preturiRef.current) {
+        await preturiRef.current.save()
+      }
+    } catch (error) {
+      console.error('Eroare la salvare automată:', error)
+    }
+    // Închide panoul
+    onClose()
+  }, [onClose, trayDetails, saveServiceFileDetails, getServiceFileId])
 
   // Încarcă detaliile pentru fișa de serviciu (nu mai la nivel de lead)
   // Această funcție este folosită pentru pipeline-urile Vânzări/Recepție/Curier
@@ -1624,7 +1630,15 @@ export function LeadDetailsPanel({
                 {allTags
                   .filter(t => selectedTagIds.includes(t.id))
                   .map(tag => {
-                    const isUrgentOrRetur = tag.name.toLowerCase() === 'urgent' || tag.name === 'RETUR'
+                    const isUrgent = tag.name.toLowerCase() === 'urgent'
+                    const isRetur = tag.name === 'RETUR'
+                    const isUrgentOrRetur = isUrgent || isRetur
+                    
+                    // Nu afișa tag-ul urgent în pipeline-ul Vanzari
+                    if (isUrgent && isVanzariPipeline) {
+                      return null
+                    }
+                    
                     if (isDepartmentTag(tag.name)) {
                       return (
                         <span
@@ -2107,55 +2121,6 @@ export function LeadDetailsPanel({
                         readOnly={isTechnician}
                       />
                       {/* Buton salvare doar pentru vânzători */}
-                      {isVanzator && (
-                        <div className="flex justify-end mt-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              setSavingTrayDetails(true)
-                              try {
-                                const serviceFileId = await getServiceFileId()
-                                if (!serviceFileId) {
-                                  toast.error('Fișa de serviciu nu a fost găsită')
-                                  return
-                                }
-                                
-                                // Salvăm detaliile în service_files.details
-                                const { data, error } = await supabase
-                                  .from('service_files')
-                                  .update({ details: trayDetails } as any)
-                                  .eq('id', serviceFileId)
-                                  .select('details')
-                                  .single()
-                                
-                                if (error) {
-                                  console.error('Error saving service file details:', error)
-                                  toast.error('Eroare la salvarea detaliilor: ' + error.message)
-                                } else {
-                                  setTrayDetails(data?.details || '')
-                                  toast.success('Detaliile fișei au fost salvate')
-                                }
-                              } catch (err: any) {
-                                console.error('Error:', err)
-                                toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
-                              } finally {
-                                setSavingTrayDetails(false)
-                              }
-                            }}
-                            disabled={savingTrayDetails}
-                          >
-                            {savingTrayDetails ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                                Salvare...
-                              </>
-                            ) : (
-                              'Salvează'
-                            )}
-                          </Button>
-                        </div>
-                      )}
                     </>
                   )}
                 </div>
@@ -2185,53 +2150,6 @@ export function LeadDetailsPanel({
                         placeholder="Introduceți detaliile comenzii comunicate de client pentru această fișă..."
                         className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
                       />
-                      <div className="flex justify-end mt-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            setSavingTrayDetails(true)
-                            try {
-                              const serviceFileId = await getServiceFileId()
-                              if (!serviceFileId) {
-                                toast.error('Fișa de serviciu nu a fost găsită')
-                                return
-                              }
-                              
-                              // Salvează detaliile în service_files.details
-                              const { data, error } = await supabase
-                                .from('service_files')
-                                .update({ details: trayDetails } as any)
-                                .eq('id', serviceFileId)
-                                .select('details')
-                                .single()
-                              
-                              if (error) {
-                                console.error('Error saving service file details:', error)
-                                toast.error('Eroare la salvarea detaliilor: ' + error.message)
-                              } else {
-                                setTrayDetails(data?.details || '')
-                                toast.success('Detaliile fișei au fost salvate')
-                              }
-                            } catch (err: any) {
-                              console.error('Error:', err)
-                              toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
-                            } finally {
-                              setSavingTrayDetails(false)
-                            }
-                          }}
-                          disabled={savingTrayDetails}
-                        >
-                          {savingTrayDetails ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                              Salvare...
-                            </>
-                          ) : (
-                            'Salvează'
-                          )}
-                        </Button>
-                      </div>
                     </div>
                   </>
                 )}

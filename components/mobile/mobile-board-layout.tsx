@@ -165,6 +165,7 @@ export function MobileBoardLayout({
                   setDetailsOpen(false)
                   // Trigger edit action
                 }}
+                pipelineName={currentPipelineName}
               />
             ))}
           </div>

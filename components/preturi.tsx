@@ -841,9 +841,36 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   }, [urgentAllServices])
 
   // verifica si atribuie/elimina tag-ul urgent cand se schimba items-urile
+  // Tag-ul urgent NU trebuie să existe în pipeline-ul Vanzari, dar trebuie să fie vizibil în Receptie și Curier
   useEffect(() => {
     if (!urgentTagId || !items.length) return
 
+    // Nu atribui tag-ul urgent în pipeline-ul Vanzari
+    if (isVanzariPipeline) {
+      // Elimină tag-ul urgent dacă există în Vanzari
+      const removeUrgentTagFromVanzari = async () => {
+        try {
+          const { data: existing } = await supabase
+            .from('lead_tags')
+            .select('lead_id')
+            .eq('lead_id', leadId)
+            .eq('tag_id', urgentTagId)
+            .maybeSingle()
+
+          if (existing) {
+            // Tag-ul există dar suntem în Vanzari - elimină-l
+            await toggleLeadTag(leadId, urgentTagId)
+            console.log('Tag urgent eliminat din Vanzari')
+          }
+        } catch (error) {
+          console.error('Eroare la eliminarea tag-ului urgent din Vanzari:', error)
+        }
+      }
+      removeUrgentTagFromVanzari()
+      return
+    }
+
+    // Pentru Receptie și Curier, gestionează tag-ul normal
     const hasUrgentItems = items.some(item => item.urgent === true)
     
     // verifica daca tag-ul urgent este deja atribuit
@@ -870,7 +897,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     }
 
     checkAndToggleUrgentTag()
-  }, [items, urgentTagId, leadId])
+  }, [items, urgentTagId, leadId, isVanzariPipeline])
 
   async function refreshPipelines() {
     setPipeLoading(true)
@@ -915,7 +942,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         return
       }
 
-      const targetPipelineName = isOfficeDirect ? 'receptie' : 'curier'
+      // AMBELE checkbox-uri mută în pipeline-ul "Receptie", dar în stage-uri diferite
+      const targetPipelineName = 'receptie'
       const pipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes(targetPipelineName))
       if (!pipeline) {
         toast.error(`Pipeline-ul "${targetPipelineName}" nu a fost găsit`)
@@ -934,7 +962,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         return name.toLowerCase().replace(/[\s\-_]/g, '')
       }
 
-      // Caută stage-ul exact
+      // Caută stage-ul exact în pipeline-ul Receptie
       const targetStageName = isOfficeDirect ? 'officedirect' : 'curiertrimis'
       
       let stage = pipelineData.stages.find((s: any) => {
@@ -1197,6 +1225,24 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   async function saveAllAndLog() {
     setSaving(true)
     try {
+      // Salvează detaliile fișei de serviciu dacă există
+      if (fisaId && trayDetails !== undefined) {
+        try {
+          const { error: detailsError } = await supabase
+            .from('service_files')
+            .update({ details: trayDetails } as any)
+            .eq('id', fisaId)
+          
+          if (detailsError) {
+            console.error('Eroare la salvarea detaliilor fișei:', detailsError)
+          } else {
+            console.log('✅ Detaliile fișei au fost salvate')
+          }
+        } catch (err: any) {
+          console.error('Eroare la salvarea detaliilor fișei:', err)
+        }
+      }
+      
       // Salvează checkbox-urile pentru livrare în service_file ÎNTOTDEAUNA (chiar și fără tăviță)
       console.log('🔍 DEBUG - Checkpoint salvare curier (începutul funcției):', {
         fisaId,
@@ -1219,17 +1265,17 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         } else {
           console.log('✅ Service file actualizat cu office_direct:', officeDirect, 'curier_trimis:', curierTrimis, 'data:', updatedServiceFile)
           
-          // Adaugă fișa în pipeline-ul "Curier" dacă unul din checkbox-uri este bifat
+          // Adaugă fișa în pipeline-ul "Receptie" dacă unul din checkbox-uri este bifat
           if (officeDirect || curierTrimis) {
-            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
-            console.log('Căutare pipeline Curier:', {
+            const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
+            console.log('Căutare pipeline Receptie:', {
               pipelinesWithIds: pipelinesWithIds.map(p => p.name),
-              found: curierPipeline?.id,
+              found: receptiePipeline?.id,
               officeDirect,
               curierTrimis
             })
             
-            if (curierPipeline) {
+            if (receptiePipeline) {
               const stageNameVariants = officeDirect 
                 ? ['Office direct', 'OFFICE DIRECT', 'office direct']
                 : ['Curier Trimis', 'CURIER TRIMIS', 'curier trimis', 'Curier trimis']
@@ -1237,7 +1283,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
               const { data: allStages, error: allStagesError } = await supabase
                 .from('stages')
                 .select('id, name')
-                .eq('pipeline_id', curierPipeline.id) as { 
+                .eq('pipeline_id', receptiePipeline.id) as { 
                   data: Array<{ id: string; name: string }> | null; 
                   error: any 
                 }
@@ -1254,24 +1300,24 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
               }
               
               if (stageData?.id) {
-                const { error: pipelineError } = await addServiceFileToPipeline(fisaId, curierPipeline.id, stageData.id)
+                const { error: pipelineError } = await addServiceFileToPipeline(fisaId, receptiePipeline.id, stageData.id)
                 if (pipelineError) {
-                  console.error('Eroare la adăugarea fișei în pipeline Curier:', pipelineError)
+                  console.error('Eroare la adăugarea fișei în pipeline Receptie:', pipelineError)
                 } else {
-                  console.log('✅ Fișa adăugată în pipeline Curier')
+                  console.log('✅ Fișa adăugată în pipeline Receptie')
                 }
               }
             }
           } else {
-            // Dacă niciun checkbox nu e bifat, șterge din pipeline Curier
-            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'curier')
-            if (curierPipeline) {
+            // Dacă niciun checkbox nu e bifat, șterge din pipeline Receptie
+            const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
+            if (receptiePipeline) {
               await supabase
                 .from('pipeline_items')
                 .delete()
                 .eq('item_id', fisaId)
                 .eq('type', 'service_file')
-                .eq('pipeline_id', curierPipeline.id)
+                .eq('pipeline_id', receptiePipeline.id)
             }
           }
         }
@@ -1366,30 +1412,51 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         
         try {
           if (existingItem) {
-            // Actualizează brand-urile și serial numbers pentru item-ul existent
+            // Actualizează cantitatea și brand-urile/serial numbers pentru item-ul existent
             console.log('📝 [saveAllAndLog] Updating existing item:', existingItem.id)
             
             const supabaseClient = supabaseBrowser()
             let useNewStructure = true
             
-            // Încearcă să șteargă din noile tabele
-            const { error: deleteError } = await supabaseClient
-              .from('tray_item_brands' as any)
-              .delete()
-              .eq('tray_item_id', existingItem.id)
-            
-            if (deleteError) {
-              // Dacă tabelul nu există, folosește câmpurile vechi
-              if (deleteError.code === '42P01' || deleteError.message?.includes('does not exist')) {
-                console.warn('⚠️ New tables not found, using legacy fields')
-                useNewStructure = false
+            // Actualizează cantitatea pentru instrumentul existent
+            if (existingItem?.id) {
+              const { error: qtyUpdateError } = await supabaseClient
+                .from('tray_items')
+                .update({ qty: qty })
+                .eq('id', existingItem.id)
+              
+              if (qtyUpdateError) {
+                console.error('❌ Error updating quantity:', qtyUpdateError)
               } else {
-                console.error('❌ Error deleting old brands:', deleteError)
+                console.log('✅ Quantity updated to:', qty)
+              }
+            }
+            
+            // Verifică dacă există un tray_item_id valid
+            if (!existingItem?.id) {
+              console.warn('⚠️ No valid tray_item_id, skipping brand operations')
+              useNewStructure = false
+            } else {
+              // Încearcă să șteargă din noile tabele
+              const { error: deleteError } = await supabaseClient
+                .from('tray_item_brands' as any)
+                .delete()
+                .eq('tray_item_id', existingItem.id)
+              
+              if (deleteError) {
+                // Dacă tabelul nu există sau eroarea este validă, folosește câmpurile vechi
+                const errorMessage = deleteError.message || deleteError.code || JSON.stringify(deleteError)
+                if (deleteError.code === '42P01' || errorMessage.includes('does not exist') || errorMessage.includes('relation') || errorMessage.includes('not found')) {
+                  console.warn('⚠️ New tables not found, using legacy fields')
+                  useNewStructure = false
+                } else if (errorMessage && errorMessage !== '{}') {
+                  console.error('❌ Error deleting old brands:', errorMessage)
+                }
               }
             }
             
             // Adaugă noile brand-uri și serial numbers
-            if (brandSerialGroupsToSend.length > 0 && useNewStructure) {
+            if (brandSerialGroupsToSend.length > 0 && useNewStructure && existingItem?.id) {
               for (const group of brandSerialGroupsToSend) {
                 const brandName = group.brand?.trim()
                 if (!brandName) continue
@@ -1411,7 +1478,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                   .single()
                 
                 if (brandError) {
-                  console.error('❌ Error creating brand:', brandError)
+                  const errorMessage = brandError.message || brandError.code || JSON.stringify(brandError)
+                  if (errorMessage && errorMessage !== '{}') {
+                    console.error('❌ Error creating brand:', errorMessage)
+                  }
                   // Fallback la câmpurile vechi
                   useNewStructure = false
                   break
@@ -1431,7 +1501,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                     .insert(serialsToInsert as any)
                   
                   if (serialsError) {
-                    console.error('❌ Error creating serials:', serialsError)
+                    const errorMessage = serialsError.message || serialsError.code || JSON.stringify(serialsError)
+                    if (errorMessage && errorMessage !== '{}') {
+                      console.error('❌ Error creating serials:', errorMessage)
+                    }
                   } else {
                     console.log('✅ Serial numbers created:', serialNumbers.length)
                   }
@@ -1558,34 +1631,86 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }
       }
       
+      // Salvează urgent și subscription_type în service_file (pentru toate tăvițele din fișă)
+      if (fisaId) {
+        const serviceFileUpdates: any = {
+          urgent: urgentAllServices,
+        }
+        
+        // Adaugă subscription_type doar dacă este valid
+        if (subscriptionType && ['services', 'parts', 'both'].includes(subscriptionType)) {
+          serviceFileUpdates.subscription_type = subscriptionType
+        } else {
+          serviceFileUpdates.subscription_type = null
+        }
+        
+        console.log('Salvare urgent și subscription_type în service_file:', { fisaId, serviceFileUpdates })
+        
+        try {
+          await updateServiceFile(fisaId, serviceFileUpdates)
+          console.log('Service file actualizat cu succes (urgent:', urgentAllServices, ', subscription:', subscriptionType, ')')
+          
+          // Actualizează urgent pentru toate tăvițele din fișă
+          if (quotes.length > 0) {
+            const trayIds = quotes.map(q => q.id)
+            await supabase
+              .from('trays')
+              .update({ urgent: urgentAllServices })
+              .in('id', trayIds)
+              .eq('service_file_id', fisaId)
+            
+            // Actualizează urgent pentru toate items-urile din toate tăvițele din fișă
+            const { data: allTrayItems } = await supabase
+              .from('tray_items')
+              .select('id, notes')
+              .in('tray_id', trayIds)
+            
+            if (allTrayItems && allTrayItems.length > 0) {
+              for (const item of allTrayItems) {
+                let notesData: any = {}
+                if (item.notes) {
+                  try {
+                    notesData = JSON.parse(item.notes)
+                  } catch (e) {
+                    // Notes nu este JSON, ignoră
+                  }
+                }
+                
+                // Actualizează urgent doar pentru servicii și piese
+                if (notesData.item_type === 'service' || notesData.item_type === 'part') {
+                  notesData.urgent = urgentAllServices
+                  await supabase
+                    .from('tray_items')
+                    .update({ notes: JSON.stringify(notesData) })
+                    .eq('id', item.id)
+                }
+              }
+            }
+          }
+        } catch (updateError: any) {
+          console.error('Eroare la actualizarea service_file:', updateError)
+          // Nu aruncăm eroare, continuăm cu salvarea normală
+        }
+      }
+      
       // Logica normală pentru salvare (dacă există items sau nu e doar instrument)
       // Pregătește datele pentru salvare
       const updateData: any = {
         is_cash: isCash,
         is_card: isCard,
-        urgent: urgentAllServices, // Salvează starea urgentă pe tăviță
-      }
-      
-      // Adaugă subscription_type doar dacă este valid
-      if (subscriptionType && ['services', 'parts', 'both'].includes(subscriptionType)) {
-        updateData.subscription_type = subscriptionType
-      } else {
-        updateData.subscription_type = null
       }
       
       console.log('Salvare quote:', { quoteId: quoteToUse.id, updateData })
       
-      // salveaza cash/card, urgent si abonament in baza de date
-      // Notă: is_cash, is_card, subscription_type nu există în noua arhitectură
-      // Acestea sunt ignorate pentru moment, dar urgent se salvează pe tăviță
+      // salveaza cash/card in baza de date (pentru compatibilitate)
+      // Notă: is_cash, is_card nu există în noua arhitectură
       try {
         await updateQuote(quoteToUse.id, updateData)
-        console.log('Quote actualizat cu succes (inclusiv urgent:', urgentAllServices, ')')
       } catch (updateError: any) {
         // Dacă eroarea este PGRST116 (nu există rânduri), ignorăm pentru că
         // probabil nu există actualizări pentru câmpurile care există în trays
         if (updateError?.code === 'PGRST116') {
-          console.warn('Nu există actualizări pentru tray (doar is_cash/is_card/subscription_type care nu există în noua arhitectură)')
+          console.warn('Nu există actualizări pentru tray (doar is_cash/is_card care nu există în noua arhitectură)')
         } else {
           throw updateError
         }
@@ -2220,11 +2345,17 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 setCurierTrimis(serviceFileData.curier_trimis || false)
                 setNoDeal(serviceFileData.no_deal || false)
                 
-                console.log('Încărcare checkbox-uri livrare din service_file:', {
+                // Încarcă urgent și subscription_type din service_file
+                setUrgentAllServices(serviceFileData.urgent || false)
+                setSubscriptionType(serviceFileData.subscription_type || '')
+                
+                console.log('Încărcare checkbox-uri livrare, urgent și subscription din service_file:', {
                   fisaId,
                   office_direct: serviceFileData.office_direct,
                   curier_trimis: serviceFileData.curier_trimis,
                   no_deal: serviceFileData.no_deal,
+                  urgent: serviceFileData.urgent,
+                  subscription_type: serviceFileData.subscription_type,
                 })
               }
             }).catch(err => {
@@ -2451,23 +2582,67 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           })
         )
         
-        // Load cash/card, urgent and subscription values from quote (după ce știm prima tăviță)
-        const selectedQuoteForData = qs.find(q => q.id === firstId) || qs[0];
-        const firstQuote = selectedQuoteForData as any
-        if (firstQuote) {
-          setIsCash(firstQuote.is_cash || false)
-          setIsCard(firstQuote.is_card || false)
-          const loadedSubscriptionType = firstQuote.subscription_type || ''
-          const loadedUrgent = firstQuote.urgent || false
-          console.log('Încărcare subscription_type și urgent din quote:', {
-            quoteId: firstQuote.id,
-            subscription_type: firstQuote.subscription_type,
-            urgent: firstQuote.urgent,
-            loadedSubscriptionType,
-            loadedUrgent
-          })
-          setSubscriptionType(loadedSubscriptionType)
-          setUrgentAllServices(loadedUrgent)
+        // Load cash/card, urgent and subscription values from service_file (pentru toate tăvițele din fișă)
+        if (fisaId) {
+          const { data: serviceFileData } = await getServiceFile(fisaId)
+          if (serviceFileData) {
+            setIsCash((serviceFileData as any).is_cash || false)
+            setIsCard((serviceFileData as any).is_card || false)
+            const loadedSubscriptionType = serviceFileData.subscription_type || ''
+            const loadedUrgent = serviceFileData.urgent || false
+            console.log('Încărcare subscription_type și urgent din service_file:', {
+              fisaId,
+              subscription_type: serviceFileData.subscription_type,
+              urgent: serviceFileData.urgent,
+              loadedSubscriptionType,
+              loadedUrgent
+            })
+            setSubscriptionType(loadedSubscriptionType)
+            setUrgentAllServices(loadedUrgent)
+            
+            // Aplică urgent la toate items-urile din toate tăvițele din fișă
+            if (qs.length > 0) {
+              const trayIds = qs.map(q => q.id)
+              const { data: allTrayItems } = await supabase
+                .from('tray_items')
+                .select('id, notes')
+                .in('tray_id', trayIds)
+              
+              if (allTrayItems && allTrayItems.length > 0) {
+                for (const item of allTrayItems) {
+                  let notesData: any = {}
+                  if (item.notes) {
+                    try {
+                      notesData = JSON.parse(item.notes)
+                    } catch (e) {
+                      // Notes nu este JSON, ignoră
+                    }
+                  }
+                  
+                  // Actualizează urgent doar pentru servicii și piese
+                  if (notesData.item_type === 'service' || notesData.item_type === 'part') {
+                    notesData.urgent = loadedUrgent
+                    await supabase
+                      .from('tray_items')
+                      .update({ notes: JSON.stringify(notesData) })
+                      .eq('id', item.id)
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          // Fallback la quote dacă nu există fisaId
+          const selectedQuoteForData = qs.find(q => q.id === firstId) || qs[0];
+          const firstQuote = selectedQuoteForData as any
+          if (firstQuote) {
+            setIsCash(firstQuote.is_cash || false)
+            setIsCard(firstQuote.is_card || false)
+            const loadedSubscriptionType = firstQuote.subscription_type || ''
+            const loadedUrgent = firstQuote.urgent || false
+            setSubscriptionType(loadedSubscriptionType)
+            setUrgentAllServices(loadedUrgent)
+          }
         }
         
         // Așteaptă toate task-urile în paralel
@@ -3483,8 +3658,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   }
 
   // Funcție pentru mutarea unui instrument cu serviciile lui într-o altă tăviță (pentru recepție)
-  async function handleMoveInstrument() {
-    if (!instrumentToMove || !targetTrayId) {
+  async function handleMoveInstrument(trayIdOverride?: string) {
+    const actualTrayId = trayIdOverride || targetTrayId
+    
+    if (!instrumentToMove || !actualTrayId || actualTrayId === 'new') {
       toast.error('Selectează o tăviță țintă')
       return
     }
@@ -3496,7 +3673,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       for (const itemId of itemIds) {
         const { error } = await supabase
           .from('tray_items')
-          .update({ tray_id: targetTrayId })
+          .update({ tray_id: actualTrayId })
           .eq('id', itemId)
         
         if (error) {
@@ -3515,6 +3692,42 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       if (fisaId) {
         const updatedQuotes = await listTraysForServiceSheet(fisaId)
         setQuotes(updatedQuotes)
+        
+        // Verifică dacă tăvița "undefined" mai are items și șterge-o dacă este goală
+        if (isReceptiePipeline) {
+          // Găsește tăvița "undefined" din lista actualizată
+          const currentUndefinedTray = updatedQuotes.find(q => !q.number || q.number === '')
+          
+          if (currentUndefinedTray) {
+            const undefinedTrayItems = await listQuoteItems(currentUndefinedTray.id, services, instruments, pipelinesWithIds)
+            
+            if (!undefinedTrayItems || undefinedTrayItems.length === 0) {
+              // Tăvița "undefined" este goală, șterge-o
+              try {
+                const { success, error } = await deleteTray(currentUndefinedTray.id)
+                if (success && !error) {
+                  console.log('Tăvița "undefined" goală a fost ștearsă')
+                  // Reîncarcă tăvițele după ștergere
+                  const refreshedQuotes = await listTraysForServiceSheet(fisaId)
+                  setQuotes(refreshedQuotes)
+                  
+                  // Dacă tăvița ștearsă era selectată, selectează prima tăviță rămasă
+                  if (selectedQuoteId === currentUndefinedTray.id) {
+                    if (refreshedQuotes.length > 0) {
+                      setSelectedQuoteId(refreshedQuotes[0].id)
+                    } else {
+                      setSelectedQuoteId(null)
+                    }
+                  }
+                } else {
+                  console.error('Eroare la ștergerea tăviței undefined:', error)
+                }
+              } catch (deleteError) {
+                console.error('Eroare la ștergerea tăviței undefined:', deleteError)
+              }
+            }
+          }
+        }
       }
       
       setShowMoveInstrumentDialog(false)
@@ -3917,7 +4130,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                     }
                   }}
                   placeholder="1"
-                  disabled={hasServicesOrInstrumentInSheet}
+                  disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline}
+                  title={hasServicesOrInstrumentInSheet && !isVanzariPipeline ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea instrumentului"}
                 />
               </div>
             </div>
@@ -4172,49 +4386,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 />
                 <div className="flex items-center justify-between mt-2">
                   <span className="text-xs text-amber-900/80 dark:text-amber-100/80">
-                    Aceste note se salvează pentru această fișă.
+                    Aceste note se salvează automat când închizi panoul.
                   </span>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    disabled={savingTrayDetails || !fisaId}
-                    onClick={async () => {
-                      if (!fisaId) {
-                        toast.error('Fișa de serviciu nu a fost găsită')
-                        return
-                      }
-                      setSavingTrayDetails(true)
-                      try {
-                        const { data, error } = await supabase
-                          .from('service_files')
-                          .update({ details: trayDetails } as any)
-                          .eq('id', fisaId)
-                          .select('details')
-                          .single()
-                        if (error && Object.keys(error as any).length > 0) {
-                          console.error('Eroare la salvarea detaliilor fișei:', error)
-                          toast.error('Eroare la salvarea detaliilor: ' + ((error as any).message || 'Eroare necunoscută'))
-                        } else {
-                          setTrayDetails(data?.details || '')
-                          toast.success('Detaliile fișei au fost salvate')
-                        }
-                      } catch (err: any) {
-                        console.error('Eroare la salvarea detaliilor fișei:', err)
-                        toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
-                      } finally {
-                        setSavingTrayDetails(false)
-                      }
-                    }}
-                  >
-                    {savingTrayDetails ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                        Salvare...
-                      </>
-                    ) : (
-                      'Salvează detaliile'
-                    )}
-                  </Button>
                 </div>
               </>
             )}
@@ -4419,8 +4592,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                     }
                     try {
                       const created = await createQuoteForLead(leadId, newTrayNumber.trim(), fisaId, newTraySize)
-                      setTargetTrayId(created.id)
-                      await handleMoveInstrument()
+                      // Folosește direct ID-ul creat, nu te baza pe state
+                      await handleMoveInstrument(created.id)
                     } catch (error: any) {
                       console.error('Error creating tray:', error)
                       toast.error('Eroare la crearea tăviței: ' + (error?.message || 'Eroare necunoscută'))
@@ -5180,8 +5353,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 }
               }}
             placeholder="1"
-              disabled={hasServicesOrInstrumentInSheet}
-              title={hasServicesOrInstrumentInSheet ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea"}
+              disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline}
+              title={hasServicesOrInstrumentInSheet && !isVanzariPipeline ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea instrumentului"}
           />
         </div>
         </div>
@@ -5920,55 +6093,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                   />
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-[11px] text-amber-900/80 dark:text-amber-100/80">
-                      Aceste note se salvează pentru această fișă și sunt vizibile pentru toate tăvițele din fișă în departamente.
+                      Aceste note se salvează automat când închizi panoul și sunt vizibile pentru toate tăvițele din fișă în departamente.
                     </span>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      disabled={savingTrayDetails || !fisaId}
-                      onClick={async () => {
-                        if (!fisaId) {
-                          toast.error('Fișa de serviciu nu a fost găsită')
-                          return
-                        }
-
-                        setSavingTrayDetails(true)
-                        try {
-                          // Salvăm detaliile în service_files.details pentru fișa de serviciu
-                          const { data, error } = await supabase
-                            .from('service_files')
-                            .update({ details: trayDetails } as any)
-                            .eq('id', fisaId)
-                            .select('details')
-                            .single()
-
-                          console.log('[Detalii fisa] Răspuns salvare:', { data, error })
-
-                          if (error && Object.keys(error as any).length > 0) {
-                            console.error('Eroare la salvarea detaliilor fișei:', error)
-                            const message = (error as any).message || 'Eroare necunoscută la salvare'
-                            toast.error('Eroare la salvarea detaliilor: ' + message)
-                          } else {
-                            setTrayDetails(data?.details || '')
-                            toast.success('Detaliile fișei au fost salvate')
-                          }
-                        } catch (err: any) {
-                          console.error('Eroare la salvarea detaliilor fișei:', err)
-                          toast.error('Eroare: ' + (err.message || 'Eroare necunoscută'))
-                        } finally {
-                          setSavingTrayDetails(false)
-                        }
-                      }}
-                    >
-                      {savingTrayDetails ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                          Salvare...
-                        </>
-                      ) : (
-                        'Salvează detaliile'
-                      )}
-                    </Button>
                   </div>
                 </>
               )}

@@ -353,7 +353,15 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
           {(lead.tags?.length ?? 0) > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {lead.tags!.map(tag => {
-                const isUrgentOrRetur = tag.name.toLowerCase() === 'urgent' || tag.name === 'RETUR'
+                const isUrgent = tag.name.toLowerCase() === 'urgent'
+                const isRetur = tag.name === 'RETUR'
+                const isUrgentOrRetur = isUrgent || isRetur
+                
+                // Nu afișa tag-ul urgent în pipeline-ul Vanzari
+                if (isUrgent && pipelineName && pipelineName.toLowerCase().includes('vanzari')) {
+                  return null
+                }
+                
                 if (isDepartmentTag(tag.name)) {
                   return (
                     <span

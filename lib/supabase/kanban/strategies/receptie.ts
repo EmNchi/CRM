@@ -54,6 +54,59 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     // Fetch Receptie stages for virtual item mapping
     const receptieStages = await this.getReceptieStages(context.pipelineId)
     
+    // IMPORTANT: Load service files with office_direct or curier_trimis directly from DB
+    // even if they're not in pipeline_items yet
+    const supabase = supabaseBrowser()
+    const { data: directServiceFiles } = await supabase
+      .from('service_files')
+      .select(`
+        id, lead_id, number, status, created_at, office_direct, curier_trimis,
+        lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip)
+      `)
+      .or('office_direct.eq.true,curier_trimis.eq.true')
+    
+    // Add direct service files to the list if not already present
+    if (directServiceFiles && directServiceFiles.length > 0) {
+      directServiceFiles.forEach((sf: any) => {
+        if (!serviceFiles.includes(sf.id)) {
+          serviceFiles.push(sf.id)
+        }
+        // Create pipeline item if it doesn't exist
+        const existingItem = itemMap.get(`service_file:${sf.id}`)
+        if (!existingItem) {
+          // Find appropriate stage based on checkbox
+          let targetStage = receptieStages.find(s => {
+            const nameLower = s.name.toLowerCase()
+            if (sf.office_direct && (nameLower.includes('office') && nameLower.includes('direct'))) {
+              return true
+            }
+            if (sf.curier_trimis && (nameLower.includes('curier') && nameLower.includes('trimis'))) {
+              return true
+            }
+            return false
+          })
+          // Fallback to first active stage if no match
+          if (!targetStage) {
+            targetStage = receptieStages.find(s => s.name) || receptieStages[0]
+          }
+          if (targetStage) {
+            const virtualItem: PipelineItemWithStage = {
+              id: `virtual_${sf.id}`,
+              type: 'service_file',
+              item_id: sf.id,
+              pipeline_id: context.pipelineId,
+              stage_id: targetStage.id,
+              created_at: sf.created_at,
+              updated_at: new Date().toISOString(),
+              stage: targetStage,
+              isReadOnly: false
+            }
+            itemMap.set(`service_file:${sf.id}`, virtualItem)
+          }
+        }
+      })
+    }
+    
     // Get virtual service files from department pipelines
     const virtualItems = await this.loadVirtualServiceFiles(
       context,
@@ -77,9 +130,10 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       return []
     }
     
-    // Fetch service files (excluding those already in virtualItems)
+    // Fetch service files (excluding those already in virtualItems and directServiceFiles)
     const sfIdsToFetch = serviceFiles.filter(
-      id => !virtualItems.serviceFileData.has(id)
+      id => !virtualItems.serviceFileData.has(id) && 
+            !(directServiceFiles?.some((sf: any) => sf.id === id))
     )
     
     const { data: fetchedServiceFiles } = await fetchServiceFilesByIds(sfIdsToFetch)
@@ -87,24 +141,31 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     // Merge service file data
     const allServiceFiles: RawServiceFile[] = [
       ...fetchedServiceFiles,
-      ...Array.from(virtualItems.serviceFileData.values())
+      ...Array.from(virtualItems.serviceFileData.values()),
+      ...(directServiceFiles || [])
     ]
     
+    // Filter service files: Receptie should show those with office_direct = true OR curier_trimis = true
+    const filteredServiceFiles = allServiceFiles.filter(sf => {
+      // For Receptie, show service files with office_direct = true or curier_trimis = true
+      return sf.office_direct === true || sf.curier_trimis === true
+    })
+    
     // Get all lead IDs for tags
-    const leadIds = allServiceFiles
+    const leadIds = filteredServiceFiles
       .map(sf => sf.lead?.id)
       .filter(Boolean) as string[]
     
     // Fetch tags and calculate totals
     const [{ data: tagMap }, totalsData] = await Promise.all([
       fetchTagsForLeads(leadIds),
-      this.calculateServiceFileTotals(serviceFiles)
+      this.calculateServiceFileTotals(filteredServiceFiles.map(sf => sf.id))
     ])
     
     // Transform to KanbanItems
     const kanbanItems: KanbanItem[] = []
     
-    allServiceFiles.forEach(serviceFile => {
+    filteredServiceFiles.forEach(serviceFile => {
       const pipelineItem = getPipelineItem(itemMap, 'service_file', serviceFile.id)
       if (!pipelineItem || !serviceFile.lead) return
       
@@ -219,7 +280,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
         id,
         service_file_id,
         service_file:service_files!inner(
-          id, lead_id, number, status, created_at,
+          id, lead_id, number, status, created_at, office_direct, curier_trimis,
           lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details)
         )
       `)
