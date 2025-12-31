@@ -17,7 +17,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { ro } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
-import { listServiceFilesForLead, listTraysForServiceFile, listTrayItemsForTray, updateTrayItem, type TrayItem } from '@/lib/supabase/serviceFileOperations'
+import { listServiceFilesForLead, listTraysForServiceFile, listTrayItemsForTray, updateTrayItem, updateServiceFile, type TrayItem } from '@/lib/supabase/serviceFileOperations'
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from '@/lib/supabase/imageOperations'
 import { moveItemToStage } from '@/lib/supabase/pipelineOperations'
 import { useRouter } from 'next/navigation'
@@ -1150,19 +1150,15 @@ export function LeadDetailsSheet({
                                     return
                                   }
 
-                                  // Salvează detaliile în service_files.details
-                                  const { data, error } = await supabase
-                                    .from('service_files')
-                                    .update({ details: trayDetails } as any)
-                                    .eq('id', trayData.service_file_id)
-                                    .select('details')
-                                    .single()
+                                  // Salvează detaliile în service_files.details folosind funcția updateServiceFile
+                                  const { error } = await updateServiceFile(trayData.service_file_id, {
+                                    details: trayDetails
+                                  })
 
                                   if (error) {
                                     console.error('Error saving service file details:', error)
-                                    toast.error('Eroare la salvarea detaliilor: ' + error.message)
+                                    toast.error('Eroare la salvarea detaliilor: ' + (error?.message || 'Eroare necunoscută'))
                                   } else {
-                                    setTrayDetails(data?.details || '')
                                     toast.success('Detaliile fișei au fost salvate')
                                   }
                                 } catch (err: any) {

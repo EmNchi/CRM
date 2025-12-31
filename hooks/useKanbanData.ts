@@ -415,6 +415,16 @@ export function useKanbanData(pipelineSlug?: string) {
     const currentStageName = lead.stage?.toLowerCase() || ''
     const newStageNameLower = newStageName.toLowerCase()
     
+    // Blochează mutarea în stage-urile restricționate în Receptie
+    if (isInReceptie) {
+      const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+      const isRestricted = restrictedStages.some(restricted => newStageNameLower.includes(restricted))
+      if (isRestricted) {
+        console.log('🚫 Mutare blocată în stage restricționat:', newStageName)
+        return // Nu permite mutarea în stage-uri restricționate
+      }
+    }
+    
     // Pentru carduri de tip tray sau service_file
     if (leadAny.isQuote || leadAny.isFisa) {
       // Găsește pipeline-ul curent

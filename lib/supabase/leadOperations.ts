@@ -340,10 +340,17 @@ export async function updateLead(leadId: string, updates: any) {
 }
 
 /**
- * Șterge un lead din baza de date.
+ * Șterge un lead din baza de date și toate datele asociate.
  * ATENȚIE: Ștergerea unui lead este ireversibilă și va șterge toate datele asociate:
  * fișe de serviciu, tăvițe, item-uri, evenimente, tag-uri, etc.
  * Folosiți cu precauție, deoarece operația este permanentă.
+ * 
+ * Ordinea de ștergere:
+ * 1. Șterge toate fișele de serviciu (care vor șterge automat tăvițele și tray_items prin cascade)
+ * 2. Șterge pipeline_items pentru lead și service_files
+ * 3. Șterge lead_tags
+ * 4. Șterge stage_history
+ * 5. Șterge lead-ul
  * 
  * @param leadId - ID-ul lead-ului de șters
  * @returns Obiect cu:
@@ -352,6 +359,62 @@ export async function updateLead(leadId: string, updates: any) {
  */
 export async function deleteLead(leadId: string) {
   try {
+    // 1. Obține toate fișele de serviciu pentru acest lead
+    const { data: serviceFiles, error: sfError } = await supabase
+      .from('service_files')
+      .select('id')
+      .eq('lead_id', leadId)
+
+    if (sfError) throw sfError
+
+    // 2. Șterge toate fișele de serviciu (cascade va șterge automat tăvițele și tray_items)
+    if (serviceFiles && serviceFiles.length > 0) {
+      const serviceFileIds = serviceFiles.map(sf => sf.id)
+      
+      // Șterge pipeline_items pentru service_files
+      const { error: piError } = await supabase
+        .from('pipeline_items')
+        .delete()
+        .in('item_id', serviceFileIds)
+        .eq('type', 'service_file')
+
+      if (piError) throw piError
+
+      // Șterge fișele de serviciu (cascade va șterge trays și tray_items)
+      const { error: deleteSfError } = await supabase
+        .from('service_files')
+        .delete()
+        .eq('lead_id', leadId)
+
+      if (deleteSfError) throw deleteSfError
+    }
+
+    // 3. Șterge pipeline_items pentru lead
+    const { error: leadPiError } = await supabase
+      .from('pipeline_items')
+      .delete()
+      .eq('item_id', leadId)
+      .eq('type', 'lead')
+
+    if (leadPiError) throw leadPiError
+
+    // 4. Șterge lead_tags
+    const { error: tagsError } = await supabase
+      .from('lead_tags')
+      .delete()
+      .eq('lead_id', leadId)
+
+    if (tagsError) throw tagsError
+
+    // 5. Șterge stage_history
+    const { error: historyError } = await supabase
+      .from('stage_history')
+      .delete()
+      .eq('lead_id', leadId)
+
+    if (historyError) throw historyError
+
+    // 6. Șterge lead-ul
     const { error } = await supabase
       .from('leads')
       .delete()

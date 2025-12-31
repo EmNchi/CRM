@@ -152,6 +152,9 @@ export default function TehnicianTrayPage() {
     qty: 1,
     discount_pct: 0,
     price: 0,
+    brand: '',
+    serialNumber: '',
+    garantie: false,
   })
 
   // State pentru pasare tăviță către alt tehnician
@@ -179,11 +182,11 @@ export default function TehnicianTrayPage() {
           number,
           size,
           status,
-          urgent,
           service_file_id,
           service_file:service_files!inner(
             id,
             number,
+            urgent,
             lead:leads!inner(
               id,
               full_name,
@@ -758,18 +761,18 @@ export default function TehnicianTrayPage() {
 
   // Schimbă urgent-ul tăviței
   const handleUrgentChange = async (urgent: boolean) => {
-    if (!trayId || !trayData) return
+    if (!trayId || !trayData || !trayData.service_file_id) return
     
     try {
-      const { error } = await supabase
-        .from('trays')
-        .update({ urgent })
-        .eq('id', trayId)
+      // IMPORTANT: urgent este gestionat la nivel de service_file, nu de tăviță
+      const { getServiceFile, updateServiceFile } = await import('@/lib/supabase/serviceFileOperations')
+      const { error } = await updateServiceFile(trayData.service_file_id, { urgent })
       
       if (error) throw error
       
-      setTrayData({ ...trayData, urgent })
-      toast.success(urgent ? 'Tăviță marcată ca urgentă' : 'Tăviță nemarcată ca urgentă')
+      // Reîncarcă datele pentru a reflecta modificarea
+      await loadData()
+      toast.success(urgent ? 'Fișă marcată ca urgentă' : 'Fișă nemarcată ca urgentă')
     } catch (error: any) {
       console.error('Eroare la actualizare urgent:', error)
       toast.error('Eroare la actualizare')
@@ -1031,8 +1034,9 @@ export default function TehnicianTrayPage() {
     }
     
     let price = basePrice * item.qty
-    // Urgent se preia de pe tăviță, nu de pe item
-    if (trayData?.urgent) {
+    // Urgent se preia din service_file, nu din tăviță
+    const serviceFileUrgent = (trayData as any)?.service_file?.urgent || false
+    if (serviceFileUrgent) {
       price = price * 1.3 // +30%
     }
     if (item.discount_pct) {
@@ -1174,8 +1178,9 @@ export default function TehnicianTrayPage() {
           basePrice = item.service.price
         }
         let price = basePrice * item.qty
-        // Urgent se preia de pe tăviță
-        if (trayData?.urgent) {
+        // Urgent se preia din service_file, nu din tăviță
+        const serviceFileUrgent = (trayData as any)?.service_file?.urgent || false
+        if (serviceFileUrgent) {
           price = price * 1.3
         }
         if (item.discount_pct) {
@@ -1183,7 +1188,7 @@ export default function TehnicianTrayPage() {
         }
         return sum + price
       }, 0)
-  }, [trayItems, trayData?.urgent])
+  }, [trayItems, trayData])
 
   // Serviciile filtrate după instrumentul selectat
   const filteredServices = useMemo(() => {
@@ -1320,6 +1325,9 @@ export default function TehnicianTrayPage() {
       qty: item.qty || 1,
       discount_pct: item.discount_pct || 0,
       price: currentPrice,
+      brand: item.brand || '',
+      serialNumber: item.serial_number || '',
+      garantie: item.garantie || false,
     })
     setEditServiceOpen(true)
   }
@@ -1332,7 +1340,7 @@ export default function TehnicianTrayPage() {
     try {
       const item = editingServiceItem
 
-      // Reconstruiește notes JSON
+      // Reconstruiește notes JSON (fără brand și serial_number - acestea sunt în tabele separate)
       const notesData: any = {
         item_type: item.notes ? (() => {
           try {
@@ -1343,9 +1351,6 @@ export default function TehnicianTrayPage() {
           }
         })() : 'service',
         discount_pct: editService.discount_pct || 0,
-        brand: item.brand || null,
-        serial_number: item.serial_number || null,
-        garantie: item.garantie || false,
         price: editService.price, // Salvează prețul în notes pentru override
       }
 
@@ -1354,12 +1359,32 @@ export default function TehnicianTrayPage() {
         notes: JSON.stringify(notesData),
       }
 
+      // Actualizează tray_item
       const { error } = await supabase
         .from('tray_items')
         .update(updateData)
         .eq('id', editingServiceItem.id)
 
       if (error) throw error
+
+      // IMPORTANT: Actualizează brand și serial number în tabelele tray_item_brands și tray_item_brand_serials
+      const { deleteAllTrayItemBrands, createTrayItemBrandsWithSerials } = await import('@/lib/supabase/trayItemBrandSerials')
+      
+      // Șterge brand-urile existente
+      await deleteAllTrayItemBrands(editingServiceItem.id)
+      
+      // Creează brand și serial number dacă sunt completate
+      if (editService.brand && editService.brand.trim()) {
+        const serialNumbers = editService.serialNumber 
+          ? editService.serialNumber.split(',').map(sn => sn.trim()).filter(sn => sn)
+          : []
+        
+        await createTrayItemBrandsWithSerials(editingServiceItem.id, [{
+          brand: editService.brand.trim(),
+          serialNumbers: serialNumbers,
+          garantie: editService.garantie || false,
+        }])
+      }
 
       toast.success('Serviciu actualizat cu succes')
       setEditServiceOpen(false)
@@ -1609,13 +1634,13 @@ export default function TehnicianTrayPage() {
           </div>
         </div>
         
-        {/* Switch Urgent - pentru toată tăvița */}
+        {/* Switch Urgent - pentru toată fișa de serviciu */}
         <div className="flex items-center gap-2 mt-3">
           <Switch
-            checked={trayData.urgent || false}
+            checked={(trayData as any)?.service_file?.urgent || false}
             onCheckedChange={handleUrgentChange}
           />
-          <Label className={cn("text-sm font-medium", trayData.urgent && "text-amber-600")}>
+          <Label className={cn("text-sm font-medium", (trayData as any)?.service_file?.urgent && "text-amber-600")}>
             Urgent (+30%)
           </Label>
         </div>
@@ -1848,7 +1873,11 @@ export default function TehnicianTrayPage() {
                   </TableHeader>
                   <TableBody>
                     {trayItems.filter(item => !isInstrumentOnly(item)).map((item) => (
-                      <TableRow key={item.id}>
+                      <TableRow 
+                        key={item.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => handleEditService(item)}
+                      >
                         <TableCell className="font-medium">
                           {getItemName(item)}
                         </TableCell>
@@ -1886,7 +1915,7 @@ export default function TehnicianTrayPage() {
                           {item.technician_id ? (technicians[item.technician_id] || 'Necunoscut') : '-'}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1929,7 +1958,11 @@ export default function TehnicianTrayPage() {
                   if (!itemName) return null
                   
                   return (
-                    <Card key={item.id} className="p-4">
+                    <Card 
+                      key={item.id} 
+                      className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => handleEditService(item)}
+                    >
                       <div className="space-y-3">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
@@ -1977,7 +2010,7 @@ export default function TehnicianTrayPage() {
                               })()} RON
                             </p>
                           </div>
-                          <div className="flex gap-1">
+                          <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2312,6 +2345,45 @@ export default function TehnicianTrayPage() {
                 min="0"
                 max="100"
               />
+            </div>
+            
+            {/* Brand și Serial Number - doar pentru pipeline Reparații */}
+            <div className="border-t pt-4 space-y-4">
+              <div>
+                <Label>Brand</Label>
+                <Input
+                  type="text"
+                  value={editService.brand}
+                  onChange={(e) => setEditService({ ...editService, brand: e.target.value })}
+                  placeholder="Introduceți brand-ul instrumentului"
+                />
+              </div>
+              
+              <div>
+                <Label>Serial Number</Label>
+                <Input
+                  type="text"
+                  value={editService.serialNumber}
+                  onChange={(e) => setEditService({ ...editService, serialNumber: e.target.value })}
+                  placeholder="Introduceți serial number (separate prin virgulă pentru mai multe)"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Pentru mai multe serial numbers, separați-le prin virgulă
+                </p>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="garantie-edit"
+                  checked={editService.garantie}
+                  onChange={(e) => setEditService({ ...editService, garantie: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="garantie-edit" className="cursor-pointer">
+                  Garanție
+                </Label>
+              </div>
             </div>
             
             <div className="flex gap-2 pt-4">

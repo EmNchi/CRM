@@ -20,12 +20,16 @@ import { ChevronsUpDown, Printer, Mail, Phone, Copy, Check, Loader2, FileText, H
 import { listTags, toggleLeadTag, type Tag, type TagColor } from "@/lib/supabase/tagOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { useRole, useAuth } from "@/lib/contexts/AuthContext"
+import { deleteLead } from "@/lib/supabase/leadOperations"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Trash2 } from "lucide-react"
 import { 
   listServiceFilesForLead, 
   createServiceFile, 
   listTraysForServiceFile,
   listTrayItemsForTray,
   getNextGlobalServiceFileNumber,
+  getServiceFile,
   type ServiceFile,
   type TrayItem,
   type Tray
@@ -333,6 +337,9 @@ export function LeadDetailsPanel({
   const { role, loading: roleLoading } = useRole()
   const { user } = useAuth()
   const [isTechnician, setIsTechnician] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const isOwner = role === 'owner'
   
   // Ref pentru componenta Preturi - pentru a apela salvarea la Close
   const preturiRef = useRef<PreturiRef>(null)
@@ -1367,12 +1374,10 @@ export function LeadDetailsPanel({
             0
           )
           
-          // Urgent se preia de pe tăviță, nu de pe fiecare item
-          const isUrgent = tray.urgent || false
-          const urgentAmount = isUrgent ? visibleItems.reduce((acc, it) => {
-            const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
-            return acc + afterDisc * (30 / 100) // 30% markup pentru urgent
-          }, 0) : 0
+          // Urgent se preia din service_file, nu din tăviță
+          // Va fi setat mai jos după ce încărcăm service_file
+          const isUrgent = false // Va fi actualizat mai jos
+          const urgentAmount = 0 // Va fi actualizat mai jos
           
           // Calculează reducerile pentru abonament (10% servicii, 5% piese) - exact ca în preturi.tsx PrintViewData
           const subscriptionType = tray.subscription_type || null
@@ -1495,8 +1500,10 @@ export function LeadDetailsPanel({
           0
         )
         
-        // Urgent se preia de pe tăviță
-        const isUrgent = tray.urgent || false
+        // IMPORTANT: Încarcă urgent din service_file, nu din tăviță
+        const { data: serviceFileData } = await getServiceFile(fisaId)
+        const serviceFileUrgent = serviceFileData?.urgent || false
+        const isUrgent = serviceFileUrgent
         const urgentAmount = isUrgent ? visibleItems.reduce((acc, it) => {
           const afterDisc = it.qty * it.price * (1 - Math.min(100, Math.max(0, it.discount_pct)) / 100)
           return acc + afterDisc * (30 / 100)
@@ -1709,6 +1716,17 @@ export function LeadDetailsPanel({
                     <span className="hidden sm:inline">Email</span>
                   </Button>
                 </>
+              )}
+              {isOwner && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                >
+                  <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Șterge</span>
+                </Button>
               )}
               <Button variant="outline" size="sm" onClick={handleCloseWithSave} className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3">Close</Button>
             </div>
@@ -2626,7 +2644,7 @@ export function LeadDetailsPanel({
                                       <div key={detail.tray.id} className="border rounded-lg p-4">
                                         <h3 className="font-medium mb-3 flex items-center gap-2">
                                           Tăviță {index + 1}: {detail.tray.name}
-                                          {detail.tray.urgent && (
+                                          {detail.urgent > 0 && (
                                             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
                                               URGENT (+30%)
                                             </span>
@@ -2660,8 +2678,8 @@ export function LeadDetailsPanel({
                                                   const base = item.qty * item.price
                                                   const disc = base * (Math.min(100, Math.max(0, item.discount_pct)) / 100)
                                                   const afterDisc = base - disc
-                                                  // Urgent se preia de pe tăviță
-                                                  const urgent = detail.tray.urgent ? afterDisc * 0.30 : 0
+                                                  // Urgent se preia din service_file (calculat în detail.urgent)
+                                                  const urgent = detail.urgent > 0 ? afterDisc * 0.30 : 0
                                                   const lineTotal = afterDisc + urgent
                                                   
                                                   return (
@@ -2872,6 +2890,54 @@ export function LeadDetailsPanel({
           </div>
         </div>
       </div>
+
+      {/* Dialog de confirmare pentru ștergere */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ești sigur că vrei să ștergi acest lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Această acțiune va șterge permanent lead-ul "{lead?.name}" și toate datele asociate:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Toate fișele de serviciu</li>
+                <li>Toate tăvițele și item-urile</li>
+                <li>Toate tag-urile și istoricul</li>
+              </ul>
+              <strong className="text-red-600">Această acțiune este ireversibilă!</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Anulează</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!lead?.id) return
+                setIsDeleting(true)
+                try {
+                  const { success, error } = await deleteLead(lead.id)
+                  if (success) {
+                    toast.success(`Lead-ul "${lead.name}" a fost șters cu succes.`)
+                    setShowDeleteDialog(false)
+                    onClose()
+                    // Reîmprospătează pagina pentru a reflecta ștergerea
+                    window.location.reload()
+                  } else {
+                    throw error || new Error('Eroare la ștergerea lead-ului')
+                  }
+                } catch (error: any) {
+                  console.error('Eroare la ștergerea lead-ului:', error)
+                  toast.error(error?.message || "A apărut o eroare la ștergerea lead-ului.")
+                } finally {
+                  setIsDeleting(false)
+                }
+              }}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            >
+              {isDeleting ? "Se șterge..." : "Șterge"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

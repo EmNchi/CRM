@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import SignOutButton from '@/components/SignOutButton'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuthContext } from '@/lib/contexts/AuthContext'
 
@@ -43,7 +42,6 @@ export default function AuthStatus() {
           </AvatarFallback>
         </Avatar>
       </Link>
-      <SignOutButton />
     </div>
   )
 }

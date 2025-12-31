@@ -16,12 +16,12 @@ export const REPARATII_PIPELINE_NAME = 'Reparatii'
 
 // Stage name patterns for matching
 export const STAGE_PATTERNS = {
-  IN_LUCRU: ['in lucru', 'in work', 'in progress'],
-  IN_ASTEPTARE: ['in asteptare', 'asteptare'],
-  FINALIZARE: ['finalizare', 'finalized', 'done'],
-  DE_FACTURAT: ['facturat', 'to invoice'],
-  NOUA: ['noua', 'new'],
-  ASTEPT_PIESE: ['astept piese', 'asteptare piese', 'waiting parts'],
+  IN_LUCRU: ['in lucru', 'in work', 'in progress', 'în lucru'],
+  IN_ASTEPTARE: ['in asteptare', 'asteptare', 'în așteptare', 'așteptare'],
+  FINALIZARE: ['finalizare', 'finalized', 'done', 'finalizată', 'finalizat'],
+  DE_FACTURAT: ['facturat', 'to invoice', 'de facturat', 'de facturată'],
+  NOUA: ['noua', 'new', 'nouă'],
+  ASTEPT_PIESE: ['astept piese', 'asteptare piese', 'waiting parts', 'aștept piese', 'așteptare piese'],
 } as const
 
 // Cache configuration

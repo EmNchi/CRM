@@ -489,6 +489,21 @@ export default function CRMPage() {
 
   // functie pentru mutarea in batch in stage
   const handleBulkMoveToStage = async (leadIds: string[], newStage: string) => {
+    // Blochează mutarea în stage-urile restricționate în Receptie
+    const isReceptiePipeline = params.pipeline?.toLowerCase().includes('receptie') || false
+    if (isReceptiePipeline) {
+      const newStageLower = newStage.toLowerCase()
+      const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+      const isRestricted = restrictedStages.some(restricted => newStageLower.includes(restricted))
+      if (isRestricted) {
+        toast({
+          title: "Mutare blocată",
+          description: `Nu poți muta cardurile în stage-ul "${newStage}" în pipeline-ul Receptie.`,
+          variant: "destructive",
+        })
+        return
+      }
+    }
     try {
       // obtine pipeline-ul curent si stage-ul
       const { data: pipelinesData } = await getPipelinesWithStages()

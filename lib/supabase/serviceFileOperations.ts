@@ -28,7 +28,6 @@ export type Tray = {
   size: string
   service_file_id: string
   status: 'in_receptie' | 'in_lucru' | 'gata'
-  urgent: boolean
   created_at: string
 }
 
@@ -200,10 +199,43 @@ export async function updateServiceFile(
   updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal' | 'urgent' | 'subscription_type'>>
 ): Promise<{ data: ServiceFile | null; error: any }> {
   try {
+    // IMPORTANT: Dacă details nu este inclus în updates, păstrează valoarea existentă
+    // Citim mai întâi fișa existentă pentru a păstra details dacă nu este specificat
+    let finalUpdates: any = { ...updates }
+    
+    // Dacă details nu este în updates, citim valoarea existentă și o păstrăm
+    if (!('details' in updates)) {
+      const { data: existingFile } = await supabase
+        .from('service_files')
+        .select('details')
+        .eq('id', serviceFileId)
+        .single()
+      
+      if (existingFile) {
+        finalUpdates.details = existingFile.details
+      }
+    }
+    
+    // Asigură-te că details este întotdeauna inclus în update (chiar dacă este null)
+    // pentru a preveni suprascrierea accidentală
+    if (!('details' in finalUpdates)) {
+      const { data: existingFile } = await supabase
+        .from('service_files')
+        .select('details')
+        .eq('id', serviceFileId)
+        .single()
+      
+      if (existingFile) {
+        finalUpdates.details = existingFile.details
+      } else {
+        finalUpdates.details = null
+      }
+    }
+    
     const { data, error } = await supabase
       .from('service_files')
       .update({
-        ...updates,
+        ...finalUpdates,
         updated_at: new Date().toISOString(),
       })
       .eq('id', serviceFileId)
@@ -347,12 +379,11 @@ export async function listTraysForServiceFile(serviceFileId: string): Promise<{ 
  *   - number: Numărul tăviței
  *   - size: Mărimea tăviței
  *   - status: Statusul tăviței ('in_receptie', 'in_lucru', 'gata')
- *   - urgent: Flag pentru tăviță urgentă
  * @returns Obiect cu data tăviței actualizate sau existente, sau null și eroarea dacă există
  */
 export async function updateTray(
   trayId: string,
-  updates: Partial<Pick<Tray, 'number' | 'size' | 'status' | 'urgent' >>
+  updates: Partial<Pick<Tray, 'number' | 'size' | 'status'>>
 ): Promise<{ data: Tray | null; error: any }> {
   try {
     // Verifică dacă există actualizări

@@ -302,8 +302,20 @@ export function KanbanBoard({
   const handleDragOver = useCallback((e: React.DragEvent, stage: string) => {
     e.preventDefault()
     e.stopPropagation()
+    
+    // Blochează drop-ul pentru stage-urile restricționate în Receptie
+    const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+    if (isReceptiePipeline) {
+      const stageLower = stage.toLowerCase()
+      const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+      const isRestricted = restrictedStages.some(restricted => stageLower.includes(restricted))
+      if (isRestricted) {
+        return // Nu permite drag over pentru stage-uri restricționate
+      }
+    }
+    
     setDragOverStage(stage)
-  }, [])
+  }, [currentPipelineName])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     // verifica daca parasmi cu adevarat containerul (nu doar un child)
@@ -320,6 +332,19 @@ export function KanbanBoard({
     e.preventDefault()
     e.stopPropagation()
     
+    // Blochează drop-ul pentru stage-urile restricționate în Receptie
+    const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+    if (isReceptiePipeline) {
+      const stageLower = stage.toLowerCase()
+      const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+      const isRestricted = restrictedStages.some(restricted => stageLower.includes(restricted))
+      if (isRestricted) {
+        setDraggedLead(null)
+        setDragOverStage(null)
+        return // Nu permite drop pentru stage-uri restricționate
+      }
+    }
+    
     // daca sunt lead-uri selectate, muta-le pe toate
     if (selectedLeads.size > 0) {
       const leadIds = Array.from(selectedLeads)
@@ -335,7 +360,7 @@ export function KanbanBoard({
     
     setDraggedLead(null)
     setDragOverStage(null)
-  }, [draggedLead, onLeadMove, selectedLeads, onBulkMoveToStage])
+  }, [draggedLead, onLeadMove, selectedLeads, onBulkMoveToStage, currentPipelineName])
 
   const handleLeadSelect = useCallback((leadId: string, isSelected: boolean) => {
     setSelectedLeads(prev => {
@@ -480,6 +505,12 @@ export function KanbanBoard({
             const total = stageTotals[stage] || 0
             const isLoading = loadingTotals[stage]
 
+            // Verifică dacă stage-ul este restricționat în Receptie
+            const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+            const stageLower = stage.toLowerCase()
+            const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+            const isRestrictedStage = isReceptiePipeline && restrictedStages.some(restricted => stageLower.includes(restricted))
+            
             return (
               <div
                 key={stage}
@@ -487,11 +518,12 @@ export function KanbanBoard({
                   "flex-shrink-0 bg-card rounded-lg border border-border transition-all duration-200",
                   layout === 'vertical' ? "w-80" : "w-64",
                   layout === 'compact' && "text-xs",
-                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.02] shadow-lg",
+                  isDragOver && !isRestrictedStage && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.02] shadow-lg",
+                  isRestrictedStage && "opacity-60 cursor-not-allowed"
                 )}
-                onDragOver={(e) => handleDragOver(e, stage)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, stage)}
+                onDragOver={!isRestrictedStage ? (e) => handleDragOver(e, stage) : undefined}
+                onDragLeave={!isRestrictedStage ? handleDragLeave : undefined}
+                onDrop={!isRestrictedStage ? (e) => handleDrop(e, stage) : undefined}
               >
                 {/* Header stage */}
                 <div className="p-4 border-b border-border bg-muted/30 group">
@@ -621,17 +653,24 @@ export function KanbanBoard({
             const isDragOver = dragOverStage === stage
             const total = stageTotals[stage] || 0
             const isLoading = loadingTotals[stage]
+            
+            // Verifică dacă stage-ul este restricționat în Receptie
+            const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+            const stageLower = stage.toLowerCase()
+            const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+            const isRestrictedStage = isReceptiePipeline && restrictedStages.some(restricted => stageLower.includes(restricted))
 
             return (
               <div
                 key={stage}
                 className={cn(
                   "bg-card rounded-lg border border-border transition-all duration-200",
-                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                  isDragOver && !isRestrictedStage && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                  isRestrictedStage && "opacity-60 cursor-not-allowed"
                 )}
-                onDragOver={(e) => handleDragOver(e, stage)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, stage)}
+                onDragOver={!isRestrictedStage ? (e) => handleDragOver(e, stage) : undefined}
+                onDragLeave={!isRestrictedStage ? handleDragLeave : undefined}
+                onDrop={!isRestrictedStage ? (e) => handleDrop(e, stage) : undefined}
               >
                 {/* header reutilizat */}
                 <div className="p-4 border-b border-border bg-muted/30 group">
@@ -775,17 +814,24 @@ export function KanbanBoard({
             const isDragOver = dragOverStage === stage
             const total = stageTotals[stage] || 0
             const isLoading = loadingTotals[stage]
+            
+            // Verifică dacă stage-ul este restricționat în Receptie
+            const isReceptiePipeline = currentPipelineName?.toLowerCase().includes('receptie') || false
+            const stageLower = stage.toLowerCase()
+            const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+            const isRestrictedStage = isReceptiePipeline && restrictedStages.some(restricted => stageLower.includes(restricted))
 
             return (
               <div
                 key={stage}
                 className={cn(
                   "bg-card rounded-lg border border-border transition-all duration-200",
-                  isDragOver && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                  isDragOver && !isRestrictedStage && "ring-2 ring-primary ring-offset-2 bg-accent/50 scale-[1.01] shadow-lg",
+                  isRestrictedStage && "opacity-60 cursor-not-allowed"
                 )}
-                onDragOver={(e) => handleDragOver(e, stage)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, stage)}
+                onDragOver={!isRestrictedStage ? (e) => handleDragOver(e, stage) : undefined}
+                onDragLeave={!isRestrictedStage ? handleDragLeave : undefined}
+                onDrop={!isRestrictedStage ? (e) => handleDrop(e, stage) : undefined}
               >
                 {/* header reutilizat */}
                 <div className="p-4 border-b border-border bg-muted/30 group">

@@ -3,15 +3,18 @@
 import type React from "react"
 
 import { useState, useEffect, useMemo } from "react"
-import { MoreHorizontal, GripVertical, Mail, Calendar, Clock, User, Phone, Pin } from "lucide-react"
+import { MoreHorizontal, GripVertical, Mail, Calendar, Clock, User, Phone, Pin, Trash2, CheckCircle2, Circle, Building2, Sparkles, Scissors, Wrench, Building } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import type { Lead } from "@/app/(crm)/dashboard/page"
 import type { TagColor } from "@/lib/supabase/tagOperations"
 import { getOrCreatePinnedTag, toggleLeadTag } from "@/lib/supabase/tagOperations"
+import { deleteLead } from "@/lib/supabase/leadOperations"
+import { useRole } from "@/lib/contexts/AuthContext"
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns"
 import { ro } from "date-fns/locale"
 import { useToast } from "@/hooks/use-toast"
@@ -35,7 +38,11 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [isPinning, setIsPinning] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const { toast } = useToast()
+  const { role } = useRole()
+  const isOwner = role === 'owner'
   
   // verifica daca lead-ul este pinned
   const isPinned = useMemo(() => {
@@ -160,6 +167,23 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
     return styles[tagName] || 'bg-gradient-to-r from-gray-500 to-gray-600 border-gray-300'
   }
 
+  // returneaza iconita potrivita pentru fiecare departament
+  const getDepartmentIcon = (departmentName: string) => {
+    const name = departmentName.toLowerCase()
+    
+    if (name.includes('saloane') || name.includes('salon')) {
+      return <Sparkles className="h-3 w-3 flex-shrink-0" />
+    } else if (name.includes('frizeri') || name.includes('frizerie') || name.includes('barber')) {
+      return <Scissors className="h-3 w-3 flex-shrink-0" />
+    } else if (name.includes('reparati') || name.includes('service')) {
+      return <Wrench className="h-3 w-3 flex-shrink-0" />
+    } else if (name.includes('horeca') || name.includes('corporate') || name.includes('business')) {
+      return <Building className="h-3 w-3 flex-shrink-0" />
+    } else {
+      return <Building2 className="h-3 w-3 flex-shrink-0" />
+    }
+  }
+
   const handleCardClick = (e: React.MouseEvent) => {
     // daca se da click pe checkbox sau butoane, nu deschide detalii
     if (
@@ -187,6 +211,23 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
   }
 
   const handleStageSelect = (newStage: string) => {
+    // Blochează mutarea în stage-urile restricționate în Receptie
+    const isReceptiePipeline = pipelineName?.toLowerCase().includes('receptie') || false
+    if (isReceptiePipeline) {
+      const newStageLower = newStage.toLowerCase()
+      const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+      const isRestricted = restrictedStages.some(restricted => newStageLower.includes(restricted))
+      if (isRestricted) {
+        toast({
+          title: "Mutare blocată",
+          description: `Nu poți muta cardul în stage-ul "${newStage}" în pipeline-ul Receptie.`,
+          variant: "destructive",
+        })
+        setIsMenuOpen(false)
+        return
+      }
+    }
+    
     onMove(lead.id, newStage)
     setIsMenuOpen(false)
   }
@@ -263,7 +304,7 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
               {/* Info row: Tehnician (simplificat) */}
               {lead.technician && (
                 <div className="flex items-center gap-2 mt-1.5">
-                  <span className="text-xs text-muted-foreground truncate">{lead.technician}</span>
+                  <span className="text-xs font-semibold text-red-600 truncate">{lead.technician}</span>
                 </div>
               )}
               
@@ -295,6 +336,95 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
                 <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
                   <Phone className="h-3 w-3" />
                   <span className="truncate">{lead.phone}</span>
+                </div>
+              )}
+              
+              {/* Status - Tăvițe în lucru, în așteptare și finalizate */}
+              {(lead as any).traysInLucru && (lead as any).traysInLucru.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase">Status:</div>
+                  {(lead as any).traysInLucru.map((trayInfo: any, idx: number) => {
+                    return (
+                      <div key={idx} className="text-xs flex items-center gap-2 flex-wrap">
+                        <span className="text-muted-foreground">
+                          {trayInfo.trayNumber || 'Fără număr'}
+                          {trayInfo.traySize && ` (${trayInfo.traySize})`}
+                        </span>
+                        
+                        {/* Iconuri pentru status */}
+                        {trayInfo.status === 'finalizare' && (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                            {trayInfo.technician && (
+                              <>
+                                <span className="font-semibold text-green-600">{trayInfo.technician}</span>
+                              </>
+                            )}
+                            {trayInfo.department && (
+                              <span className="text-green-600 flex-shrink-0">
+                                {getDepartmentIcon(trayInfo.department)}
+                              </span>
+                            )}
+                          </>
+                        )}
+                        
+                        {trayInfo.status === 'in_lucru' && (
+                          <>
+                            {trayInfo.technician ? (
+                              <>
+                                <Circle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />
+                                <span className="font-semibold text-red-600">{trayInfo.technician}</span>
+                              </>
+                            ) : (
+                              <Circle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                            )}
+                            {trayInfo.department && (
+                              <>
+                                <span className="text-red-600 flex-shrink-0">
+                                  {getDepartmentIcon(trayInfo.department)}
+                                </span>
+                                
+                              </>
+                            )}
+                          </>
+                        )}
+                        
+                        {trayInfo.status === 'in_asteptare' && (
+                          <>
+                            {trayInfo.technician ? (
+                              <>
+                                <Circle className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0" />
+                                <span className="font-semibold text-yellow-600">{trayInfo.technician}</span>
+                              </>
+                            ) : (
+                              <Circle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                            )}
+                            {trayInfo.department && (
+                              <>
+                                <span className="text-yellow-600 flex-shrink-0">
+                                  {getDepartmentIcon(trayInfo.department)}
+                                </span>
+                                
+                              </>
+                            )}
+                          </>
+                        )}
+                        
+                        {/* Pentru tăvițe fără status definit dar cu tehnician */}
+                        {!trayInfo.status && trayInfo.technician && (
+                          <>
+                            <Circle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />
+                            <span className="font-semibold text-red-600">{trayInfo.technician}</span>
+                          </>
+                        )}
+                        
+                        {/* Pentru tăvițe neatribuite (fără status și fără tehnician) */}
+                        {!trayInfo.status && !trayInfo.technician && (
+                          <Circle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </>
@@ -329,8 +459,8 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
               
               {lead.technician && (
                 <div className="flex items-center gap-1 mt-1">
-                  <User className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                  <p className="text-xs text-muted-foreground truncate">Tehnician: {lead.technician}</p>
+                  <User className="h-3 w-3 text-red-600 flex-shrink-0" />
+                  <p className="text-xs font-semibold text-red-600 truncate">Tehnician: {lead.technician}</p>
                 </div>
               )}
             </>
@@ -435,11 +565,38 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {stages.map((stage) => (
-                <DropdownMenuItem key={stage} onClick={() => handleStageSelect(stage)} disabled={stage === lead.stage}>
-                  Move to {stage}
-                </DropdownMenuItem>
-              ))}
+              {stages.map((stage) => {
+                // Verifică dacă stage-ul este restricționat în Receptie
+                const isReceptiePipeline = pipelineName?.toLowerCase().includes('receptie') || false
+                const stageLower = stage.toLowerCase()
+                const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
+                const isRestricted = isReceptiePipeline && restrictedStages.some(restricted => stageLower.includes(restricted))
+                const isDisabled = stage === lead.stage || isRestricted
+                
+                return (
+                  <DropdownMenuItem 
+                    key={stage} 
+                    onClick={() => handleStageSelect(stage)} 
+                    disabled={isDisabled}
+                    className={isRestricted ? "opacity-50 cursor-not-allowed" : ""}
+                  >
+                    Move to {stage}
+                    {isRestricted && <span className="ml-2 text-xs text-muted-foreground">(blocat)</span>}
+                  </DropdownMenuItem>
+                )
+              })}
+              {isOwner && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={() => setShowDeleteDialog(true)}
+                    className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-950"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Șterge lead
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -460,6 +617,59 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
         </div>
       </div>
       )}
+
+      {/* Dialog de confirmare pentru ștergere */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ești sigur că vrei să ștergi acest lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Această acțiune va șterge permanent lead-ul "{lead.name}" și toate datele asociate:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Toate fișele de serviciu</li>
+                <li>Toate tăvițele și item-urile</li>
+                <li>Toate tag-urile și istoricul</li>
+              </ul>
+              <strong className="text-red-600">Această acțiune este ireversibilă!</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Anulează</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setIsDeleting(true)
+                try {
+                  const { success, error } = await deleteLead(lead.id)
+                  if (success) {
+                    toast({
+                      title: "Lead șters",
+                      description: `Lead-ul "${lead.name}" a fost șters cu succes.`,
+                    })
+                    setShowDeleteDialog(false)
+                    // Reîmprospătează pagina pentru a reflecta ștergerea
+                    window.location.reload()
+                  } else {
+                    throw error || new Error('Eroare la ștergerea lead-ului')
+                  }
+                } catch (error: any) {
+                  console.error('Eroare la ștergerea lead-ului:', error)
+                  toast({
+                    variant: "destructive",
+                    title: "Eroare",
+                    description: error?.message || "A apărut o eroare la ștergerea lead-ului.",
+                  })
+                } finally {
+                  setIsDeleting(false)
+                }
+              }}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            >
+              {isDeleting ? "Se șterge..." : "Șterge"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

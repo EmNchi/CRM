@@ -20,12 +20,15 @@ import {
   type TrayItem,
   type ServiceFile
 } from "@/lib/supabase/serviceFileOperations"
-import { addServiceFileToPipeline, addTrayToPipeline, moveItemToStage, moveServiceFileToPipeline } from "@/lib/supabase/pipelineOperations"
+import { addServiceFileToPipeline, addTrayToPipeline, moveItemToStage, moveServiceFileToPipeline, getPipelineItemForItem } from "@/lib/supabase/pipelineOperations"
 import { useRole, useAuth } from "@/lib/contexts/AuthContext"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from "@/lib/supabase/imageOperations"
 import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp, Package, ArrowRight, Move } from "lucide-react"
 import { toast } from "sonner"
+import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+
+const supabase = supabaseBrowser()
 
 // Tipuri pentru UI (alias-uri pentru claritate)
 type LeadQuoteItem = TrayItem & {
@@ -126,7 +129,7 @@ const updateQuote = async (quoteId: string, updates: Partial<LeadQuote>) => {
   if (updates.number !== undefined) trayUpdates.number = updates.number
   if (updates.size !== undefined) trayUpdates.size = updates.size
   if (updates.status !== undefined) trayUpdates.status = updates.status
-  if (updates.urgent !== undefined) trayUpdates.urgent = updates.urgent
+  // urgent nu mai există în trays - este gestionat doar în service_files
   
   // Dacă există actualizări pentru tray, le aplicăm
   if (Object.keys(trayUpdates).length > 0) {
@@ -332,8 +335,6 @@ type Technician = {
   name: string
 }
 import { listParts, type Part } from '@/lib/supabase/partOperations'
-import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
-const supabase = supabaseBrowser()
 import { persistAndLogServiceSheet } from "@/lib/history/serviceSheet"
 import { listTags, toggleLeadTag } from '@/lib/supabase/tagOperations'
 import { PrintView } from '@/components/print-view'
@@ -684,7 +685,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         return
       }
       // Verifică dacă utilizatorul există în app_members
-      const supabase = supabaseBrowser()
       const { data } = await supabase
         .from('app_members')
         .select('user_id')
@@ -803,6 +803,9 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   // Focus state pentru a afișa dropdown-ul când input-ul este focusat
   const [serviceSearchFocused, setServiceSearchFocused] = useState(false)
   const [partSearchFocused, setPartSearchFocused] = useState(false)
+  
+  // State pentru stage-ul curent al fișei în pipeline-ul Receptie
+  const [currentServiceFileStage, setCurrentServiceFileStage] = useState<string | null>(null)
 
   const lastSavedRef = useRef<any[]>([])
   const [urgentTagId, setUrgentTagId] = useState<string | null>(null)
@@ -829,6 +832,39 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       }))
     }
   }, [svc.instrumentId, svc.qty, instrumentSettings])
+
+  // Actualizează automat cantitatea instrumentului în funcție de numărul de serial number-uri
+  useEffect(() => {
+    if (!instrumentForm.instrument) return
+    
+    // Calculează numărul total de serial number-uri din toate grupurile
+    const totalSerialNumbers = instrumentForm.brandSerialGroups.reduce((total, group) => {
+      // Numără doar serial number-urile care nu sunt goale
+      const validSerials = group.serialNumbers.filter(sn => sn && sn.trim())
+      return total + validSerials.length
+    }, 0)
+    
+    // Dacă există serial number-uri, actualizează cantitatea
+    if (totalSerialNumbers > 0) {
+      const newQty = String(totalSerialNumbers)
+      // Actualizează doar dacă cantitatea s-a schimbat
+      if (instrumentForm.qty !== newQty) {
+        setInstrumentForm(prev => ({ ...prev, qty: newQty }))
+        // Actualizează și în instrumentSettings pentru a păstra setările
+        if (instrumentForm.instrument) {
+          setInstrumentSettings(prev => ({
+            ...prev,
+            [instrumentForm.instrument]: {
+              ...prev[instrumentForm.instrument],
+              qty: newQty,
+              brandSerialGroups: instrumentForm.brandSerialGroups,
+              garantie: instrumentForm.garantie
+            }
+          }))
+        }
+      }
+    }
+  }, [instrumentForm.brandSerialGroups, instrumentForm.instrument])
 
   // Aplică urgent tuturor serviciilor și pieselor când urgentAllServices e bifat
   useEffect(() => {
@@ -899,6 +935,89 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     checkAndToggleUrgentTag()
   }, [items, urgentTagId, leadId, isVanzariPipeline])
 
+  // IMPORTANT: Reîncarcă urgent și subscription_type din service_file când se schimbă tăvița selectată
+  useEffect(() => {
+    if (!fisaId || !selectedQuoteId) return
+    
+    const reloadUrgentAndSubscription = async () => {
+      try {
+        const { data: serviceFileData } = await getServiceFile(fisaId)
+        if (serviceFileData) {
+          setUrgentAllServices(serviceFileData.urgent || false)
+          setSubscriptionType(serviceFileData.subscription_type || '')
+          console.log('Reîncărcare urgent și subscription din service_file la schimbarea tăviței:', {
+            fisaId,
+            selectedQuoteId,
+            urgent: serviceFileData.urgent,
+            subscription_type: serviceFileData.subscription_type
+          })
+        }
+      } catch (error) {
+        console.error('Eroare la reîncărcarea urgent și subscription:', error)
+      }
+    }
+    
+    reloadUrgentAndSubscription()
+  }, [fisaId, selectedQuoteId])
+
+  // Încarcă stage-ul curent al fișei în pipeline-ul Receptie pentru a verifica dacă butonul de facturare trebuie afișat
+  useEffect(() => {
+    if (!fisaId || !isReceptiePipeline || pipelinesWithIds.length === 0) {
+      setCurrentServiceFileStage(null)
+      return
+    }
+
+    const loadCurrentStage = async () => {
+      try {
+        // Găsește pipeline-ul Receptie
+        const receptiePipeline = pipelinesWithIds.find(p => 
+          p.name.toLowerCase().includes('receptie') || p.name.toLowerCase().includes('reception')
+        )
+        
+        if (!receptiePipeline) {
+          setCurrentServiceFileStage(null)
+          return
+        }
+
+        // Obține pipeline_item-ul pentru service_file în pipeline-ul Receptie
+        const { data: pipelineItem, error } = await getPipelineItemForItem(
+          'service_file',
+          fisaId,
+          receptiePipeline.id
+        )
+
+        if (error || !pipelineItem) {
+          console.log('Fișa nu este în pipeline-ul Receptie sau eroare:', error)
+          setCurrentServiceFileStage(null)
+          return
+        }
+
+        // Obține numele stage-ului
+        if (pipelineItem.stage_id) {
+          const { data: stageData, error: stageError } = await supabase
+            .from('stages')
+            .select('name')
+            .eq('id', pipelineItem.stage_id)
+            .single()
+
+          if (!stageError && stageData) {
+            setCurrentServiceFileStage(stageData.name)
+            console.log('Stage curent al fișei în Receptie:', stageData.name)
+          } else {
+            setCurrentServiceFileStage(null)
+          }
+        } else {
+          setCurrentServiceFileStage(null)
+        }
+      } catch (error) {
+        console.error('Eroare la încărcarea stage-ului curent:', error)
+        setCurrentServiceFileStage(null)
+      }
+    }
+
+    loadCurrentStage()
+  }, [fisaId, isReceptiePipeline, pipelinesWithIds])
+
   async function refreshPipelines() {
     setPipeLoading(true)
     try {
@@ -942,56 +1061,88 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         return
       }
 
-      // AMBELE checkbox-uri mută în pipeline-ul "Receptie", dar în stage-uri diferite
-      const targetPipelineName = 'receptie'
-      const pipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes(targetPipelineName))
-      if (!pipeline) {
-        toast.error(`Pipeline-ul "${targetPipelineName}" nu a fost găsit`)
-        return
-      }
-
       const { data: pipelinesData } = await getPipelinesWithStages()
-      const pipelineData = pipelinesData?.find((p: any) => p.id === pipeline.id)
-      if (!pipelineData?.stages?.length) {
-        toast.error(`Pipeline-ul "${pipeline.name}" nu are stage-uri`)
-        return
-      }
-
+      
       // Normalizează numele stage-urilor pentru căutare (elimină spații, cratime, etc.)
       const normalizeStageName = (name: string) => {
         return name.toLowerCase().replace(/[\s\-_]/g, '')
       }
 
-      // Caută stage-ul exact în pipeline-ul Receptie
-      const targetStageName = isOfficeDirect ? 'officedirect' : 'curiertrimis'
-      
-      let stage = pipelineData.stages.find((s: any) => {
-        if (s.is_active === false) return false
-        const normalized = normalizeStageName(s.name)
-        return normalized === targetStageName || normalized.includes(targetStageName)
-      })
+      // 1. Adaugă în pipeline-ul "Receptie" cu stage-ul corespunzător
+      const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
+      if (receptiePipeline) {
+        const receptiePipelineData = pipelinesData?.find((p: any) => p.id === receptiePipeline.id)
+        if (receptiePipelineData?.stages?.length) {
+          const targetStageName = isOfficeDirect ? 'officedirect' : 'curiertrimis'
+          
+          let stage = receptiePipelineData.stages.find((s: any) => {
+            if (s.is_active === false) return false
+            const normalized = normalizeStageName(s.name)
+            return normalized === targetStageName || normalized.includes(targetStageName)
+          })
 
-      // Dacă nu găsește exact, încearcă o căutare mai flexibilă
-      if (!stage) {
-        const searchTerms = isOfficeDirect ? ['office', 'direct'] : ['curier', 'trimis']
-        stage = pipelineData.stages.find((s: any) => {
-          if (s.is_active === false) return false
-          const normalized = normalizeStageName(s.name)
-          return searchTerms.every(term => normalized.includes(term))
-        })
-      }
-      
-      if (!stage) {
-        console.error('Stage-uri disponibile:', pipelineData.stages.map((s: any) => s.name))
-        toast.error(`Nu s-a găsit stage-ul "${isOfficeDirect ? 'OFFICE DIRECT' : 'CURIER TRIMIS'}" în pipeline-ul "${pipeline.name}"`)
-        return
+          // Dacă nu găsește exact, încearcă o căutare mai flexibilă
+          if (!stage) {
+            const searchTerms = isOfficeDirect ? ['office', 'direct'] : ['curier', 'trimis']
+            stage = receptiePipelineData.stages.find((s: any) => {
+              if (s.is_active === false) return false
+              const normalized = normalizeStageName(s.name)
+              return searchTerms.every(term => normalized.includes(term))
+            })
+          }
+          
+          if (stage) {
+            const result = await moveServiceFileToPipeline(fisaId, receptiePipeline.id, stage.id)
+            if (result.ok) {
+              console.log(`✅ Fișa adăugată în Receptie - ${stage.name}`)
+            } else {
+              console.error(`❌ Eroare la adăugarea în Receptie: ${result.message}`)
+            }
+          }
+        }
       }
 
-      const result = await moveServiceFileToPipeline(fisaId, pipeline.id, stage.id)
-      if (result.ok) {
-        toast.success(`Fișa mutată în ${pipeline.name} - ${stage.name}`)
+      // 2. Dacă este "Curier Trimis", adaugă și în pipeline-ul "Curier"
+      if (!isOfficeDirect) {
+        const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('curier'))
+        if (curierPipeline) {
+          const curierPipelineData = pipelinesData?.find((p: any) => p.id === curierPipeline.id)
+          if (curierPipelineData?.stages?.length) {
+            // Găsește primul stage activ sau un stage specific pentru "Curier Trimis"
+            let stage = curierPipelineData.stages.find((s: any) => {
+              if (s.is_active === false) return false
+              const normalized = normalizeStageName(s.name)
+              return normalized.includes('curier') && normalized.includes('trimis')
+            })
+            
+            // Dacă nu găsește un stage specific, folosește primul stage activ
+            if (!stage) {
+              stage = curierPipelineData.stages.find((s: any) => s.is_active === true)
+            }
+            
+            if (stage) {
+              const result = await moveServiceFileToPipeline(fisaId, curierPipeline.id, stage.id)
+              if (result.ok) {
+                console.log(`✅ Fișa adăugată în Curier - ${stage.name}`)
+                toast.success(`Fișa adăugată în Receptie și Curier`)
+              } else {
+                console.error(`❌ Eroare la adăugarea în Curier: ${result.message}`)
+              }
+            }
+          }
+        }
       } else {
-        toast.error(`Eroare: ${result.message || 'Eroare necunoscută'}`)
+        // Dacă este "Office Direct", nu adaugă în Curier, dar șterge din Curier dacă există
+        const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('curier'))
+        if (curierPipeline) {
+          await supabase
+            .from('pipeline_items')
+            .delete()
+            .eq('item_id', fisaId)
+            .eq('type', 'service_file')
+            .eq('pipeline_id', curierPipeline.id)
+        }
+        toast.success(`Fișa adăugată în Receptie - OFFICE DIRECT`)
       }
     } catch (error: any) {
       toast.error('Eroare la mutarea fișei: ' + (error?.message || 'Eroare necunoscută'))
@@ -1228,10 +1379,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       // Salvează detaliile fișei de serviciu dacă există
       if (fisaId && trayDetails !== undefined) {
         try {
-          const { error: detailsError } = await supabase
-            .from('service_files')
-            .update({ details: trayDetails } as any)
-            .eq('id', fisaId)
+          // Folosește updateServiceFile pentru a păstra toate câmpurile existente
+          const { error: detailsError } = await updateServiceFile(fisaId, {
+            details: trayDetails
+          })
           
           if (detailsError) {
             console.error('Eroare la salvarea detaliilor fișei:', detailsError)
@@ -1265,51 +1416,102 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         } else {
           console.log('✅ Service file actualizat cu office_direct:', officeDirect, 'curier_trimis:', curierTrimis, 'data:', updatedServiceFile)
           
-          // Adaugă fișa în pipeline-ul "Receptie" dacă unul din checkbox-uri este bifat
+          // Adaugă fișa în pipeline-urile corespunzătoare dacă unul din checkbox-uri este bifat
           if (officeDirect || curierTrimis) {
-            const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
-            console.log('Căutare pipeline Receptie:', {
-              pipelinesWithIds: pipelinesWithIds.map(p => p.name),
-              found: receptiePipeline?.id,
-              officeDirect,
-              curierTrimis
-            })
+            const { data: pipelinesData } = await getPipelinesWithStages()
             
+            // Normalizează numele stage-urilor pentru căutare
+            const normalizeStageName = (name: string) => {
+              return name.toLowerCase().replace(/[\s\-_]/g, '')
+            }
+            
+            // 1. Adaugă în pipeline-ul "Receptie"
+            const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
             if (receptiePipeline) {
-              const stageNameVariants = officeDirect 
-                ? ['Office direct', 'OFFICE DIRECT', 'office direct']
-                : ['Curier Trimis', 'CURIER TRIMIS', 'curier trimis', 'Curier trimis']
-              
-              const { data: allStages, error: allStagesError } = await supabase
-                .from('stages')
-                .select('id, name')
-                .eq('pipeline_id', receptiePipeline.id) as { 
-                  data: Array<{ id: string; name: string }> | null; 
-                  error: any 
-                }
-              
-              let stageData: { id: string } | null = null
-              if (allStages && !allStagesError) {
+              const receptiePipelineData = pipelinesData?.find((p: any) => p.id === receptiePipeline.id)
+              if (receptiePipelineData?.stages?.length) {
+                const stageNameVariants = officeDirect 
+                  ? ['Office direct', 'OFFICE DIRECT', 'office direct']
+                  : ['Curier Trimis', 'CURIER TRIMIS', 'curier trimis', 'Curier trimis']
+                
+                let stageData: { id: string } | null = null
                 for (const variant of stageNameVariants) {
-                  const stage = allStages.find((s) => s.name?.toLowerCase() === variant.toLowerCase())
+                  const stage = receptiePipelineData.stages.find((s: any) => {
+                    if (s.is_active === false) return false
+                    return s.name?.toLowerCase() === variant.toLowerCase()
+                  })
                   if (stage) {
                     stageData = { id: stage.id }
                     break
                   }
                 }
-              }
-              
-              if (stageData?.id) {
-                const { error: pipelineError } = await addServiceFileToPipeline(fisaId, receptiePipeline.id, stageData.id)
-                if (pipelineError) {
-                  console.error('Eroare la adăugarea fișei în pipeline Receptie:', pipelineError)
-                } else {
-                  console.log('✅ Fișa adăugată în pipeline Receptie')
+                
+                // Dacă nu găsește exact, încearcă o căutare mai flexibilă
+                if (!stageData) {
+                  const searchTerms = officeDirect ? ['office', 'direct'] : ['curier', 'trimis']
+                  const stage = receptiePipelineData.stages.find((s: any) => {
+                    if (s.is_active === false) return false
+                    const normalized = normalizeStageName(s.name)
+                    return searchTerms.every(term => normalized.includes(term))
+                  })
+                  if (stage) {
+                    stageData = { id: stage.id }
+                  }
+                }
+                
+                if (stageData?.id) {
+                  const { error: pipelineError } = await addServiceFileToPipeline(fisaId, receptiePipeline.id, stageData.id)
+                  if (pipelineError) {
+                    console.error('Eroare la adăugarea fișei în pipeline Receptie:', pipelineError)
+                  } else {
+                    console.log('✅ Fișa adăugată în pipeline Receptie')
+                  }
                 }
               }
             }
+            
+            // 2. Dacă este "Curier Trimis", adaugă și în pipeline-ul "Curier"
+            if (curierTrimis) {
+              const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('curier'))
+              if (curierPipeline) {
+                const curierPipelineData = pipelinesData?.find((p: any) => p.id === curierPipeline.id)
+                if (curierPipelineData?.stages?.length) {
+                  // Găsește un stage specific pentru "Curier Trimis" sau primul stage activ
+                  let stage = curierPipelineData.stages.find((s: any) => {
+                    if (s.is_active === false) return false
+                    const normalized = normalizeStageName(s.name)
+                    return normalized.includes('curier') && normalized.includes('trimis')
+                  })
+                  
+                  // Dacă nu găsește un stage specific, folosește primul stage activ
+                  if (!stage) {
+                    stage = curierPipelineData.stages.find((s: any) => s.is_active === true)
+                  }
+                  
+                  if (stage) {
+                    const { error: curierError } = await addServiceFileToPipeline(fisaId, curierPipeline.id, stage.id)
+                    if (curierError) {
+                      console.error('Eroare la adăugarea fișei în pipeline Curier:', curierError)
+                    } else {
+                      console.log('✅ Fișa adăugată în pipeline Curier')
+                    }
+                  }
+                }
+              }
+            } else {
+              // Dacă este "Office Direct", șterge din Curier dacă există
+              const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('curier'))
+              if (curierPipeline) {
+                await supabase
+                  .from('pipeline_items')
+                  .delete()
+                  .eq('item_id', fisaId)
+                  .eq('type', 'service_file')
+                  .eq('pipeline_id', curierPipeline.id)
+              }
+            }
           } else {
-            // Dacă niciun checkbox nu e bifat, șterge din pipeline Receptie
+            // Dacă niciun checkbox nu e bifat, șterge din ambele pipeline-uri
             const receptiePipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('receptie'))
             if (receptiePipeline) {
               await supabase
@@ -1318,6 +1520,16 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 .eq('item_id', fisaId)
                 .eq('type', 'service_file')
                 .eq('pipeline_id', receptiePipeline.id)
+            }
+            
+            const curierPipeline = pipelinesWithIds.find(p => p.name.toLowerCase().includes('curier'))
+            if (curierPipeline) {
+              await supabase
+                .from('pipeline_items')
+                .delete()
+                .eq('item_id', fisaId)
+                .eq('type', 'service_file')
+                .eq('pipeline_id', curierPipeline.id)
             }
           }
         }
@@ -1411,7 +1623,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         console.log('📤 [saveAllAndLog] Brand serial groups to send:', brandSerialGroupsToSend)
         
         try {
-          if (existingItem) {
+          if (existingItem && existingItem.id) {
             // Actualizează cantitatea și brand-urile/serial numbers pentru item-ul existent
             console.log('📝 [saveAllAndLog] Updating existing item:', existingItem.id)
             
@@ -1419,44 +1631,39 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             let useNewStructure = true
             
             // Actualizează cantitatea pentru instrumentul existent
-            if (existingItem?.id) {
-              const { error: qtyUpdateError } = await supabaseClient
-                .from('tray_items')
-                .update({ qty: qty })
-                .eq('id', existingItem.id)
-              
-              if (qtyUpdateError) {
-                console.error('❌ Error updating quantity:', qtyUpdateError)
-              } else {
-                console.log('✅ Quantity updated to:', qty)
+            const { error: qtyUpdateError } = await supabaseClient
+              .from('tray_items')
+              .update({ qty: qty })
+              .eq('id', existingItem.id)
+            
+            if (qtyUpdateError) {
+              const errorMessage = qtyUpdateError.message || qtyUpdateError.code || JSON.stringify(qtyUpdateError)
+              if (errorMessage && errorMessage !== '{}') {
+                console.error('❌ Error updating quantity:', errorMessage)
               }
+            } else {
+              console.log('✅ Quantity updated to:', qty)
             }
             
-            // Verifică dacă există un tray_item_id valid
-            if (!existingItem?.id) {
-              console.warn('⚠️ No valid tray_item_id, skipping brand operations')
-              useNewStructure = false
-            } else {
-              // Încearcă să șteargă din noile tabele
-              const { error: deleteError } = await supabaseClient
-                .from('tray_item_brands' as any)
-                .delete()
-                .eq('tray_item_id', existingItem.id)
-              
-              if (deleteError) {
-                // Dacă tabelul nu există sau eroarea este validă, folosește câmpurile vechi
-                const errorMessage = deleteError.message || deleteError.code || JSON.stringify(deleteError)
-                if (deleteError.code === '42P01' || errorMessage.includes('does not exist') || errorMessage.includes('relation') || errorMessage.includes('not found')) {
-                  console.warn('⚠️ New tables not found, using legacy fields')
-                  useNewStructure = false
-                } else if (errorMessage && errorMessage !== '{}') {
-                  console.error('❌ Error deleting old brands:', errorMessage)
-                }
+            // Încearcă să șteargă din noile tabele
+            const { error: deleteError } = await supabaseClient
+              .from('tray_item_brands' as any)
+              .delete()
+              .eq('tray_item_id', existingItem.id)
+            
+            if (deleteError) {
+              // Dacă tabelul nu există sau eroarea este validă, folosește câmpurile vechi
+              const errorMessage = deleteError.message || deleteError.code || JSON.stringify(deleteError)
+              if (deleteError.code === '42P01' || errorMessage.includes('does not exist') || errorMessage.includes('relation') || errorMessage.includes('not found')) {
+                console.warn('⚠️ New tables not found, using legacy fields')
+                useNewStructure = false
+              } else if (errorMessage && errorMessage !== '{}') {
+                console.error('❌ Error deleting old brands:', errorMessage)
               }
             }
             
             // Adaugă noile brand-uri și serial numbers
-            if (brandSerialGroupsToSend.length > 0 && useNewStructure && existingItem?.id) {
+            if (brandSerialGroupsToSend.length > 0 && useNewStructure) {
               for (const group of brandSerialGroupsToSend) {
                 const brandName = group.brand?.trim()
                 if (!brandName) continue
@@ -1490,7 +1697,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 console.log('✅ Brand created:', (brandResult as any).id)
                 
                 // 2. Creează serial numbers pentru acest brand
-                if (serialNumbers.length > 0) {
+                if (serialNumbers.length > 0 && brandResult) {
                   const serialsToInsert = serialNumbers.map(sn => ({
                     brand_id: (brandResult as any).id,
                     serial_number: sn.trim(),
@@ -1535,14 +1742,141 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           }
           
           console.log('✅ [saveAllAndLog] Brand/serial data saved successfully')
+          
+          // IMPORTANT: Propagă brand-ul și serial number-ul la toate serviciile asociate cu acest instrument
+          // Doar dacă există deja un item salvat (nu pentru item-uri noi care nu au fost încă salvate)
+          if (brandSerialGroupsToSend.length > 0 && instrumentIdToUse && existingItem && existingItem.id) {
+            console.log('🔄 [saveAllAndLog] Propagating brand/serial to all services for instrument:', instrumentIdToUse)
+            
+            const supabaseClientForPropagation = supabaseBrowser()
+            
+            // Găsește toate serviciile din tăviță care au același instrument_id și care au deja un ID valid
+            const servicesForInstrument = items.filter((item: any) => {
+              if (item.item_type !== 'service' || !item.service_id || !item.id) return false
+              const serviceDef = services.find(s => s.id === item.service_id)
+              return serviceDef?.instrument_id === instrumentIdToUse
+            })
+            
+            console.log('📋 [saveAllAndLog] Found', servicesForInstrument.length, 'services for instrument:', instrumentIdToUse)
+            
+            // Atribuie brand-ul și serial number-ul la fiecare serviciu
+            for (const serviceItem of servicesForInstrument) {
+              if (!serviceItem.id) {
+                console.warn('⚠️ Skipping service item without ID:', serviceItem)
+                continue
+              }
+              
+              console.log('💾 [saveAllAndLog] Updating service item:', serviceItem.id, 'with brand/serial')
+              
+              // Șterge brand-urile existente pentru acest serviciu
+              const { error: deleteError } = await supabaseClientForPropagation
+                .from('tray_item_brands' as any)
+                .delete()
+                .eq('tray_item_id', serviceItem.id)
+              
+              if (deleteError && deleteError.code !== '42P01') {
+                const errorMessage = deleteError.message || deleteError.code || JSON.stringify(deleteError)
+                if (errorMessage && errorMessage !== '{}') {
+                  console.error('❌ Error deleting old brands for service:', errorMessage)
+                }
+              }
+              
+              // Adaugă noile brand-uri și serial numbers pentru serviciu
+              for (const group of brandSerialGroupsToSend) {
+                const brandName = group.brand?.trim()
+                if (!brandName) continue
+                
+                const groupGarantie = group.garantie || false
+                const serialNumbers = group.serialNumbers.filter(sn => sn && sn.trim())
+                
+                // Creează brand-ul pentru serviciu
+                const { data: brandResult, error: brandError } = await (supabaseClientForPropagation
+                  .from('tray_item_brands') as any)
+                  .insert([{
+                    tray_item_id: serviceItem.id,
+                    brand: brandName,
+                    garantie: groupGarantie,
+                  }])
+                  .select()
+                  .single()
+                
+                if (brandError) {
+                  const errorMessage = brandError.message || brandError.code || JSON.stringify(brandError)
+                  if (errorMessage && errorMessage !== '{}') {
+                    console.error('❌ Error creating brand for service:', errorMessage)
+                  }
+                  continue
+                }
+                
+                // Creează serial numbers pentru acest brand
+                if (serialNumbers.length > 0 && brandResult) {
+                  const serialsToInsert = serialNumbers.map(sn => ({
+                    brand_id: (brandResult as any).id,
+                    serial_number: sn.trim(),
+                  }))
+                  
+                  const { error: serialsError } = await supabaseClientForPropagation
+                    .from('tray_item_brand_serials' as any)
+                    .insert(serialsToInsert as any)
+                  
+                  if (serialsError) {
+                    const errorMessage = serialsError.message || serialsError.code || JSON.stringify(serialsError)
+                    if (errorMessage && errorMessage !== '{}') {
+                      console.error('❌ Error creating serials for service:', errorMessage)
+                    }
+                  } else {
+                    console.log('✅ Brand/serial propagated to service:', serviceItem.id)
+                  }
+                }
+              }
+            }
+            
+            console.log('✅ [saveAllAndLog] Brand/serial propagated to all services')
+          }
+          
           toast.success('Brand și serial numbers salvate cu succes!')
           
           // Reîncarcă items pentru quote
           const newItems = await listQuoteItems(quoteToUse.id, services, instruments, pipelinesWithIds)
           setItems(newItems)
           
+          // IMPORTANT: Păstrează datele din formular înainte de a popula din items
+          // pentru a evita resetarea formularului dacă populateInstrumentFormFromItems nu găsește date
+          const currentBrandSerialGroups = instrumentForm.brandSerialGroups
+          const currentInstrument = instrumentForm.instrument
+          const currentQty = instrumentForm.qty
+          const currentGarantie = instrumentForm.garantie
+          
           // Populează formularul cu datele noi încărcate
           populateInstrumentFormFromItems(newItems, instrumentIdToUse, true)
+          
+          // Verifică dacă populateInstrumentFormFromItems a găsit date în DB
+          // Dacă nu, păstrează datele din formular care tocmai au fost salvate
+          const directInstrumentItem = newItems.find(item => 
+            item.item_type === null && item.instrument_id === instrumentIdToUse
+          )
+          
+          const hasBrandDataInDB = directInstrumentItem && (
+            ((directInstrumentItem as any).brand_groups && (directInstrumentItem as any).brand_groups.length > 0) ||
+            directInstrumentItem.brand ||
+            directInstrumentItem.serial_number
+          )
+          
+          // Dacă nu există date în DB dar avem date în formular, păstrează-le
+          if (!hasBrandDataInDB && currentBrandSerialGroups.some(g => 
+            (g.brand && g.brand.trim()) || g.serialNumbers.some(sn => sn && sn.trim())
+          )) {
+            console.log('🔄 No brand data found in DB after save, keeping form data')
+            // Folosim setTimeout pentru a permite populateInstrumentFormFromItems să se execute mai întâi
+            setTimeout(() => {
+              setInstrumentForm({
+                instrument: currentInstrument,
+                brandSerialGroups: currentBrandSerialGroups,
+                garantie: currentGarantie,
+                qty: currentQty
+              })
+            }, 50)
+          }
           
           // Actualizează lastSavedRef
           lastSavedRef.current = (newItems ?? []).map((i: any) => ({
@@ -1650,16 +1984,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           await updateServiceFile(fisaId, serviceFileUpdates)
           console.log('Service file actualizat cu succes (urgent:', urgentAllServices, ', subscription:', subscriptionType, ')')
           
-          // Actualizează urgent pentru toate tăvițele din fișă
-          if (quotes.length > 0) {
-            const trayIds = quotes.map(q => q.id)
-            await supabase
-              .from('trays')
-              .update({ urgent: urgentAllServices })
-              .in('id', trayIds)
-              .eq('service_file_id', fisaId)
-            
-            // Actualizează urgent pentru toate items-urile din toate tăvițele din fișă
+          // urgent nu mai există în trays - este gestionat doar în service_files
+          // Actualizează urgent pentru toate items-urile din toate tăvițele din fișă
+          const trayIds = quotes.map(q => q.id)
+          if (trayIds.length > 0) {
             const { data: allTrayItems } = await supabase
               .from('tray_items')
               .select('id, notes')
@@ -1731,8 +2059,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         prevSnapshotCount: (lastSavedRef.current as any)?.length || 0,
       })
       
-      // Verifică să nu existe mai mult de 2 instrumente diferite pe tăvița curentă (doar pentru pipeline-urile non-Vanzari)
-      if (!isVanzariPipeline) {
+      // Verifică să nu existe mai mult de 2 instrumente diferite pe tăvița curentă (doar pentru pipeline-urile non-Vanzari și non-Curier)
+      if (!isVanzariPipeline && !isCurierPipeline) {
         const instrumentIds = Array.from(
           new Set(
             items
@@ -1913,7 +2241,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   const sendAllTraysToPipeline = async () => {
     console.log('🚀 sendAllTraysToPipeline - START:', {
       quotesCount: quotes.length,
-      quotes: quotes.map(q => ({ id: q.id, number: q.number }))
+      quotes: quotes.map(q => ({ id: q.id, number: q.number })),
+      fisaId
     })
     
     if (quotes.length === 0) {
@@ -1941,6 +2270,51 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         { duration: 5000 }
       )
       return
+    }
+
+    // IMPORTANT: Încarcă urgent din service_file și propagă la toate tăvițele și items-urile
+    let serviceFileUrgent = false
+    if (fisaId) {
+      const { data: serviceFileData } = await getServiceFile(fisaId)
+      if (serviceFileData) {
+        serviceFileUrgent = serviceFileData.urgent || false
+        console.log('📋 Urgent din service_file:', serviceFileUrgent)
+        
+        // urgent nu mai există în trays - este gestionat doar în service_files
+        const trayIds = quotes.map(q => q.id)
+        if (trayIds.length > 0) {
+          
+          // Actualizează urgent pentru toate items-urile din toate tăvițele
+          const { data: allTrayItems } = await supabase
+            .from('tray_items')
+            .select('id, notes')
+            .in('tray_id', trayIds)
+          
+          if (allTrayItems && allTrayItems.length > 0) {
+            for (const item of allTrayItems) {
+              let notesData: any = {}
+              if (item.notes) {
+                try {
+                  notesData = JSON.parse(item.notes)
+                } catch (e) {
+                  // Notes nu este JSON, ignoră
+                }
+              }
+              
+              // Actualizează urgent doar pentru servicii și piese
+              if (notesData.item_type === 'service' || notesData.item_type === 'part') {
+                notesData.urgent = serviceFileUrgent
+                await supabase
+                  .from('tray_items')
+                  .update({ notes: JSON.stringify(notesData) })
+                  .eq('id', item.id)
+              }
+            }
+          }
+          
+          console.log('✅ Urgent propagat la toate tăvițele și items-urile')
+        }
+      }
     }
 
     let successCount = 0
@@ -2632,7 +3006,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             }
           }
         } else {
-          // Fallback la quote dacă nu există fisaId
+          // Fallback la quote dacă nu există fisaId (doar pentru leads vechi, fără service_file)
           const selectedQuoteForData = qs.find(q => q.id === firstId) || qs[0];
           const firstQuote = selectedQuoteForData as any
           if (firstQuote) {
@@ -2732,16 +3106,11 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 return
               }
               
-              // Daca se modifica tăvița curentă, actualizeaza checkbox-urile
+              // Daca se modifica tăvița curentă, actualizeaza checkbox-urile (doar cash/card, nu urgent/subscription)
               if (trayId === selectedQuoteId && payloadNew) {
                 setIsCash(payloadNew.is_cash || false)
                 setIsCard(payloadNew.is_card || false)
-                if (payloadNew.subscription_type !== undefined) {
-                  setSubscriptionType(payloadNew.subscription_type || '')
-                }
-                if (payloadNew.urgent !== undefined) {
-                  setUrgentAllServices(payloadNew.urgent || false)
-                }
+                // Nu actualizăm urgent și subscription din tăviță - acestea sunt la nivel de service_file
               }
               
               // Reincarca tăvițele pentru a avea date actualizate
@@ -2757,8 +3126,15 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 setQuotes(currentQuotes)
               }
               
-              // Daca tăvița curentă s-a schimbat, actualizeaza checkbox-urile
-              if (selectedQuoteId) {
+              // IMPORTANT: Încarcă urgent și subscription_type din service_file, nu din tăviță
+              if (fisaId && selectedQuoteId) {
+                const { data: serviceFileData } = await getServiceFile(fisaId)
+                if (serviceFileData) {
+                  setSubscriptionType(serviceFileData.subscription_type || '')
+                  setUrgentAllServices(serviceFileData.urgent || false)
+                }
+              } else if (selectedQuoteId) {
+                // Fallback la quote doar dacă nu există fisaId
                 const updatedQuote = currentQuotes.find(q => q.id === selectedQuoteId) as any
                 if (updatedQuote) {
                   setIsCash(updatedQuote.is_cash || false)
@@ -3076,6 +3452,12 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   function populateInstrumentFormFromItems(items: LeadQuoteItem[], instrumentId: string | null, forceReload: boolean = false) {
     if (!instrumentId) return
     
+    // IMPORTANT: Caută mai întâi item-ul direct cu item_type === null (instrumentul direct)
+    // Apoi caută în servicii doar dacă nu găsește date la instrumentul direct
+    const directInstrumentItem = items.find(item => 
+      item.item_type === null && item.instrument_id === instrumentId
+    )
+    
     // Găsește toate items-urile care sunt instrumente (item_type: null) sau servicii cu acest instrument
     const instrumentItems = items.filter(item => {
       // Items care sunt direct instrumente (item_type: null și au instrument_id)
@@ -3091,24 +3473,44 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     })
     
     console.log('🔍 populateInstrumentFormFromItems - instrumentItems found:', instrumentItems.length, 'for instrumentId:', instrumentId, 'forceReload:', forceReload)
+    console.log('🔍 Direct instrument item:', directInstrumentItem ? 'found' : 'not found')
     
-    // Găsește primul item care are brand_groups sau brand/serial_number
-    const itemWithInstrumentData = instrumentItems.find(item => {
-      const hasBrandGroups = (item as any).brand_groups && (item as any).brand_groups.length > 0
-      const hasData = hasBrandGroups || item.brand || item.serial_number || item.garantie
+    // Prioritizează item-ul direct cu instrument (item_type === null)
+    let itemWithInstrumentData: LeadQuoteItem | null = null
+    
+    if (directInstrumentItem) {
+      const hasBrandGroups = (directInstrumentItem as any).brand_groups && (directInstrumentItem as any).brand_groups.length > 0
+      const hasData = hasBrandGroups || directInstrumentItem.brand || directInstrumentItem.serial_number || directInstrumentItem.garantie
       if (hasData) {
-        console.log('✅ Found item with data:', {
-          id: item.id,
-          brand_groups: (item as any).brand_groups?.length || 0,
-          brand: item.brand,
-          serial_number: item.serial_number
+        itemWithInstrumentData = directInstrumentItem
+        console.log('✅ Found direct instrument item with data:', {
+          id: directInstrumentItem.id,
+          brand_groups: (directInstrumentItem as any).brand_groups?.length || 0,
+          brand: directInstrumentItem.brand,
+          serial_number: directInstrumentItem.serial_number
         })
       }
-      return hasData
-    })
+    }
+    
+    // Dacă nu găsim date la instrumentul direct, caută în servicii
+    if (!itemWithInstrumentData) {
+      itemWithInstrumentData = instrumentItems.find(item => {
+        const hasBrandGroups = (item as any).brand_groups && (item as any).brand_groups.length > 0
+        const hasData = hasBrandGroups || item.brand || item.serial_number || item.garantie
+        if (hasData) {
+          console.log('✅ Found service item with data:', {
+            id: item.id,
+            brand_groups: (item as any).brand_groups?.length || 0,
+            brand: item.brand,
+            serial_number: item.serial_number
+          })
+        }
+        return hasData
+      }) || null
+    }
     
     // Chiar dacă nu găsim date, verificăm dacă există un item
-    const itemWithPotentialData = instrumentItems.length > 0 ? instrumentItems[0] : null
+    const itemWithPotentialData = directInstrumentItem || (instrumentItems.length > 0 ? instrumentItems[0] : null)
     
     if (itemWithInstrumentData || itemWithPotentialData) {
       const targetItem = itemWithInstrumentData || itemWithPotentialData
@@ -3179,7 +3581,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   }
 
   // ----- Add rows -----
-  function onAddService() {
+  async function onAddService() {
     if (!selectedQuote || !svc.id) return
     
     setIsDirty(true)
@@ -3205,8 +3607,125 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       toast.error('Instrumentul selectat nu are departament setat. Verifică setările instrumentului.')
       return
     }
+
+    // IMPORTANT: Salvează automat toate brand-urile și serial number-urile înainte de a adăuga serviciul
+    // Verifică dacă există brand-uri și serial number-uri de salvat
+    const groupsToSave = instrumentForm.brandSerialGroups.length > 0 
+      ? instrumentForm.brandSerialGroups 
+      : [{ brand: '', serialNumbers: [''] }]
+    
+    const hasValidBrandSerialData = groupsToSave.some(g => {
+      const hasBrand = g.brand && g.brand.trim()
+      const hasSerialNumbers = g.serialNumbers.some(sn => sn && sn.trim())
+      return hasBrand || hasSerialNumbers
+    })
+
+    // Dacă există date de brand/serial, salvează-le automat înainte de a adăuga serviciul
+    if (hasValidBrandSerialData && selectedQuote) {
+      try {
+        // Găsește item-ul existent pentru instrument sau creează unul nou
+        const existingItem = items.find((i: any) => i.instrument_id === currentInstrumentId && i.item_type === null)
+        
+        const garantie = instrumentForm.garantie || false
+        const qty = Number(instrumentForm.qty || 1)
+        
+        const brandSerialGroupsToSend = groupsToSave.map(g => ({
+          brand: g.brand?.trim() || null,
+          serialNumbers: g.serialNumbers.filter(sn => sn && sn.trim()).map(sn => sn.trim()),
+          garantie: garantie
+        })).filter(g => g.brand || g.serialNumbers.length > 0)
+
+        if (brandSerialGroupsToSend.length > 0) {
+          if (existingItem && existingItem.id) {
+            // Actualizează item-ul existent cu brand-urile și serial number-urile
+            // Șterge brand-urile vechi
+            const { error: deleteError } = await supabase
+              .from('tray_item_brands')
+              .delete()
+              .eq('tray_item_id', existingItem.id)
+            
+            if (deleteError && deleteError.code !== '42P01') {
+              console.error('Error deleting old brands:', deleteError)
+            }
+            
+            // Adaugă noile brand-uri și serial numbers
+            for (const group of brandSerialGroupsToSend) {
+              const brandName = group.brand?.trim()
+              if (!brandName) continue
+              
+              const serialNumbers = group.serialNumbers.filter(sn => sn && sn.trim())
+              
+              // Creează brand-ul
+              const { data: brandResult, error: brandError } = await supabase
+                .from('tray_item_brands')
+                .insert([{
+                  tray_item_id: existingItem.id,
+                  brand: brandName,
+                  garantie: group.garantie || false
+                }])
+                .select()
+                .single()
+              
+              if (brandError) {
+                console.error('Error creating brand:', brandError)
+                continue
+              }
+              
+              // Creează serial numbers pentru acest brand
+              if (serialNumbers.length > 0 && brandResult) {
+                const serialsToInsert = serialNumbers.map(sn => ({
+                  brand_id: brandResult.id,
+                  serial_number: sn.trim(),
+                }))
+                
+                const { error: serialsError } = await supabase
+                  .from('tray_item_brand_serials')
+                  .insert(serialsToInsert)
+                
+                if (serialsError) {
+                  console.error('Error creating serials:', serialsError)
+                }
+              }
+            }
+          } else {
+            // Creează un item nou pentru instrument cu brand-urile și serial number-urile
+            const instrument = instruments.find(i => i.id === currentInstrumentId)
+            if (instrument) {
+              let autoPipelineId: string | null = null
+              const instrumentDept = departments.find(d => d.id === instrument.department_id)
+              const deptName = instrumentDept?.name?.toLowerCase() || instrument.department_id?.toLowerCase()
+              if (deptName === 'reparatii') {
+                const reparatiiPipeline = pipelinesWithIds.find(p => p.name.toLowerCase() === 'reparatii')
+                if (reparatiiPipeline) autoPipelineId = reparatiiPipeline.id
+              }
+              
+              await addInstrumentItem(selectedQuote.id, instrument.name, {
+                instrument_id: instrument.id,
+                department_id: instrument.department_id,
+                qty: qty,
+                discount_pct: 0,
+                urgent: false,
+                technician_id: null,
+                pipeline_id: autoPipelineId,
+                brandSerialGroups: brandSerialGroupsToSend
+              })
+              
+              // Reîncarcă items-urile
+              const newItems = await listQuoteItems(selectedQuote.id, services, instruments, pipelinesWithIds)
+              setItems(newItems)
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error saving brand/serial data before adding service:', error)
+        toast.error('Eroare la salvare date brand/serial. Te rog încearcă din nou.')
+        return
+      }
+    }
   
-    const qty = Math.max(1, Number(svc.qty || instrumentForm.qty || 1))
+    // IMPORTANT: Folosește întotdeauna cantitatea din instrumentForm.qty dacă există, altfel din svc.qty
+    // Astfel, când se adaugă mai multe servicii, toate vor folosi aceeași cantitate din formularul instrumentului
+    const qty = Math.max(1, Number(instrumentForm.qty || svc.qty || 1))
     const discount = Math.min(100, Math.max(0, Number(svc.discount || 0)))
     
     // Obține datele instrumentului - folosește serial number-ul selectat sau primul din listă
@@ -3220,14 +3739,14 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       brand = parts[0] || null
       serialNumber = parts[1] || null
     } else {
-      // Fallback: folosește primul grup pentru compatibilitate
+      // Folosește primul serial number disponibil din primul grup
       const firstGroup = instrumentForm.brandSerialGroups[0] || { brand: '', serialNumbers: [''] }
       brand = (firstGroup.brand && firstGroup.brand.trim()) 
         ? firstGroup.brand.trim() 
         : null
-      serialNumber = (firstGroup.serialNumbers.length > 0 && firstGroup.serialNumbers[0].trim()) 
-        ? firstGroup.serialNumbers[0].trim() 
-        : null
+      // Folosește primul serial number valid din primul grup
+      const firstValidSerial = firstGroup.serialNumbers.find(sn => sn && sn.trim())
+      serialNumber = firstValidSerial ? firstValidSerial.trim() : null
     }
     
     const garantie = instrumentForm.garantie || false
@@ -3341,10 +3860,11 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     }
     
     // Păstrăm instrumentul selectat și setările pentru acest instrument
+    // IMPORTANT: Nu resetăm qty la '1' - păstrăm valoarea din instrumentForm.qty pentru următoarele servicii
     setSvc(prev => ({ 
       ...prev, 
       id: '', 
-      qty: '1', // Resetează cantitatea
+      qty: instrumentForm.qty || '1', // Păstrează cantitatea din formularul instrumentului
       discount: '0', 
       urgent: false, 
       technicianId: '',
@@ -3355,8 +3875,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     setIsDirty(true)
   }
 
-  function onAddPart(e: React.FormEvent) {
-    e.preventDefault()
+  function onAddPart(e?: React.FormEvent) {
+    if (e) e.preventDefault()
     if (!selectedQuote || !part.id) return
   
     const partDef = parts.find(p => p.id === part.id)
@@ -3380,6 +3900,43 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       return
     }
   
+    // Numără instrumentele unice din tavă
+    const uniqueInstruments = new Set<string>()
+    items.forEach(item => {
+      if (item.item_type === null && item.instrument_id) {
+        uniqueInstruments.add(item.instrument_id)
+      } else if (item.item_type === 'service' && item.instrument_id) {
+        uniqueInstruments.add(item.instrument_id)
+      } else if (item.item_type === 'part' && item.instrument_id) {
+        uniqueInstruments.add(item.instrument_id)
+      }
+    })
+    
+    // Dacă sunt 2+ instrumente, verifică dacă brand-ul și serial number-ul sunt selectate
+    const hasMultipleInstruments = uniqueInstruments.size > 1
+    let partBrand: string | null = null
+    let partSerialNumber: string | null = null
+    
+    if (hasMultipleInstruments) {
+      // Câmpuri obligatorii pentru 2+ instrumente
+      if (!part.serialNumberId || !part.serialNumberId.includes('::')) {
+        toast.error('Te rog selectează brand-ul și serial number-ul instrumentului pentru această piesă')
+        return
+      }
+      const [b, sn] = part.serialNumberId.split('::')
+      partBrand = b || null
+      partSerialNumber = sn || null
+    } else {
+      // Un singur instrument - atribuie automat brand-ul și serial number-ul
+      if (instrumentForm.brandSerialGroups.length > 0) {
+        const firstGroup = instrumentForm.brandSerialGroups[0]
+        if (firstGroup.brand && firstGroup.serialNumbers.length > 0 && firstGroup.serialNumbers[0]) {
+          partBrand = firstGroup.brand
+          partSerialNumber = firstGroup.serialNumbers[0]
+        }
+      }
+    }
+  
     const unit = part.overridePrice !== '' ? Number(part.overridePrice) : Number(partDef.price)
     if (isNaN(unit) || unit < 0) return
   
@@ -3390,15 +3947,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     // Setează automat pipeline_id la "Reparatii" pentru piese
     const reparatiiPipeline = pipelinesWithIds.find(p => p.name === 'Reparatii')
     const pipelineIdForPart = reparatiiPipeline?.id || null
-    
-    // Extrage brand și serial number din selecție (format: "brand::serialNumber")
-    let partBrand: string | null = null
-    let partSerialNumber: string | null = null
-    if (part.serialNumberId && part.serialNumberId.includes('::')) {
-      const [b, sn] = part.serialNumberId.split('::')
-      partBrand = b || null
-      partSerialNumber = sn || null
-    }
     
     setItems(prev => [
       ...prev,
@@ -3466,22 +4014,36 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     
     setLoading(true);
     try {
-      // incarca valorile cash/card si subscription pentru noua tavita
+      // incarca valorile cash/card pentru noua tavita
       const newQuote = quotes.find(q => q.id === newId) as any
       if (newQuote) {
         setIsCash(newQuote.is_cash || false)
         setIsCard(newQuote.is_card || false)
-        const loadedSubscriptionType = newQuote.subscription_type || ''
-        const loadedUrgent = newQuote.urgent || false
-        console.log('Schimbare tăviță - încărcare subscription_type și urgent:', {
-          quoteId: newQuote.id,
-          subscription_type: newQuote.subscription_type,
-          urgent: newQuote.urgent,
-          loadedSubscriptionType,
-          loadedUrgent
-        })
-        setSubscriptionType(loadedSubscriptionType)
-        setUrgentAllServices(loadedUrgent)
+        
+        // IMPORTANT: Încarcă urgent și subscription_type din service_file, nu din tăviță
+        if (fisaId) {
+          const { data: serviceFileData } = await getServiceFile(fisaId)
+          if (serviceFileData) {
+            const loadedSubscriptionType = serviceFileData.subscription_type || ''
+            const loadedUrgent = serviceFileData.urgent || false
+            console.log('Schimbare tăviță - încărcare subscription_type și urgent din service_file:', {
+              fisaId,
+              quoteId: newQuote.id,
+              subscription_type: serviceFileData.subscription_type,
+              urgent: serviceFileData.urgent,
+              loadedSubscriptionType,
+              loadedUrgent
+            })
+            setSubscriptionType(loadedSubscriptionType)
+            setUrgentAllServices(loadedUrgent)
+          }
+        } else {
+          // Fallback la quote doar dacă nu există fisaId
+          const loadedSubscriptionType = newQuote.subscription_type || ''
+          const loadedUrgent = newQuote.urgent || false
+          setSubscriptionType(loadedSubscriptionType)
+          setUrgentAllServices(loadedUrgent)
+        }
       }
       setSelectedQuoteId(newId);
       
@@ -3547,15 +4109,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }
       }
       
-      // Actualizează urgentAllServices bazat pe tăviță și pe serviciile/piesele din tăviță
-      // Prioritate: dacă tăvița are urgent setat, folosește-l; altfel verifică items-urile
-      const trayUrgent = newQuote?.urgent || false
-      const partItems = (qi ?? []).filter((item: any) => item.item_type === 'part')
-      const allServicesUrgent = serviceItems.length > 0 && serviceItems.every((item: any) => item.urgent)
-      const allPartsUrgent = partItems.length > 0 && partItems.every((item: any) => item.urgent)
-      const allItemsUrgent = (serviceItems.length > 0 && allServicesUrgent) || (partItems.length > 0 && allPartsUrgent)
-      // Folosește urgent de pe tăviță dacă este setat, altfel folosește urgent de pe items
-      setUrgentAllServices(trayUrgent || allItemsUrgent)
+      // IMPORTANT: urgentAllServices este gestionat la nivel de service_file, nu de tăviță
+      // Nu mai actualizăm urgentAllServices bazat pe tăviță sau items - se încarcă din service_file
     } finally {
       setLoading(false);
     }
@@ -5109,7 +5664,65 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 <Checkbox
                   id="urgent-all"
                   checked={urgentAllServices}
-                  onCheckedChange={(c: any) => setUrgentAllServices(!!c)}
+                  onCheckedChange={async (c: any) => {
+                    const newValue = !!c
+                    setUrgentAllServices(newValue)
+                    
+                    // IMPORTANT: Salvează imediat în service_file când se schimbă toggle-ul
+                    if (fisaId) {
+                      try {
+                        const { error } = await updateServiceFile(fisaId, {
+                          urgent: newValue
+                        })
+                        
+                        if (error) {
+                          console.error('Eroare la salvarea urgent în service_file:', error)
+                          toast.error('Eroare la salvarea urgent')
+                          // Revert UI dacă salvare eșuează
+                          setUrgentAllServices(!newValue)
+                        } else {
+                          console.log('✅ Urgent salvat în service_file:', newValue)
+                          
+                          // urgent nu mai există în trays - este gestionat doar în service_files
+                          const trayIds = quotes.map(q => q.id)
+                          if (trayIds.length > 0) {
+                            // Actualizează urgent pentru toate items-urile din toate tăvițele
+                            const { data: allTrayItems } = await supabase
+                              .from('tray_items')
+                              .select('id, notes')
+                              .in('tray_id', trayIds)
+                            
+                            if (allTrayItems && allTrayItems.length > 0) {
+                              for (const item of allTrayItems) {
+                                let notesData: any = {}
+                                if (item.notes) {
+                                  try {
+                                    notesData = JSON.parse(item.notes)
+                                  } catch (e) {
+                                    // Notes nu este JSON, ignoră
+                                  }
+                                }
+                                
+                                // Actualizează urgent doar pentru servicii și piese
+                                if (notesData.item_type === 'service' || notesData.item_type === 'part') {
+                                  notesData.urgent = newValue
+                                  await supabase
+                                    .from('tray_items')
+                                    .update({ notes: JSON.stringify(notesData) })
+                                    .eq('id', item.id)
+                                }
+                              }
+                            }
+                          }
+                        }
+                      } catch (error: any) {
+                        console.error('Eroare la salvarea urgent:', error)
+                        toast.error('Eroare la salvarea urgent: ' + (error?.message || 'Eroare necunoscută'))
+                        // Revert UI dacă salvare eșuează
+                        setUrgentAllServices(!newValue)
+                      }
+                    }
+                  }}
                   className="sr-only"
                 />
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${urgentAllServices ? 'translate-x-4' : 'translate-x-0.5'}`} />
@@ -5200,25 +5813,33 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           
           {/* Butoane acțiune fișă */}
           <div className="ml-auto flex items-center gap-2">
-            {/* Buton Facturare - doar în pipeline-ul Recepție */}
-            {isReceptiePipeline && (
-              <Button
-                size="sm"
-                variant="outline"
-                type="button"
-                onClick={() => {
-                  try {
-                    // Folosește PrintViewData deja prezent în DOM pentru layout de factură
-                    window.print()
-                  } catch (err) {
-                    console.error('Eroare la pornirea printării/facturării:', err)
-                    toast.error('Nu s-a putut deschide fereastra de facturare (print).')
-                  }
-                }}
-                className="shadow-sm"
-              >
-                Facturează fișa
-              </Button>
+            {/* Buton Facturare - doar în pipeline-ul Recepție și doar când fișa este în stage-ul "Facturat" */}
+            {isReceptiePipeline && currentServiceFileStage && (
+              (() => {
+                const normalizedStage = currentServiceFileStage.toLowerCase().trim()
+                const isFacturatStage = normalizedStage === 'facturat' || 
+                                       normalizedStage === 'facturată' ||
+                                       normalizedStage.includes('facturat')
+                return isFacturatStage ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      try {
+                        // Folosește PrintViewData deja prezent în DOM pentru layout de factură
+                        window.print()
+                      } catch (err) {
+                        console.error('Eroare la pornirea printării/facturării:', err)
+                        toast.error('Nu s-a putut deschide fereastra de facturare (print).')
+                      }
+                    }}
+                    className="shadow-sm"
+                  >
+                    Facturează fișa
+                  </Button>
+                ) : null
+              })()
             )}
 
             {/* Buton Salvare */}
@@ -5242,8 +5863,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       </div>
 
       {/* Add Instrument - New Section 
-          Ascuns pentru tehnicieni în pipeline-urile departament (Saloane, Frizerii, Horeca, Reparatii) */}
-      {!(isDepartmentPipeline && isTechnician) && (
+          Afișat pentru toate pipeline-urile, inclusiv Reparații */}
+      {(
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-lg border border-green-200 dark:border-green-800 mx-1 sm:mx-2 p-2 sm:p-3">
           <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -5280,8 +5901,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                   newInstrumentId &&
                   !distinctInstrumentsInTray.some(i => i.id === newInstrumentId)
                 ) {
-                  // Verifică limita de 2 instrumente doar pentru pipeline-urile non-Vanzari
-                  if (!isVanzariPipeline) {
+                  // Verifică limita de 2 instrumente doar pentru pipeline-urile non-Vanzari și non-Curier
+                  if (!isVanzariPipeline && !isCurierPipeline) {
                     const currentDistinctIds = new Set(
                       items
                         .filter(it => it.instrument_id)
@@ -5319,7 +5940,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 // Activează butonul "Salvează în Istoric" când se selectează un instrument
                 setIsDirty(true)
               }}
-              title={isVanzariPipeline ? "Selectează instrument" : "Selectează instrument (poți avea până la 2 instrumente pe tăviță)"}
+              title={(isVanzariPipeline || isCurierPipeline) ? "Selectează instrument" : "Selectează instrument (poți avea până la 2 instrumente pe tăviță)"}
             >
               <option value="">— selectează —</option>
               {availableInstruments.map(inst => (
@@ -5353,8 +5974,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 }
               }}
             placeholder="1"
-              disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline}
-              title={hasServicesOrInstrumentInSheet && !isVanzariPipeline ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea instrumentului"}
+              disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline && !isCurierPipeline}
+              title={hasServicesOrInstrumentInSheet && !isVanzariPipeline && !isCurierPipeline ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea instrumentului"}
           />
         </div>
         </div>
@@ -5675,7 +6296,16 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                         setPartSearchQuery(p.name)
                         setPartSearchFocused(false)
                       }}
+                      onDoubleClick={() => {
+                        setPart(prev => ({ ...prev, id: p.id, overridePrice: '' }))
+                        setPartSearchQuery(p.name)
+                        setPartSearchFocused(false)
+                        setTimeout(() => {
+                          onAddPart()
+                        }, 50)
+                      }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
+                      title="Click pentru selectare, Double-click pentru adăugare rapidă"
                     >
                       <span>{p.name}</span>
                       <span className="text-muted-foreground">{p.price.toFixed(2)} RON</span>
@@ -5695,11 +6325,39 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
 
           {/* Serial Number - 4 cols */}
           <div className="col-span-1 sm:col-span-4">
-            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Serial Nr. (instrument)</Label>
+            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">
+              Serial Nr. (instrument)
+              {(() => {
+                const uniqueInstruments = new Set<string>()
+                items.forEach(item => {
+                  if (item.item_type === null && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  } else if (item.item_type === 'service' && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  } else if (item.item_type === 'part' && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  }
+                })
+                return uniqueInstruments.size > 1 ? <span className="text-red-500 ml-1">*</span> : null
+              })()}
+            </Label>
             <select
               className="w-full h-7 sm:h-8 text-xs sm:text-sm border rounded-md px-2 bg-background"
               value={part.serialNumberId}
               onChange={e => setPart(p => ({ ...p, serialNumberId: e.target.value }))}
+              required={(() => {
+                const uniqueInstruments = new Set<string>()
+                items.forEach(item => {
+                  if (item.item_type === null && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  } else if (item.item_type === 'service' && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  } else if (item.item_type === 'part' && item.instrument_id) {
+                    uniqueInstruments.add(item.instrument_id)
+                  }
+                })
+                return uniqueInstruments.size > 1
+              })()}
             >
               <option value="">-- Selectează serial --</option>
               {instrumentForm.brandSerialGroups.flatMap((group, gIdx) =>
@@ -5788,8 +6446,80 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                   : '' // Pentru items cu doar instrument, lăsăm gol
               const partName = it.item_type === 'part' ? it.name_snapshot : null
 
+              // Funcție pentru popularea formularului când se apasă pe rând
+              const handleRowClick = () => {
+                // Dacă este un serviciu, populează formularul de serviciu
+                if (it.item_type === 'service' && it.service_id) {
+                  const serviceDef = services.find(s => s.id === it.service_id)
+                  if (serviceDef) {
+                    setSvc({
+                      instrumentId: serviceDef.instrument_id || '',
+                      id: it.service_id,
+                      qty: String(it.qty || 1),
+                      discount: String(it.discount_pct || 0),
+                    })
+                    setServiceSearchQuery(serviceDef.name)
+                    
+                    // Populează și formularul de instrument dacă există instrument
+                    if (serviceDef.instrument_id) {
+                      const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
+                      if (instrument) {
+                        setInstrumentForm(prev => ({
+                          ...prev,
+                          instrument: serviceDef.instrument_id || '',
+                          qty: String(it.qty || 1),
+                        }))
+                        
+                        // Populează brand și serial number dacă există
+                        const brandGroups = (it as any).brand_groups || []
+                        if (brandGroups.length > 0) {
+                          const brandSerialGroups = brandGroups.map((bg: any) => ({
+                            brand: bg.brand || '',
+                            serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 
+                              ? bg.serialNumbers 
+                              : [''],
+                            garantie: bg.garantie || false
+                          }))
+                          setInstrumentForm(prev => ({
+                            ...prev,
+                            brandSerialGroups,
+                            garantie: brandGroups[0]?.garantie || false
+                          }))
+                        } else if (it.brand || it.serial_number) {
+                          // Fallback pentru structura veche
+                          setInstrumentForm(prev => ({
+                            ...prev,
+                            brandSerialGroups: [{
+                              brand: it.brand || '',
+                              serialNumbers: it.serial_number ? [it.serial_number] : [''],
+                              garantie: it.garantie || false
+                            }],
+                            garantie: it.garantie || false
+                          }))
+                        }
+                      }
+                    }
+                  }
+                } else if (it.item_type === 'part') {
+                  // Pentru piese, populează formularul de piese
+                  setPart({
+                    id: it.part_id || '',
+                    serialNumberId: it.serial_number || '',
+                    qty: String(it.qty || 1),
+                  })
+                  const partDef = parts.find(p => p.id === it.part_id)
+                  if (partDef) {
+                    setPartSearchQuery(partDef.name)
+                  }
+                }
+              }
+
               return (
-                <TableRow key={it.id} className="hover:bg-muted/30">
+                <TableRow 
+                  key={it.id} 
+                  className="hover:bg-muted/30 cursor-pointer"
+                  onClick={handleRowClick}
+                >
                   <TableCell className="text-[10px] sm:text-xs text-muted-foreground py-1.5 sm:py-2">
                     {itemInstrument}
                   </TableCell>
