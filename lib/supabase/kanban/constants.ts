@@ -22,6 +22,7 @@ export const STAGE_PATTERNS = {
   DE_FACTURAT: ['facturat', 'to invoice', 'de facturat', 'de facturată'],
   NOUA: ['noua', 'new', 'nouă'],
   ASTEPT_PIESE: ['astept piese', 'asteptare piese', 'waiting parts', 'aștept piese', 'așteptare piese'],
+  COLET_AJUNS: ['colet ajuns', 'colet ajuns la', 'colet a ajuns', 'colet-ajuns', 'coletajuns'],
 } as const
 
 // Cache configuration

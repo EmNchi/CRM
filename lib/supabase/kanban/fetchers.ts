@@ -124,7 +124,7 @@ export async function fetchServiceFilesByIds(
   const { data, error } = await supabase
     .from('service_files')
     .select(`
-      id, lead_id, number, status, created_at, office_direct, curier_trimis,
+      id, lead_id, number, status, created_at, office_direct, curier_trimis, urgent,
       lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip)
     `)
     .in('id', serviceFileIds)
@@ -180,7 +180,7 @@ export async function fetchTraysByIds(
     .from('trays')
     .select(`
       id, number, size, status, created_at, service_file_id,
-      service_file:service_files!inner(lead_id, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details))
+      service_file:service_files!inner(lead_id, urgent, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details))
     `)
     .in('id', trayIds)
   

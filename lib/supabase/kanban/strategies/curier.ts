@@ -74,13 +74,35 @@ export class CurierPipelineStrategy implements PipelineStrategy {
       if (!pipelineItem || !serviceFile.lead) return
       
       const leadId = serviceFile.lead.id
-      const tags = tagMap.get(leadId) || []
+      const leadTags = tagMap.get(leadId) || []
+      
+      // IMPORTANT: Pentru fișele de serviciu, tag-ul "urgent" vine din câmpul urgent al fișei, nu din tag-urile lead-ului
+      // Filtrează tag-ul "urgent" din tag-urile lead-ului și adaugă-l doar dacă fișa are urgent = true
+      const tagsWithoutUrgent = leadTags.filter(tag => tag.name.toLowerCase() !== 'urgent')
+      const serviceFileTags = [...tagsWithoutUrgent]
+      
+      // Adaugă tag-ul "urgent" doar dacă fișa de serviciu are urgent = true
+      if (serviceFile.urgent === true) {
+        // Caută tag-ul "urgent" în lista de tag-uri existente sau creează unul nou
+        const urgentTag = leadTags.find(tag => tag.name.toLowerCase() === 'urgent')
+        if (urgentTag) {
+          serviceFileTags.push(urgentTag)
+        } else {
+          // Creează un tag "urgent" temporar pentru afișare
+          serviceFileTags.push({
+            id: `urgent_${serviceFile.id}`,
+            name: 'URGENT',
+            color: 'red' as const
+          })
+        }
+      }
+      
       const total = totalsData.get(serviceFile.id) || 0
       
       kanbanItems.push(transformServiceFileToKanbanItem(
         serviceFile,
         pipelineItem,
-        tags,
+        serviceFileTags,
         total,
         false // Not read-only for Curier
       ))

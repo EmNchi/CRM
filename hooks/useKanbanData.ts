@@ -7,7 +7,7 @@ import type { PipelineItemType } from '@/lib/supabase/pipelineOperations'
 import { usePipelinesCache } from './usePipelinesCache'
 import type { KanbanLead } from '../lib/types/database'
 import type { Tag } from '@/lib/supabase/tagOperations'
-import { useRole } from '@/lib/contexts/AuthContext'
+import { useRole, useAuth } from '@/lib/contexts/AuthContext'
 
 const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, '-')
@@ -46,20 +46,18 @@ export function useKanbanData(pipelineSlug?: string) {
   const [currentPipelineId, setCurrentPipelineId] = useState<string | null>(null)
   const { getPipelines, invalidateCache } = usePipelinesCache()
   const { role } = useRole()
+  const { user } = useAuth()
   
   // Obține ID-ul utilizatorului curent pentru filtrarea tăvițelor în pipeline-urile departament
   useEffect(() => {
-    const fetchCurrentUser = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        setCurrentUserId(user?.id || null)
-      } catch (err) {
-        console.error('Error fetching current user:', err)
-        setCurrentUserId(null)
-      }
+    if (user?.id) {
+      setCurrentUserId(user.id)
+      console.log('👤 Current user ID set:', user.id)
+    } else {
+      setCurrentUserId(null)
+      console.log('⚠️ No current user ID available')
     }
-    fetchCurrentUser()
-  }, [])
+  }, [user])
   
   // Debounce helper pentru refresh-uri
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -405,6 +403,7 @@ export function useKanbanData(pipelineSlug?: string) {
     if (!lead) return
     
     const previousLead = { ...lead }
+    const previousStageName = previousLead.stage?.toLowerCase() || '' // Folosește previousLead, nu lead!
 
     // Folosește cache pentru pipelines
     const pipelinesDataToUse = await getPipelines()
@@ -412,7 +411,6 @@ export function useKanbanData(pipelineSlug?: string) {
     const leadAny = lead as any
     const isInReceptie = pipelineSlug === 'receptie'
     const hasOriginalPipeline = !!leadAny.originalPipelineId
-    const currentStageName = lead.stage?.toLowerCase() || ''
     const newStageNameLower = newStageName.toLowerCase()
     
     // Blochează mutarea în stage-urile restricționate în Receptie
@@ -434,13 +432,33 @@ export function useKanbanData(pipelineSlug?: string) {
       const newStage = currentPipeline.stages.find((s: any) => s.name === newStageName)
       if (!newStage) return
 
-      // Verifică dacă este o tăviță în pipeline-urile Saloane, Frizerii sau Horeca
+      // Verifică dacă este o tăviță în pipeline-urile departamentelor
       const isTrayInDeptPipeline = leadAny.type === 'tray' && 
-        ['Saloane', 'Frizerii', 'Horeca'].includes(currentPipeline.name)
+        ['Saloane', 'Frizerii', 'Horeca', 'Reparatii'].includes(currentPipeline.name)
+      
+      // Verifică dacă se mută din "Noua" în "In Lucru"
+      // IMPORTANT: Folosește previousStageName care a fost setat la începutul funcției, înainte de optimistic update
+      const isMovingFromNoua = previousStageName.includes('noua') || previousStageName.includes('nouă') || previousStageName.includes('new')
+      const isMovingToInLucru = newStageNameLower.includes('lucru') || newStageNameLower.includes('work') || newStageNameLower.includes('progress')
+      const shouldAssignTechnician = isTrayInDeptPipeline && isMovingFromNoua && isMovingToInLucru
+      
+      console.log('🔍 Verificare atribuire tehnician (ÎNAINTE de optimistic update):', {
+        isTrayInDeptPipeline,
+        previousStageName,
+        previousLeadStage: previousLead.stage,
+        currentLeadStage: lead.stage,
+        isMovingFromNoua,
+        newStageNameLower,
+        isMovingToInLucru,
+        shouldAssignTechnician,
+        currentUserId,
+        currentPipelineName: currentPipeline.name
+      })
       
       // Dacă este tăviță în pipeline-urile departamentelor, permite mutarea efectivă
       if (isTrayInDeptPipeline) {
         // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
+        // IMPORTANT: Acest update se face DUPĂ ce am calculat previousStageName
         setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
         
         try {
@@ -453,7 +471,9 @@ export function useKanbanData(pipelineSlug?: string) {
             itemType,
             itemId,
             pipelineId: lead.pipelineId,
-            newStageId: newStage.id
+            newStageId: newStage.id,
+            shouldAssignTechnician,
+            currentUserId
           })
           
           // Verifică dacă există deja un pipeline_item în pipeline-ul curent
@@ -473,6 +493,72 @@ export function useKanbanData(pipelineSlug?: string) {
             if (error) {
               throw error
             }
+          }
+          
+          // Dacă se mută din "Noua" în "In Lucru", atribuie automat tehnicianul curent
+          if (shouldAssignTechnician) {
+            // Obține user ID (folosește currentUserId sau încearcă din auth)
+            let userIdToAssign = currentUserId
+            if (!userIdToAssign) {
+              console.warn('⚠️ currentUserId este null, încercare obținere din auth...')
+              const { data: { user: authUser } } = await supabase.auth.getUser()
+              if (authUser?.id) {
+                userIdToAssign = authUser.id
+                console.log('✅ User ID obținut din auth:', userIdToAssign)
+                setCurrentUserId(userIdToAssign)
+              } else {
+                console.error('❌ Nu s-a putut obține user ID pentru atribuirea tehnicianului')
+                // Nu returnăm aici - mutarea cardului trebuie să continue chiar dacă nu putem atribui tehnicianul
+              }
+            }
+            
+            // Continuă doar dacă avem user ID
+            if (userIdToAssign) {
+            
+            console.log('👤 Atribuire automată tehnician pentru tăviță:', {
+              trayId: itemId,
+              technicianId: userIdToAssign,
+              previousStage: previousStageName,
+              newStage: newStageNameLower
+            })
+            
+            // Verifică mai întâi dacă există tray_items pentru această tăviță
+            const { data: existingItems, error: checkError } = await supabase
+              .from('tray_items')
+              .select('id')
+              .eq('tray_id', itemId)
+              .limit(1)
+            
+            if (checkError) {
+              console.error('⚠️ Eroare la verificarea tray_items:', checkError)
+            } else if (!existingItems || existingItems.length === 0) {
+              console.warn('⚠️ Nu există tray_items pentru această tăviță:', itemId)
+            } else {
+              // Actualizează technician_id pentru toate tray_items din tăviță
+              const { error: updateError, data: updateData } = await supabase
+                .from('tray_items')
+                .update({ technician_id: userIdToAssign })
+                .eq('tray_id', itemId)
+                .select('id')
+              
+              if (updateError) {
+                console.error('⚠️ Eroare la atribuirea automată a tehnicianului:', updateError)
+              } else {
+                console.log('✅ Tehnician atribuit automat pentru tăviță. Items actualizate:', updateData?.length || 0)
+              }
+            }
+            } else {
+              console.warn('⚠️ Nu se poate atribui tehnician: user ID indisponibil')
+            }
+          } else {
+            console.log('ℹ️ Nu se atribuie tehnician:', {
+              shouldAssignTechnician,
+              isTrayInDeptPipeline,
+              isMovingFromNoua,
+              isMovingToInLucru,
+              previousStageName,
+              newStageNameLower
+            })
           }
           
           // Real-time subscription va actualiza automat când se salvează în baza de date
@@ -568,7 +654,7 @@ export function useKanbanData(pipelineSlug?: string) {
       setError('Failed to move lead')
       // Nu mai face refresh - real-time subscription va actualiza automat dacă reușește
     }
-  }, [leads, pipelineSlug, getPipelines])
+  }, [leads, pipelineSlug, getPipelines, currentUserId])
 
   return { leads, stages, pipelines, loading, error, handleLeadMove, patchLeadTags, handlePinToggle, refresh: loadData, reload: () => loadDataRef.current() }
 }

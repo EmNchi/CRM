@@ -104,6 +104,7 @@ export interface RawServiceFile {
   created_at: string
   office_direct?: boolean
   curier_trimis?: boolean
+  urgent?: boolean
   lead?: RawLead | null
 }
 
@@ -116,6 +117,7 @@ export interface RawTray {
   service_file_id: string
   service_file?: {
     lead_id: string
+    urgent?: boolean
     lead?: RawLead | null
   } | null
 }

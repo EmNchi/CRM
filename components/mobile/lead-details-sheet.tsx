@@ -89,6 +89,12 @@ export function LeadDetailsSheet({
   const [loadingFiles, setLoadingFiles] = useState(false)
   const [isTechnician, setIsTechnician] = useState(false)
   
+  // Verifică dacă suntem în pipeline-ul Vanzari
+  const isVanzariPipeline = useMemo(() => {
+    if (!pipelineSlug) return false
+    return pipelineSlug.toLowerCase().includes('vanzari') || pipelineSlug.toLowerCase().includes('sales')
+  }, [pipelineSlug])
+  
   // State pentru tab-ul "Fișă" (pentru tehnicieni)
   const [trayItems, setTrayItems] = useState<TrayItem[]>([])
   const [loadingTrayItems, setLoadingTrayItems] = useState(false)
@@ -1104,6 +1110,9 @@ export function LeadDetailsSheet({
                         </div>
                         <label className="text-xs font-medium text-muted-foreground uppercase block mb-2">
                           Detalii comandă comunicate de client
+                          {!isVanzariPipeline && (
+                            <span className="text-xs text-muted-foreground ml-2">(doar vizualizare)</span>
+                          )}
                         </label>
                         {loadingTrayDetails ? (
                           <div className="flex items-center justify-center py-4">
@@ -1113,23 +1122,36 @@ export function LeadDetailsSheet({
                           <Textarea
                             value={trayDetails}
                             onChange={(e) => {
+                              // Detaliile pot fi modificate doar din pipeline-ul Vanzari
+                              if (!isVanzariPipeline) {
+                                toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+                                return
+                              }
                               // Pentru tehnician, este read-only
                               if (!isTechnician) {
                                 setTrayDetails(e.target.value)
                               }
                             }}
-                            placeholder="Detaliile comenzii pentru această fișă (vizibile pentru toate tăvițele din fișă)..."
+                            placeholder={isVanzariPipeline 
+                              ? "Detaliile comenzii pentru această fișă (vizibile pentru toate tăvițele din fișă)..."
+                              : "Detaliile pot fi modificate doar din pipeline-ul Vanzari"}
                             className="min-h-[100px] text-xs sm:text-sm resize-none"
-                            readOnly={isTechnician}
+                            readOnly={isTechnician || !isVanzariPipeline}
                           />
                         )}
-                        {/* Buton salvare doar pentru vânzători */}
-                        {!isTechnician && (
+                        {/* Buton salvare doar pentru vânzători și doar în pipeline-ul Vanzari */}
+                        {!isTechnician && isVanzariPipeline && (
                           <div className="flex justify-end mt-2">
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={async () => {
+                                // IMPORTANT: Detaliile pot fi modificate doar din pipeline-ul Vanzari
+                                if (!isVanzariPipeline) {
+                                  toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+                                  return
+                                }
+                                
                                 setSavingTrayDetails(true)
                                 try {
                                   const trayId = getTrayId()

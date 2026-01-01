@@ -516,6 +516,13 @@ export function LeadDetailsPanel({
   
   // Funcție pentru salvarea detaliilor
   const saveServiceFileDetails = useCallback(async (details: string) => {
+    // IMPORTANT: Detaliile pot fi modificate doar din pipeline-ul Vanzari
+    if (!isVanzariPipeline) {
+      console.warn('Cannot save details: modifications are only allowed in Vanzari pipeline')
+      toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+      return
+    }
+    
     try {
       const serviceFileId = await getServiceFileId()
       if (!serviceFileId) {
@@ -537,7 +544,7 @@ export function LeadDetailsPanel({
     } catch (err: any) {
       console.error('Error saving details:', err)
     }
-  }, [getServiceFileId])
+  }, [getServiceFileId, isVanzariPipeline])
 
   // Funcție debounced pentru auto-save
   const debouncedSaveDetails = useMemo(
@@ -550,10 +557,12 @@ export function LeadDetailsPanel({
   // Handler pentru Close care salvează înainte de a închide
   const handleCloseWithSave = useCallback(async () => {
     try {
-      // Salvează detaliile înainte de a închide
-      const serviceFileId = await getServiceFileId()
-      if (serviceFileId && trayDetails !== undefined) {
-        await saveServiceFileDetails(trayDetails)
+      // Salvează detaliile înainte de a închide (doar dacă suntem în Vanzari)
+      if (isVanzariPipeline) {
+        const serviceFileId = await getServiceFileId()
+        if (serviceFileId && trayDetails !== undefined) {
+          await saveServiceFileDetails(trayDetails)
+        }
       }
       
       // Salvează în istoric înainte de a închide
@@ -565,7 +574,7 @@ export function LeadDetailsPanel({
     }
     // Închide panoul
     onClose()
-  }, [onClose, trayDetails, saveServiceFileDetails, getServiceFileId])
+  }, [onClose, trayDetails, saveServiceFileDetails, getServiceFileId, isVanzariPipeline])
 
   // Încarcă detaliile pentru fișa de serviciu (nu mai la nivel de lead)
   // Această funcție este folosită pentru pipeline-urile Vânzări/Recepție/Curier
@@ -721,8 +730,15 @@ export function LeadDetailsPanel({
           }
         } else {
           // Selectează prima fișă dacă există și nu avem deja una selectată
-          if (sheets.length > 0 && !selectedFisaId) {
-            setSelectedFisaId(sheets[0].id)
+          // IMPORTANT: Nu resetăm selecția dacă utilizatorul a selectat deja manual o fișă
+          if (sheets.length > 0) {
+            // Verifică dacă fișa selectată există încă în listă
+            const currentSelectedExists = selectedFisaId && sheets.some(s => s.id === selectedFisaId)
+            if (!currentSelectedExists) {
+              // Dacă fișa selectată nu mai există sau nu există selecție, selectează prima fișă
+              setSelectedFisaId(sheets[0].id)
+            }
+            // Dacă există deja o selecție validă, o păstrăm
           }
         }
       } catch (error) {
@@ -734,7 +750,7 @@ export function LeadDetailsPanel({
     }
     
     loadData()
-  }, [getLeadId, getServiceFileId, getTrayId, (lead as any)?.isQuote, (lead as any)?.quoteId, (lead as any)?.type, loadServiceSheets, selectedFisaId])
+  }, [getLeadId, getServiceFileId, getTrayId, (lead as any)?.isQuote, (lead as any)?.quoteId, (lead as any)?.type, loadServiceSheets])
 
   // Încarcă toate tăvițele pentru lead în pipeline-urile departament
   useEffect(() => {
@@ -1832,56 +1848,85 @@ export function LeadDetailsPanel({
                   <>
                     {/* Checkbox-uri pentru Receptie si Vanzari (fara Call back in Curier) */}
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                      {!isCurierPipeline && (
-                        <div className="flex items-center gap-1.5 sm:gap-2">
-                          <Checkbox
-                            id="no-deal"
-                            checked={noDeal}
-                            onCheckedChange={(c: any) => handleNoDealChange(!!c)}
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleNoDealChange(!noDeal)}
-                            className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
-                          >
-                            No Deal
-                          </Button>
-                        </div>
-                      )}
-                      {!isCurierPipeline && (
+                      {/* Pentru Receptie: doar Call back */}
+                      {isReceptiePipeline ? (
                         <div className="flex items-center gap-1.5 sm:gap-2">
                           <Checkbox
                             id="call-back"
                             checked={callBack}
-                            onCheckedChange={(c: any) => handleCallBackChange(!!c)}
+                            onCheckedChange={(c: any) => {
+                              setCallBack(!!c)
+                              // Nu mută cardul într-un stage, doar păstrează starea
+                            }}
                           />
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleCallBackChange(!callBack)}
+                            onClick={() => {
+                              const newValue = !callBack
+                              setCallBack(newValue)
+                              // Nu mută cardul într-un stage, doar păstrează starea
+                            }}
                             className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
                           >
                             Call back
                           </Button>
                         </div>
+                      ) : (
+                        <>
+                          {/* Pentru Vanzari: toate checkbox-urile */}
+                          {!isCurierPipeline && (
+                            <div className="flex items-center gap-1.5 sm:gap-2">
+                              <Checkbox
+                                id="no-deal"
+                                checked={noDeal}
+                                onCheckedChange={(c: any) => handleNoDealChange(!!c)}
+                              />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleNoDealChange(!noDeal)}
+                                className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                              >
+                                No Deal
+                              </Button>
+                            </div>
+                          )}
+                          {!isCurierPipeline && (
+                            <div className="flex items-center gap-1.5 sm:gap-2">
+                              <Checkbox
+                                id="call-back"
+                                checked={callBack}
+                                onCheckedChange={(c: any) => handleCallBackChange(!!c)}
+                              />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCallBackChange(!callBack)}
+                                className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                              >
+                                Call back
+                              </Button>
+                            </div>
+                          )}
+                          
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Checkbox
+                              id="nu-raspunde"
+                              checked={nuRaspunde}
+                              onCheckedChange={(c: any) => handleNuRaspundeChange(!!c)}
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleNuRaspundeChange(!nuRaspunde)}
+                              className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
+                            >
+                              Nu raspunde
+                            </Button>
+                          </div>
+                        </>
                       )}
-                      
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Checkbox
-                          id="nu-raspunde"
-                          checked={nuRaspunde}
-                          onCheckedChange={(c: any) => handleNuRaspundeChange(!!c)}
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleNuRaspundeChange(!nuRaspunde)}
-                          className="h-7 sm:h-8 text-xs sm:text-sm px-2 sm:px-3"
-                        >
-                          Nu raspunde
-                        </Button>
-                      </div>
                       
                      
                       
@@ -2156,16 +2201,26 @@ export function LeadDetailsPanel({
                     <div>
                       <label className="text-xs font-medium text-muted-foreground uppercase mb-2 block">
                         Detalii comandă comunicate de client
+                        {!isVanzariPipeline && (
+                          <span className="text-xs text-muted-foreground ml-2">(doar vizualizare)</span>
+                        )}
                       </label>
                       <Textarea
                         value={trayDetails}
                         onChange={(e) => {
+                          if (!isVanzariPipeline) {
+                            toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+                            return
+                          }
                           const newValue = e.target.value
                           setTrayDetails(newValue)
-                          // Auto-save cu debounce
+                          // Auto-save cu debounce (doar în Vanzari)
                           debouncedSaveDetails(newValue)
                         }}
-                        placeholder="Introduceți detaliile comenzii comunicate de client pentru această fișă..."
+                        disabled={!isVanzariPipeline}
+                        placeholder={isVanzariPipeline 
+                          ? "Introduceți detaliile comenzii comunicate de client pentru această fișă..."
+                          : "Detaliile pot fi modificate doar din pipeline-ul Vanzari"}
                         className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
                       />
                     </div>

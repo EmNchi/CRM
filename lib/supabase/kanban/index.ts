@@ -134,9 +134,30 @@ export async function getSingleKanbanItem(
       
       const serviceFile = serviceFiles[0]
       const { data: tagMap } = await fetchTagsForLeads([serviceFile.lead!.id])
-      const tags = tagMap.get(serviceFile.lead!.id) || []
+      const leadTags = tagMap.get(serviceFile.lead!.id) || []
       
-      kanbanItem = transformServiceFileToKanbanItem(serviceFile, pipelineItem, tags, 0)
+      // IMPORTANT: Pentru fișele de serviciu, tag-ul "urgent" vine din câmpul urgent al fișei, nu din tag-urile lead-ului
+      // Filtrează tag-ul "urgent" din tag-urile lead-ului și adaugă-l doar dacă fișa are urgent = true
+      const tagsWithoutUrgent = leadTags.filter(tag => tag.name.toLowerCase() !== 'urgent')
+      const serviceFileTags = [...tagsWithoutUrgent]
+      
+      // Adaugă tag-ul "urgent" doar dacă fișa de serviciu are urgent = true
+      if (serviceFile.urgent === true) {
+        // Caută tag-ul "urgent" în lista de tag-uri existente sau creează unul nou
+        const urgentTag = leadTags.find(tag => tag.name.toLowerCase() === 'urgent')
+        if (urgentTag) {
+          serviceFileTags.push(urgentTag)
+        } else {
+          // Creează un tag "urgent" temporar pentru afișare
+          serviceFileTags.push({
+            id: `urgent_${serviceFile.id}`,
+            name: 'URGENT',
+            color: 'red' as const
+          })
+        }
+      }
+      
+      kanbanItem = transformServiceFileToKanbanItem(serviceFile, pipelineItem, serviceFileTags, 0)
       
     } else if (type === 'tray') {
       const { data: trays } = await fetchTraysByIds([itemId])
@@ -152,11 +173,33 @@ export async function getSingleKanbanItem(
         fetchTrayItems([itemId])
       ])
       
-      const tags = tagMap.get(leadId) || []
+      const leadTags = tagMap.get(leadId) || []
+      
+      // IMPORTANT: Pentru tăvițe, tag-ul "urgent" vine din câmpul urgent al fișei de serviciu, nu din tag-urile lead-ului
+      // Filtrează tag-ul "urgent" din tag-urile lead-ului și adaugă-l doar dacă fișa are urgent = true
+      const tagsWithoutUrgent = leadTags.filter(tag => tag.name.toLowerCase() !== 'urgent')
+      const trayTags = [...tagsWithoutUrgent]
+      
+      // Adaugă tag-ul "urgent" doar dacă fișa de serviciu are urgent = true
+      if (tray.service_file?.urgent === true) {
+        // Caută tag-ul "urgent" în lista de tag-uri existente sau creează unul nou
+        const urgentTag = leadTags.find(tag => tag.name.toLowerCase() === 'urgent')
+        if (urgentTag) {
+          trayTags.push(urgentTag)
+        } else {
+          // Creează un tag "urgent" temporar pentru afișare
+          trayTags.push({
+            id: `urgent_${tray.id}`,
+            name: 'URGENT',
+            color: 'red' as const
+          })
+        }
+      }
+      
       const technicianMap = extractTechnicianMap(trayItems)
       const technician = technicianMap.get(itemId) || null
       
-      kanbanItem = transformTrayToKanbanItem(tray, pipelineItem, tags, technician, 0)
+      kanbanItem = transformTrayToKanbanItem(tray, pipelineItem, trayTags, technician, 0)
     }
     
     return { data: kanbanItem, error: null }
