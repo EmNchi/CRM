@@ -696,13 +696,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   const [targetTrayId, setTargetTrayId] = useState<string>('')
   const [movingInstrument, setMovingInstrument] = useState(false)
 
-  // Debug: Verifică când dialog-ul se deschide
-  // useEffect(() => {
-  //   if (showMoveInstrumentDialog) {
-  //     console.log('🔵 [Dialog] Dialog opened, instrumentToMove:', instrumentToMove)
-  //   }
-  // }, [showMoveInstrumentDialog, instrumentToMove])
-
   const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
 
   // Verificări pentru restricții bazate pe rol și pipeline - folosim hook-ul usePreturiPipeline

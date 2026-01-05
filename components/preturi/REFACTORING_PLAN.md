@@ -145,13 +145,17 @@
 ## Status Actualizat
 
 - ✅ **Fazele 1-7 completate**: Toate componentele, hook-urile și utilitarele sunt create
-- ✅ **Integrare parțială**: Dialog-uri, secțiuni UI, view-uri pipeline și formulare vânzător sunt integrate
-- ⏳ **În progres**: 
-  - Extindere formulare modul normal (brandSerialGroups pentru Reparații)
-  - Integrare componente restricții
-  - Cleanup cod vechi
-- 📝 **Următorii pași**: 
-  1. Extinde `AddInstrumentForm` cu suport `brandSerialGroups`
-  2. Integrează componente restricții în `preturi.tsx`
-  3. Cleanup și optimizare finală
+- ✅ **Integrare completă**: 
+  - Dialog-uri (CreateTrayDialog, EditTrayDialog, MoveInstrumentDialog)
+  - Secțiuni UI (ItemsTable, TotalsSection, TrayDetailsSection, TrayImagesSection)
+  - View-uri pipeline (VanzariView, ReceptieView, DepartmentView, CurierView)
+  - Formulare vânzător (AddInstrumentForm, AddServiceForm)
+  - Formulare modul normal extinse (AddInstrumentForm cu brandSerialGroups, AddServiceForm cu selecție brand)
+  - Verificări pipeline centralizate cu `usePreturiPipeline`
+- ✅ **Componente restricții create**: PipelineRestrictions.tsx și PreturiProvider.tsx (disponibile pentru utilizare viitoare)
+- ✅ **Cleanup minim**: Cod comentat/debug eliminat
+- 📝 **Următorii pași opționali**: 
+  1. Integrare `PreturiProvider` ca wrapper (opțional, verificările funcționează și fără)
+  2. Aliniere tipuri și eliminare `as any` temporare (în cleanup final)
+  3. Optimizări și refactorizări minore
 
