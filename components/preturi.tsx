@@ -36,6 +36,9 @@ import { TotalsSection } from './preturi/TotalsSection'
 import { TrayDetailsSection } from './preturi/TrayDetailsSection'
 import { TrayImagesSection } from './preturi/TrayImagesSection'
 import { ItemsTable } from './preturi/ItemsTable'
+import { AddInstrumentForm } from './preturi/AddInstrumentForm'
+import { AddServiceForm } from './preturi/AddServiceForm'
+import { AddPartForm } from './preturi/AddPartForm'
 
 const supabase = supabaseBrowser()
 
@@ -6056,171 +6059,72 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         
         {/* Adăugare Instrument și Servicii - fără tăviță definită */}
         {/* Add Instrument */}
-        {!(isDepartmentPipeline && isTechnician) && (
-          <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-lg border border-green-200 dark:border-green-800 mx-4 p-3">
-            <div className="flex items-center justify-between mb-3 gap-2">
-              <div className="flex items-center gap-2">
-                <Wrench className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <span className="text-sm font-medium text-green-900 dark:text-green-100">Adaugă Instrument</span>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              <div className="col-span-1 sm:col-span-8">
-                <Label className="text-xs text-muted-foreground mb-1 block">Instrument</Label>
-                <select
-                  className="w-full h-8 text-sm rounded-md border px-2 bg-white dark:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
-                  value={instrumentForm.instrument}
-                  onChange={e => {
-                    const newInstrumentId = e.target.value
-                    const savedSettings = instrumentSettings[newInstrumentId] || {}
-                    setInstrumentForm(prev => ({
-                      ...prev,
-                      instrument: newInstrumentId,
-                      qty: savedSettings?.qty || prev.qty || '1'
-                    }))
-                    setSvc(s => ({ 
-                      ...s, 
-                      instrumentId: newInstrumentId, 
-                      id: '',
-                      qty: savedSettings?.qty || s.qty || '1'
-                    }))
-                    setIsDirty(true)
-                  }}
-                >
-                  <option value="">— selectează —</option>
-                  {availableInstruments.map(inst => (
-                    <option key={inst.id} value={inst.id}>{inst.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="col-span-1 sm:col-span-4">
-                <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
-                <Input
-                  className="h-8 text-sm text-center disabled:opacity-50 disabled:cursor-not-allowed"
-                  inputMode="numeric"
-                  value={instrumentForm.qty}
-                  onChange={e => {
-                    const newQty = e.target.value
-                    setInstrumentForm(prev => ({ ...prev, qty: newQty }))
-                    if (instrumentForm.instrument) {
-                      setInstrumentSettings(prev => ({
-                        ...prev,
-                        [instrumentForm.instrument]: {
-                          qty: newQty,
-                          brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [''] }],
-                          garantie: prev[instrumentForm.instrument]?.garantie || false
-                        }
-                      }))
-                      setSvc(s => ({ ...s, qty: newQty }))
-                    }
-                  }}
-                  placeholder="1"
-                  disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline}
-                  title={hasServicesOrInstrumentInSheet && !isVanzariPipeline ? "Cantitatea este blocată - există deja servicii sau instrument în tăviță" : "Introduceți cantitatea instrumentului"}
-                />
-              </div>
-            </div>
-          </div>
-        )}
+        <AddInstrumentForm
+          instrumentForm={instrumentForm}
+          availableInstruments={availableInstruments}
+          instrumentSettings={instrumentSettings}
+          hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
+          isVanzariPipeline={isVanzariPipeline}
+          isDepartmentPipeline={isDepartmentPipeline}
+          isTechnician={isTechnician}
+          onInstrumentChange={(newInstrumentId) => {
+            const savedSettings = instrumentSettings[newInstrumentId] || {}
+            setInstrumentForm(prev => ({
+              ...prev,
+              instrument: newInstrumentId,
+              qty: savedSettings?.qty || prev.qty || '1'
+            }))
+            setSvc(s => ({ 
+              ...s, 
+              instrumentId: newInstrumentId, 
+              id: '',
+              qty: savedSettings?.qty || s.qty || '1'
+            }))
+            setIsDirty(true)
+          }}
+          onQtyChange={(newQty) => {
+            setInstrumentForm(prev => ({ ...prev, qty: newQty }))
+            if (instrumentForm.instrument) {
+              setInstrumentSettings(prev => ({
+                ...prev,
+                [instrumentForm.instrument]: {
+                  qty: newQty,
+                  brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [{ serial: '', garantie: false }] }],
+                  garantie: prev[instrumentForm.instrument]?.garantie || false
+                }
+              }))
+              setSvc(s => ({ ...s, qty: newQty }))
+            }
+          }}
+        />
         
-        {/* Add Service - Redesigned */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg border border-blue-200 dark:border-blue-800 mx-4 p-3">
-          <div className="flex items-center justify-between mb-3 gap-2">
-            <div className="flex items-center gap-2">
-              <Wrench className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Adaugă Serviciu</span>
-            </div>
-            <Button size="sm" onClick={onAddService} disabled={!svc.id} className="h-7">
-              <Plus className="h-3 w-3 mr-1" /> Adaugă
-            </Button>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            <div className="relative col-span-1 sm:col-span-6">
-              <Label className="text-xs text-muted-foreground mb-1 block">Serviciu</Label>
-              <div className="relative">
-                <Input
-                  className="h-8 text-sm pr-8"
-                  placeholder={currentInstrumentId ? "Caută serviciu sau click pentru lista completă..." : "Selectează mai întâi un instrument"}
-                  value={serviceSearchQuery}
-                  onChange={e => setServiceSearchQuery(e.target.value)}
-                  onFocus={() => setServiceSearchFocused(true)}
-                  onBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
-                  disabled={!currentInstrumentId}
-                />
-                {serviceSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setServiceSearchQuery('')
-                      setSvc(s => ({ ...s, id: '' }))
-                    }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <XIcon className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-              {(serviceSearchFocused || serviceSearchQuery) && currentInstrumentId && (
-                <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-background border rounded-md shadow-lg">
-                  {availableServices
-                    .filter(s => !serviceSearchQuery || s.name.toLowerCase().includes(serviceSearchQuery.toLowerCase()))
-                    .slice(0, serviceSearchQuery ? 10 : 20)
-                    .map(s => {
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => {
-                            setSvc(prev => ({ ...prev, id: s.id }))
-                            setServiceSearchQuery(s.name)
-                            setServiceSearchFocused(false)
-                          }}
-                          onDoubleClick={() => {
-                            setSvc(prev => ({ ...prev, id: s.id }))
-                            setServiceSearchQuery(s.name)
-                            setServiceSearchFocused(false)
-                            setTimeout(() => {
-                              onAddService()
-                            }, 50)
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
-                          title="Click pentru selectare, Double-click pentru adăugare rapidă"
-                        >
-                          <span>{s.name}</span>
-                          <span className="text-muted-foreground">{s.price.toFixed(2)} RON</span>
-                        </button>
-                      )
-                    })}
-                </div>
-              )}
-            </div>
-            
-            <div className="col-span-1 sm:col-span-2">
-              <Label className="text-xs text-muted-foreground mb-1 block">Cant.</Label>
-              <Input
-                className="h-8 text-sm text-center"
-                inputMode="numeric"
-                value={svc.qty}
-                onChange={e => setSvc(s => ({ ...s, qty: e.target.value }))}
-                placeholder="1"
-              />
-            </div>
-            
-            <div className="col-span-1">
-              <Label className="text-xs text-muted-foreground mb-1 block">Disc%</Label>
-              <Input
-                className="h-8 text-sm text-center"
-                inputMode="decimal"
-                value={svc.discount}
-                onChange={e => setSvc(s => ({ ...s, discount: e.target.value }))}
-                placeholder="0"
-              />
-            </div>
-          </div>
-        </div>
+        {/* Add Service */}
+        <AddServiceForm
+          svc={svc}
+          serviceSearchQuery={serviceSearchQuery}
+          serviceSearchFocused={serviceSearchFocused}
+          currentInstrumentId={currentInstrumentId}
+          availableServices={availableServices}
+          onServiceSearchChange={setServiceSearchQuery}
+          onServiceSearchFocus={() => setServiceSearchFocused(true)}
+          onServiceSearchBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
+          onServiceSelect={(serviceId, serviceName) => {
+            setSvc(prev => ({ ...prev, id: serviceId }))
+            setServiceSearchQuery(serviceName)
+            setServiceSearchFocused(false)
+          }}
+          onServiceDoubleClick={(serviceId, serviceName) => {
+            setSvc(prev => ({ ...prev, id: serviceId }))
+            setServiceSearchQuery(serviceName)
+            setServiceSearchFocused(false)
+            setTimeout(() => {
+              onAddService()
+            }, 50)
+          }}
+          onQtyChange={(qty) => setSvc(s => ({ ...s, qty }))}
+          onDiscountChange={(discount) => setSvc(s => ({ ...s, discount }))}
+          onAddService={onAddService}
+        />
         
         {/* Items Table - simplificat */}
         <div className="p-0 mx-4 overflow-x-auto border rounded-lg bg-card">
