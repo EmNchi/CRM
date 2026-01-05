@@ -6166,6 +6166,20 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         onNuRaspundeChange={handleNuRaspundeChange}
         onCallBackChange={handleCallBackChange}
         onSave={saveAllAndLog}
+        onBrandToggle={(brandName, checked) => {
+          if (checked) {
+            setSvc(s => ({ 
+              ...s, 
+              selectedBrands: [...(s.selectedBrands || []), brandName]
+            }))
+          } else {
+            setSvc(s => ({ 
+              ...s, 
+              selectedBrands: (s.selectedBrands || []).filter(b => b !== brandName)
+            }))
+          }
+        }}
+        onSerialNumberChange={(serialNumberId) => setSvc(s => ({ ...s, serialNumberId }))}
         currentInstrumentId={currentInstrumentId}
         hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
         isTechnician={isTechnician}
@@ -6174,6 +6188,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         totalDiscount={totalDiscount}
         total={total}
         instrumentSettings={instrumentSettings}
+        canEditUrgentAndSubscription={canEditUrgentAndSubscription}
       />
     )
   }

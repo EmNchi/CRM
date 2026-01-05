@@ -17,8 +17,19 @@ import type { Lead } from '@/app/(crm)/dashboard/page'
 
 interface VanzariViewProps {
   // State
-  instrumentForm: { instrument: string; qty: string }
-  svc: { id: string; qty: string; discount: string; instrumentId: string }
+  instrumentForm: { 
+    instrument: string
+    qty: string
+    brandSerialGroups?: Array<{ brand: string; serialNumbers: Array<{ serial: string; garantie: boolean }> | string[] }>
+  }
+  svc: { 
+    id: string
+    qty: string
+    discount: string
+    instrumentId: string
+    selectedBrands?: string[]
+    serialNumberId?: string
+  }
   serviceSearchQuery: string
   serviceSearchFocused: boolean
   items: LeadQuoteItem[]
@@ -61,6 +72,9 @@ interface VanzariViewProps {
   onNuRaspundeChange: () => void
   onCallBackChange: () => void
   onSave: () => void
+  // Callbacks pentru brand selection (opționale)
+  onBrandToggle?: (brandName: string, checked: boolean) => void
+  onSerialNumberChange?: (serialNumberId: string) => void
   
   // Computed
   currentInstrumentId: string | null
@@ -71,6 +85,7 @@ interface VanzariViewProps {
   totalDiscount: number
   total: number
   instrumentSettings: Record<string, any>
+  canEditUrgentAndSubscription?: boolean
 }
 
 export function VanzariView({
@@ -150,6 +165,30 @@ export function VanzariView({
               <span className="text-muted-foreground">Telefon: </span>
               <span className="font-medium">{lead.phone || '—'}</span>
             </div>
+            <div>
+              <span className="text-muted-foreground">Oras: </span>
+              <span className="font-medium">{lead.city || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Adresa: </span>
+              <span className="font-medium">{lead.address || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Adresa 2: </span>
+              <span className="font-medium">{lead.address2 || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Cod postal: </span>
+              <span className="font-medium">{lead.zip || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Denumirea Companiei: </span>
+              <span className="font-medium">{lead.company_name || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Adresa companiei: </span>
+              <span className="font-medium">{lead.company_address || '—'}</span>
+            </div>
           </div>
         </div>
       )}
@@ -176,6 +215,9 @@ export function VanzariView({
         serviceSearchFocused={serviceSearchFocused}
         currentInstrumentId={currentInstrumentId}
         availableServices={availableServices}
+        instrumentForm={instrumentForm}
+        isVanzariPipeline={true}
+        canEditUrgentAndSubscription={canEditUrgentAndSubscription !== false}
         onServiceSearchChange={onServiceSearchChange}
         onServiceSearchFocus={onServiceSearchFocus}
         onServiceSearchBlur={onServiceSearchBlur}
@@ -184,6 +226,8 @@ export function VanzariView({
         onQtyChange={onSvcQtyChange}
         onDiscountChange={onSvcDiscountChange}
         onAddService={onAddService}
+        onBrandToggle={onBrandToggle}
+        onSerialNumberChange={onSerialNumberChange}
       />
       
       {/* Items Table - simplificat */}
