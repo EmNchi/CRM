@@ -7530,170 +7530,34 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
 
       {/* Add Part - Redesigned (doar pentru pipeline-ul Reparații sau când canAddParts este true) */}
       {canAddParts && isReparatiiPipeline && (
-        <form onSubmit={onAddPart} className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 rounded-lg border border-amber-200 dark:border-amber-800 mx-1 sm:mx-2 p-2 sm:p-3">
-        <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-600 dark:text-amber-400" />
-            <span className="text-xs sm:text-sm font-medium text-amber-900 dark:text-amber-100">Adaugă Piesă</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {(part.id || partSearchQuery) && (
-              <Button 
-                type="button"
-                size="sm" 
-                variant="outline" 
-                onClick={handleResetPartForm} 
-                className="h-7"
-                title="Anulează selecția"
-              >
-                <XIcon className="h-3 w-3 mr-1" /> Anulează
-              </Button>
-            )}
-            <Button type="submit" size="sm" className="h-7" disabled={!part.id}>
-              <Plus className="h-3 w-3 mr-1" /> Adaugă
-            </Button>
-          </div>
-      </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3">
-          {/* Piesă cu search - 6 cols */}
-          <div className="relative col-span-1 sm:col-span-6">
-            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Piesă</Label>
-            <div className="relative">
-              <Input
-                className="h-7 sm:h-8 text-xs sm:text-sm pr-8"
-                placeholder="Caută piesă sau click pentru lista completă..."
-                value={partSearchQuery}
-                onChange={e => setPartSearchQuery(e.target.value)}
-                onFocus={() => setPartSearchFocused(true)}
-                onBlur={() => setTimeout(() => setPartSearchFocused(false), 200)}
-              />
-              {partSearchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPartSearchQuery('')
-                    setPart(p => ({ ...p, id: '' }))
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <XIcon className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-            {(partSearchFocused || partSearchQuery) && (
-              <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-background border rounded-md shadow-lg">
-                {/* Header cu numărul de piese disponibile */}
-                {!partSearchQuery && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-b sticky top-0">
-                    {parts.length} piese disponibile
-                  </div>
-                )}
-                {parts
-                  .filter(p => !partSearchQuery || p.name.toLowerCase().includes(partSearchQuery.toLowerCase()))
-                  .slice(0, partSearchQuery ? 10 : 20)
-                  .map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setPart(prev => ({ ...prev, id: p.id, overridePrice: '' }))
-                        setPartSearchQuery(p.name)
-                        setPartSearchFocused(false)
-                      }}
-                      onDoubleClick={() => {
-                        setPart(prev => ({ ...prev, id: p.id, overridePrice: '' }))
-                        setPartSearchQuery(p.name)
-                        setPartSearchFocused(false)
-                        setTimeout(() => {
-                          onAddPart()
-                        }, 50)
-                      }}
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
-                      title="Click pentru selectare, Double-click pentru adăugare rapidă"
-                    >
-                      <span>{p.name}</span>
-                      <span className="text-muted-foreground">{p.price.toFixed(2)} RON</span>
-                    </button>
-                  ))}
-                {partSearchQuery && parts.filter(p => p.name.toLowerCase().includes(partSearchQuery.toLowerCase())).length === 0 && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">Nu s-au găsit piese</div>
-                )}
-                {!partSearchQuery && parts.length > 20 && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t">
-                    Tastează pentru a căuta în toate cele {parts.length} piese...
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Serial Number - 4 cols */}
-          <div className="col-span-1 sm:col-span-4">
-            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">
-              Serial Nr. (instrument)
-              {(() => {
-                const uniqueInstruments = new Set<string>()
-                items.forEach(item => {
-                  if (item.item_type === null && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  } else if (item.item_type === 'service' && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  } else if (item.item_type === 'part' && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  }
-                })
-                return uniqueInstruments.size > 1 ? <span className="text-red-500 ml-1">*</span> : null
-              })()}
-            </Label>
-            <select
-              className="w-full h-7 sm:h-8 text-xs sm:text-sm border rounded-md px-2 bg-background"
-              value={part.serialNumberId}
-              onChange={e => setPart(p => ({ ...p, serialNumberId: e.target.value }))}
-              required={(() => {
-                const uniqueInstruments = new Set<string>()
-                items.forEach(item => {
-                  if (item.item_type === null && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  } else if (item.item_type === 'service' && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  } else if (item.item_type === 'part' && item.instrument_id) {
-                    uniqueInstruments.add(item.instrument_id)
-                  }
-                })
-                return uniqueInstruments.size > 1
-              })()}
-            >
-              <option value="">-- Selectează serial --</option>
-              {instrumentForm.brandSerialGroups.flatMap((group, gIdx) =>
-                group.serialNumbers
-                  .map(sn => {
-                    const serial = typeof sn === 'string' ? sn : sn.serial || ''
-                    return serial.trim()
-                  })
-                  .filter(sn => sn)
-                  .map((sn, snIdx) => (
-                    <option key={`${gIdx}-${snIdx}`} value={`${group.brand}::${sn}`}>
-                      {group.brand ? `${group.brand} - ${sn}` : sn}
-                    </option>
-                  ))
-              )}
-            </select>
-          </div>
-
-          {/* Cant - 2 cols */}
-          <div className="col-span-1 sm:col-span-2">
-            <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Cant.</Label>
-            <Input
-              className="h-7 sm:h-8 text-xs sm:text-sm text-center"
-              inputMode="numeric"
-              value={part.qty}
-              onChange={e => setPart(p => ({ ...p, qty: e.target.value }))}
-              placeholder="1"
-            />
-          </div>
-        </div>
-      </form>
+        <AddPartForm
+          part={part}
+          partSearchQuery={partSearchQuery}
+          partSearchFocused={partSearchFocused}
+          parts={parts}
+          items={items}
+          instrumentForm={instrumentForm}
+          canAddParts={canAddParts}
+          onPartSearchChange={setPartSearchQuery}
+          onPartSearchFocus={() => setPartSearchFocused(true)}
+          onPartSearchBlur={() => setTimeout(() => setPartSearchFocused(false), 200)}
+          onPartSelect={(partId, partName) => {
+            setPart(prev => ({ ...prev, id: partId, overridePrice: '' }))
+            setPartSearchQuery(partName)
+            setPartSearchFocused(false)
+          }}
+          onPartDoubleClick={(partId, partName) => {
+            setPart(prev => ({ ...prev, id: partId, overridePrice: '' }))
+            setPartSearchQuery(partName)
+            setPartSearchFocused(false)
+            setTimeout(() => {
+              onAddPart()
+            }, 50)
+          }}
+          onQtyChange={(qty) => setPart(p => ({ ...p, qty }))}
+          onSerialNumberChange={(serialNumberId) => setPart(p => ({ ...p, serialNumberId }))}
+          onAddPart={onAddPart}
+        />
       )}
 
       {/* Items Table */}
