@@ -1986,8 +1986,12 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           }
         }
         
+        // IMPORTANT: Reîncarcă toate items-urile existente din DB înainte de a salva instrumentul nou
+        // pentru a preveni ștergerea instrumentelor existente
+        const allExistingItems = await listQuoteItems(quoteToUse.id, services, instruments, pipelinesWithIds)
+        
         // Verifică dacă există deja un tray_item pentru acest instrument
-        const existingItem = items.find((i: any) => i.instrument_id === instrumentIdToUse)
+        const existingItem = allExistingItems.find((i: any) => i.instrument_id === instrumentIdToUse && i.item_type === null)
         
         // Transformă structura pentru salvare: grupăm serial numbers-urile după garanție
         // Dacă avem serial numbers cu garanții diferite, creăm brand-uri separate
@@ -2162,7 +2166,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             const supabaseClientForPropagation = supabaseBrowser()
             
             // Găsește toate serviciile din tăviță care au același instrument_id și care au deja un ID valid
-            const servicesForInstrument = items.filter((item: any) => {
+            // Folosește allExistingItems pentru a include toate serviciile existente din DB
+            const servicesForInstrument = allExistingItems.filter((item: any) => {
               if (item.item_type !== 'service' || !item.service_id || !item.id) return false
               const serviceDef = services.find(s => s.id === item.service_id)
               return serviceDef?.instrument_id === instrumentIdToUse
@@ -2320,13 +2325,25 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           }
           
           // Dacă nu există alte items de salvat, finalizează aici
-          if (items.length === 0 || (items.length === 1 && existingItem)) {
+          // IMPORTANT: Verifică dacă există alte items în DB, nu doar în items din UI
+          const hasOtherItems = allExistingItems.some((item: any) => 
+            item.id !== existingItem?.id && (
+              item.item_type !== null || // Servicii sau piese
+              (item.item_type === null && item.instrument_id !== instrumentIdToUse) // Alte instrumente
+            )
+          )
+          
+          if (!hasOtherItems && items.length <= 1) {
             await recalcAllSheetsTotal(quotes)
             toast.success('Instrumentul și datele brand/serial au fost salvate!')
             setIsDirty(false)
             setSaving(false)
             return
           }
+          
+          // IMPORTANT: Actualizează items cu allExistingItems pentru a include toate items-urile existente
+          // înainte de a continua cu persistAndLogServiceSheet
+          setItems(allExistingItems)
           
         } catch (error: any) {
           console.error('❌ Error saving brand/serial data:', error)
@@ -2519,6 +2536,9 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       // pentru a preveni ștergerea instrumentelor existente
       const allExistingItems = await listQuoteItems(quoteToUse.id, services, instruments, pipelinesWithIds)
       
+      // Helper pentru a verifica dacă un ID este local (temporar)
+      const isLocalId = (id: string | number) => String(id).startsWith("local_") || String(id).startsWith("temp-") || String(id).includes("local-")
+      
       // Combină items-urile existente cu cele noi din UI
       // Creează un map pentru items-urile existente (după ID)
       const existingItemsMap = new Map(allExistingItems.map(it => [String(it.id), it]))
@@ -2578,9 +2598,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         leadId,
         quoteId: quoteToUse.id,
         items: itemsToSave,
-        leadId,
-        quoteId: quoteToUse.id,
-        items,
         services,
         instruments, // Trimite instrumentele pentru a obține department_id
         totals: { subtotal, totalDiscount, urgentAmount, total },
