@@ -2347,6 +2347,10 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             return
           }
           
+          // IMPORTANT: Reîncarcă toate items-urile existente din DB înainte de a salva instrumentul nou
+          // pentru a preveni ștergerea instrumentelor existente
+          const existingItems = await listQuoteItems(quoteToUse.id, services, instruments, pipelinesWithIds)
+          
           // Verifică dacă instrumentul are același departament ca cele existente în tăviță (doar pentru tăvițe definite)
           // EXCEPTIE: Pentru Vanzari în tăvița undefined, permite toate instrumentele
           const isUndefinedTray = selectedQuote && (!selectedQuote.number || selectedQuote.number === '')
@@ -2355,7 +2359,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           if (!allowAllInstruments && selectedQuote && selectedQuote.number && selectedQuote.number.trim() !== '') {
             // Tăviță definită - verifică departamentele
             const existingDepartments = new Set<string | null>()
-            items.forEach(item => {
+            existingItems.forEach(item => {
               if (item.instrument_id && item.instrument_id !== instrumentIdToUse) {
                 let itemInstrumentId: string | null = null
                 if (item.item_type === 'service' && item.service_id) {
