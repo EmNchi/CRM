@@ -6642,6 +6642,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         ) : isDepartmentPipeline && selectedQuote ? (
           <DepartmentView
             instrumentForm={instrumentForm}
+            instrumentSettings={instrumentSettings}
             svc={svc}
             part={part}
             serviceSearchQuery={serviceSearchQuery}
@@ -6655,6 +6656,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             services={services}
             parts={parts}
             instruments={instruments}
+            departments={departments}
             technicians={technicians}
             pipelinesWithIds={pipelinesWithIds}
             onInstrumentChange={(newInstrumentId) => {
@@ -6774,6 +6776,31 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 }
               }
             }}
+            onAddBrandSerialGroup={onAddBrandSerialGroup}
+            onRemoveBrandSerialGroup={onRemoveBrandSerialGroup}
+            onUpdateBrand={onUpdateBrand}
+            onUpdateBrandQty={(groupIndex, qty) => {
+              const qtyNum = Math.max(1, Number(qty) || 1)
+              setInstrumentForm(prev => ({
+                ...prev,
+                brandSerialGroups: prev.brandSerialGroups.map((g, i) => 
+                  i === groupIndex 
+                    ? { 
+                        ...g, 
+                        qty: String(qtyNum),
+                        // Actualizează automat numărul de casete de serial number
+                        serialNumbers: Array.from({ length: qtyNum }, (_, idx) => 
+                          g.serialNumbers[idx] || { serial: '', garantie: false }
+                        )
+                      }
+                    : g
+                )
+              }))
+              setIsDirty(true)
+            }}
+            onUpdateSerialNumber={onUpdateSerialNumber}
+            onUpdateSerialGarantie={onUpdateSerialGarantie}
+            setIsDirty={setIsDirty}
             currentInstrumentId={currentInstrumentId}
             hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
             isTechnician={isTechnician}

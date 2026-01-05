@@ -12,7 +12,13 @@ import type { Technician } from '@/lib/types/preturi'
 
 interface DepartmentViewProps {
   // State
-  instrumentForm: { instrument: string; qty: string; brandSerialGroups: any[] }
+  instrumentForm: { 
+    instrument: string
+    qty: string
+    brandSerialGroups?: Array<{ brand: string; serialNumbers: Array<{ serial: string; garantie: boolean }>; qty: string }>
+    garantie?: boolean
+  }
+  instrumentSettings?: Record<string, any>
   svc: { id: string; qty: string; discount: string; instrumentId: string }
   part: { id: string; qty: string; serialNumberId: string }
   serviceSearchQuery: string
@@ -23,11 +29,12 @@ interface DepartmentViewProps {
   subscriptionType: 'services' | 'parts' | 'both' | ''
   
   // Data
-  availableInstruments: Array<{ id: string; name: string }>
+  availableInstruments: Array<{ id: string; name: string; department_id?: string | null }>
   availableServices: Service[]
   services: Service[]
   parts: Part[]
-  instruments: Array<{ id: string; name: string; weight: number }>
+  instruments: Array<{ id: string; name: string; weight: number; department_id: string | null }>
+  departments?: Array<{ id: string; name: string }>
   technicians: Technician[]
   pipelinesWithIds: Array<{ id: string; name: string }>
   
@@ -54,6 +61,15 @@ interface DepartmentViewProps {
   onDelete: (id: string) => void
   onRowClick?: (item: LeadQuoteItem) => void
   
+  // Callbacks pentru brandSerialGroups (opționale)
+  onAddBrandSerialGroup?: () => void
+  onRemoveBrandSerialGroup?: (groupIndex: number) => void
+  onUpdateBrand?: (groupIndex: number, value: string) => void
+  onUpdateBrandQty?: (groupIndex: number, qty: string) => void
+  onUpdateSerialNumber?: (groupIndex: number, serialIndex: number, value: string) => void
+  onUpdateSerialGarantie?: (groupIndex: number, serialIndex: number, garantie: boolean) => void
+  setIsDirty?: (dirty: boolean) => void
+  
   // Pipeline flags
   currentInstrumentId: string | null
   hasServicesOrInstrumentInSheet: boolean
@@ -66,6 +82,7 @@ interface DepartmentViewProps {
 
 export function DepartmentView({
   instrumentForm,
+  instrumentSettings = {},
   svc,
   part,
   serviceSearchQuery,
@@ -79,6 +96,7 @@ export function DepartmentView({
   services,
   parts,
   instruments,
+  departments = [],
   technicians,
   pipelinesWithIds,
   onInstrumentChange,
@@ -102,6 +120,13 @@ export function DepartmentView({
   onUpdateItem,
   onDelete,
   onRowClick,
+  onAddBrandSerialGroup,
+  onRemoveBrandSerialGroup,
+  onUpdateBrand,
+  onUpdateBrandQty,
+  onUpdateSerialNumber,
+  onUpdateSerialGarantie,
+  setIsDirty,
   currentInstrumentId,
   hasServicesOrInstrumentInSheet,
   isTechnician,
@@ -117,13 +142,22 @@ export function DepartmentView({
         <AddInstrumentForm
           instrumentForm={instrumentForm}
           availableInstruments={availableInstruments}
-          instrumentSettings={{}}
+          instruments={instruments}
+          departments={departments}
+          instrumentSettings={instrumentSettings}
           hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
           isVanzariPipeline={false}
           isDepartmentPipeline={isDepartmentPipeline}
           isTechnician={isTechnician}
           onInstrumentChange={onInstrumentChange}
           onQtyChange={onQtyChange}
+          onAddBrandSerialGroup={onAddBrandSerialGroup}
+          onRemoveBrandSerialGroup={onRemoveBrandSerialGroup}
+          onUpdateBrand={onUpdateBrand}
+          onUpdateBrandQty={onUpdateBrandQty}
+          onUpdateSerialNumber={onUpdateSerialNumber}
+          onUpdateSerialGarantie={onUpdateSerialGarantie}
+          setIsDirty={setIsDirty}
         />
       )}
       
