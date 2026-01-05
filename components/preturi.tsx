@@ -6837,160 +6837,19 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }}
       />
         
-        {/* Secțiune Imagini Tăviță - Modern Gallery UI */}
-        {selectedQuoteId && canViewTrayImages && (
-          <div className="mx-3 mb-4 rounded-xl border border-border/60 bg-gradient-to-br from-slate-50/50 to-white dark:from-slate-900/30 dark:to-slate-800/20 overflow-hidden shadow-sm">
-            {/* Header cu gradient subtil */}
-            <div className="px-4 py-3 bg-gradient-to-r from-primary/5 via-primary/3 to-transparent border-b border-border/40">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-lg bg-primary/10">
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-sm text-foreground">Galerie Imagini</h4>
-                    <p className="text-[11px] text-muted-foreground">
-                      {trayImages.length === 0 ? 'Nicio imagine încărcată' : 
-                       trayImages.length === 1 ? '1 imagine' : `${trayImages.length} imagini`}
-                    </p>
-                  </div>
-                </div>
-                
-                {/* Acțiuni */}
-                <div className="flex items-center gap-2">
-                  {trayImages.length > 0 && (
-                    <button
-                      onClick={handleDownloadAllImages}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Descarcă</span>
-                    </button>
-                  )}
-                  
-                  {/* Buton Minimizare/Maximizare */}
-                  <button
-                    onClick={() => setIsImagesExpanded(!isImagesExpanded)}
-                    className="flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                    title={isImagesExpanded ? 'Minimizează' : 'Maximizează'}
-                  >
-                    {isImagesExpanded ? (
-                      <ChevronUp className="h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            {/* Zona de conținut - Colapsabilă */}
-            {isImagesExpanded && (
-              <div className="p-4 animate-in slide-in-from-top-2 duration-200">
-              {/* Upload Zone - Drag & Drop Style - doar dacă canAddTrayImages */}
-              {canAddTrayImages && (
-              <label
-                htmlFor="tray-image-upload"
-                className={`relative flex flex-col items-center justify-center w-full py-6 px-4 mb-4 rounded-xl border-2 border-dashed transition-all duration-200 cursor-pointer group
-                  ${uploadingImage 
-                    ? 'border-primary/40 bg-primary/5' 
-                    : 'border-border/60 hover:border-primary/50 hover:bg-primary/5 bg-muted/20'
-                  }`}
-              >
-                <input
-                  type="file"
-                  id="tray-image-upload"
-                  accept="image/*"
-                  onChange={handleTrayImageUpload}
-                  className="hidden"
-                  disabled={uploadingImage}
-                  multiple
-                />
-                
-                {uploadingImage ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="p-3 rounded-full bg-primary/10 animate-pulse">
-                      <Loader2 className="h-6 w-6 text-primary animate-spin" />
-                    </div>
-                    <span className="text-sm font-medium text-primary">Se încarcă imaginea...</span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="p-3 rounded-full bg-muted/50 group-hover:bg-primary/10 transition-colors mb-2">
-                      <ImagePlus className="h-6 w-6 text-muted-foreground group-hover:text-primary transition-colors" />
-                    </div>
-                    <p className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-                      Click pentru a adăuga imagini
-                    </p>
-                    <p className="text-xs text-muted-foreground/70 mt-1">
-                      sau trage și plasează aici
-                    </p>
-                  </>
-                )}
-              </label>
-              )}
-              
-              {/* Grid cu imaginile - masonry-like layout */}
-              {trayImages.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {trayImages.map((image, idx) => (
-                    <div 
-                      key={image.id} 
-                      className="group relative aspect-square rounded-xl overflow-hidden bg-muted/30 ring-1 ring-border/30 hover:ring-primary/40 transition-all duration-200 hover:shadow-lg"
-                      style={{ animationDelay: `${idx * 50}ms` }}
-                    >
-                      <img
-                        src={image.url}
-                        alt={image.filename}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
-                      
-                      {/* Overlay gradient */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                      
-                      {/* Buton ștergere - doar dacă canAddTrayImages (nu pentru Receptie) */}
-                      {canAddTrayImages && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleTrayImageDelete(image.id, image.file_path)
-                        }}
-                        className="absolute top-2 right-2 p-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white/80 hover:text-white hover:bg-red-500 opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110"
-                        title="Șterge imaginea"
-                      >
-                        <XIcon className="h-3.5 w-3.5" />
-                      </button>
-                      )}
-                      
-                      {/* Nume fișier */}
-                      <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        <p className="text-[11px] font-medium text-white truncate drop-shadow-md">
-                          {image.filename}
-                        </p>
-                      </div>
-                      
-                      {/* Badge număr */}
-                      <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/30 backdrop-blur-sm text-[10px] font-medium text-white/90">
-                        #{idx + 1}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-6 text-center">
-                  <div className="p-4 rounded-full bg-muted/30 mb-3">
-                    <ImageIcon className="h-8 w-8 text-muted-foreground/40" />
-                  </div>
-                  <p className="text-sm text-muted-foreground">Nu există imagini încă</p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">
-                    Adaugă imagini pentru a documenta tăvița
-                  </p>
-                </div>
-              )}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Secțiune Imagini Tăviță */}
+        <TrayImagesSection
+          trayImages={trayImages}
+          uploadingImage={uploadingImage}
+          isImagesExpanded={isImagesExpanded}
+          canAddTrayImages={canAddTrayImages}
+          canViewTrayImages={canViewTrayImages}
+          selectedQuoteId={selectedQuoteId}
+          onToggleExpanded={() => setIsImagesExpanded(!isImagesExpanded)}
+          onImageUpload={handleTrayImageUpload}
+          onDownloadAll={handleDownloadAllImages}
+          onImageDelete={handleTrayImageDelete}
+        />
         
         {/* Opțiuni Urgent & Abonament - Compact Bar */}
         <div className="mx-1 sm:mx-2 lg:mx-3 mb-2 sm:mb-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-muted/30 border border-border/40">
@@ -7934,459 +7793,103 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       )}
 
       {/* Items Table */}
-      <div className="p-0 mx-1 sm:mx-2 overflow-x-auto border rounded-lg bg-card">
-        <Table className="text-xs sm:text-sm min-w-[800px]">
-          <TableHeader>
-            <TableRow className="bg-muted/30">
-              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold">Instrument</TableHead>
-              <TableHead className="text-[10px] sm:text-xs font-semibold min-w-[120px]">Serviciu</TableHead>
-              <TableHead className="text-[10px] sm:text-xs font-semibold min-w-[100px]">Piesă</TableHead>
-              <TableHead className="w-32 sm:w-40 text-[10px] sm:text-xs font-semibold">Brand / Serial</TableHead>
-              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Cant.</TableHead>
-              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold text-center">Preț</TableHead>
-              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Disc%</TableHead>
-              <TableHead className="w-12 sm:w-16 text-[10px] sm:text-xs font-semibold text-center">Urgent</TableHead>
-              <TableHead className="w-24 sm:w-28 text-[10px] sm:text-xs font-semibold hidden md:table-cell">Departament</TableHead>
-              <TableHead className="w-24 sm:w-28 text-[10px] sm:text-xs font-semibold hidden lg:table-cell">Tehnician</TableHead>
-              <TableHead className="w-20 sm:w-24 text-[10px] sm:text-xs font-semibold text-right">Total</TableHead>
-              {isReceptiePipeline && <TableHead className="w-8 sm:w-10"></TableHead>}
-              <TableHead className="w-8 sm:w-10"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {items.filter(it => it.item_type !== null).map(it => {
-              const disc = Math.min(100, Math.max(0, it.discount_pct));
-              const base = it.qty * it.price;
-              const afterDisc = base * (1 - disc / 100);
-              const lineTotal = it.urgent ? afterDisc * (1 + URGENT_MARKUP_PCT / 100) : afterDisc;
-
-              // Găsește instrumentul pentru serviciu sau piesă și afișează numele în loc de ID
-              let itemInstrument = '—'
-              if (it.item_type === 'service' && it.service_id) {
-                const serviceDef = services.find(s => s.id === it.service_id)
-                if (serviceDef?.instrument_id) {
-                  const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
-                  itemInstrument = instrument?.name || serviceDef.instrument_id || '—'
-                }
-              } else if (it.item_type === 'part') {
-                // Pentru piese, folosește instrumentul de la primul serviciu din tăviță
-                const firstService = items.find(i => i.item_type === 'service' && i.service_id)
-                if (firstService?.service_id) {
-                  const serviceDef = services.find(s => s.id === firstService.service_id)
-                  if (serviceDef?.instrument_id) {
-                    const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
-                    itemInstrument = instrument?.name || serviceDef.instrument_id || '—'
-                  }
-                }
-              } else if (it.item_type === null) {
-                // Pentru items cu doar instrument (item_type: null), identifică instrumentul după name_snapshot
-                const instrument = instruments.find(i => i.name === it.name_snapshot)
-                itemInstrument = instrument?.name || it.name_snapshot || '—'
-              }
-
-              // Determină ce să afișeze în coloanele Serviciu și Piesă
-              // Pentru items cu doar instrument (item_type: null), nu afișăm nimic în coloana Serviciu
-              const serviceName = it.item_type === 'service' 
-                ? it.name_snapshot 
-                : it.item_type === 'part' 
-                  ? 'Schimb piesă' 
-                  : '' // Pentru items cu doar instrument, lăsăm gol
-              const partName = it.item_type === 'part' ? it.name_snapshot : null
-
-              // Funcție pentru popularea formularului când se apasă pe rând
-              const handleRowClick = () => {
-                // Dacă este un serviciu, populează formularul de serviciu
-                if (it.item_type === 'service' && it.service_id) {
-                  const serviceDef = services.find(s => s.id === it.service_id)
-                  if (serviceDef) {
-                    setSvc({
-                      instrumentId: serviceDef.instrument_id || '',
-                      id: it.service_id,
-                      qty: String(it.qty || 1),
-                      discount: String(it.discount_pct || 0),
-                    })
-                    setServiceSearchQuery(serviceDef.name)
-                    
-                    // Populează și formularul de instrument dacă există instrument
-                    if (serviceDef.instrument_id) {
-                      const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
-                      if (instrument) {
-                        setInstrumentForm(prev => ({
-                          ...prev,
-                          instrument: serviceDef.instrument_id || '',
-                          qty: String(it.qty || 1),
-                        }))
-                        
-                        // Populează brand și serial number dacă există
-                        const brandGroups = (it as any).brand_groups || []
-                        if (brandGroups.length > 0) {
-                          const brandSerialGroups = brandGroups.map((bg: any) => ({
-                            brand: bg.brand || '',
-                            serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 
-                              ? bg.serialNumbers 
-                              : [''],
-                            garantie: bg.garantie || false
-                          }))
-                          setInstrumentForm(prev => ({
-                            ...prev,
-                            brandSerialGroups,
-                            garantie: brandGroups[0]?.garantie || false
-                          }))
-                        } else if (it.brand || it.serial_number) {
-                          // Fallback pentru structura veche
-                          setInstrumentForm(prev => ({
-                            ...prev,
-                            brandSerialGroups: [{
-                              brand: it.brand || '',
-                              serialNumbers: it.serial_number ? [it.serial_number] : [''],
-                              garantie: it.garantie || false
-                            }],
-                            garantie: it.garantie || false
-                          }))
-                        }
-                      }
-                    }
-                  }
-                } else if (it.item_type === 'part') {
-                  // Pentru piese, populează formularul de piese
-                  setPart({
-                    id: it.part_id || '',
-                    serialNumberId: it.serial_number || '',
-                    qty: String(it.qty || 1),
-                  })
-                  const partDef = parts.find(p => p.id === it.part_id)
-                  if (partDef) {
-                    setPartSearchQuery(partDef.name)
-                  }
-                }
-              }
-
-              return (
-                <TableRow 
-                  key={it.id} 
-                  className="hover:bg-muted/30 cursor-pointer"
-                  onClick={handleRowClick}
-                >
-                  <TableCell className="text-[10px] sm:text-xs text-muted-foreground py-1.5 sm:py-2">
-                    {itemInstrument}
-                  </TableCell>
-                  <TableCell className="font-medium text-xs sm:text-sm py-1.5 sm:py-2">
-                    {serviceName}
-                  </TableCell>
-                  <TableCell className="text-xs sm:text-sm py-1.5 sm:py-2">
-                    {it.item_type === 'part' ? (
-                      <Input
-                        className="h-6 sm:h-7 text-xs sm:text-sm"
-                        value={it.name_snapshot}
-                        onChange={e => onUpdateItem(it.id, { name_snapshot: e.target.value })}
-                      />
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-
-                  {/* Brand / Serial - afișează toate brand-urile cu serial numbers */}
-                  <TableCell className="py-1.5 sm:py-2">
-                    {(() => {
-                      const brandGroups = (it as any).brand_groups || []
-                      if (brandGroups.length > 0) {
-                        return (
-                          <div className="space-y-1">
-                            {brandGroups.map((bg: any, idx: number) => (
-                              <div key={idx} className="text-[10px] sm:text-xs">
-                                <span className="font-medium text-blue-600">{bg.brand || '—'}</span>
-                                {bg.serialNumbers && bg.serialNumbers.length > 0 && bg.serialNumbers.some((sn: any) => {
-                                  const serial = typeof sn === 'string' ? sn : sn.serial || ''
-                                  return serial && serial.trim()
-                                }) && (
-                                  <span className="text-muted-foreground ml-1">
-                                    ({bg.serialNumbers
-                                      .map((sn: any) => {
-                                        const serial = typeof sn === 'string' ? sn : sn.serial || ''
-                                        return serial.trim()
-                                      })
-                                      .filter((s: string) => s)
-                                      .join(', ')})
-                                  </span>
-                                )}
-                                {bg.garantie && <span className="ml-1 text-green-600 text-[9px] sm:text-[10px]">✓G</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      } else if (it.brand || it.serial_number) {
-                        // Fallback pentru structura veche
-                        return (
-                          <div className="text-[10px] sm:text-xs">
-                            <span className="font-medium text-blue-600">{it.brand || '—'}</span>
-                            {it.serial_number && (
-                              <span className="text-muted-foreground ml-1">({it.serial_number})</span>
-                            )}
-                            {it.garantie && <span className="ml-1 text-green-600 text-[9px] sm:text-[10px]">✓G</span>}
-                          </div>
-                        )
-                      }
-                      return <span className="text-muted-foreground text-[10px] sm:text-xs">—</span>
-                    })()}
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2">
-                    <Input
-                      className="h-6 sm:h-7 text-xs sm:text-sm text-center w-12 sm:w-14"
-                      inputMode="numeric"
-                      value={String(it.qty)}
-                      onChange={e => {
-                        const v = Math.max(1, Number(e.target.value || 1));
-                        onUpdateItem(it.id, { qty: v });
-                      }}
-                      title="Introduceți cantitatea"
-                    />
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2 text-center">
-                    {it.item_type === 'service' ? (
-                      <span className="text-xs sm:text-sm">{it.price.toFixed(2)}</span>
-                    ) : (
-                      <Input
-                        className="h-6 sm:h-7 text-xs sm:text-sm text-center w-16 sm:w-20"
-                        inputMode="decimal"
-                        value={String(it.price)}
-                        onChange={e => {
-                          const v = Math.max(0, Number(e.target.value || 0));
-                          onUpdateItem(it.id, { price: v });
-                        }}
-                      />
-                    )}
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2">
-                    {canEditUrgentAndSubscription ? (
-                      <Input
-                        className="h-6 sm:h-7 text-xs sm:text-sm text-center w-10 sm:w-12"
-                        inputMode="decimal"
-                        value={String(it.discount_pct)}
-                        onChange={e => {
-                          const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
-                          onUpdateItem(it.id, { discount_pct: v });
-                        }}
-                      />
-                    ) : (
-                      <span className="text-[10px] sm:text-xs text-muted-foreground">{it.discount_pct}%</span>
-                    )}
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2 text-center">
-                    {canEditUrgentAndSubscription ? (
-                      <Checkbox
-                        checked={!!it.urgent}
-                        onCheckedChange={(c: any) => onUpdateItem(it.id, { urgent: !!c })}
-                      />
-                    ) : (
-                      <span className={`text-[10px] sm:text-xs ${it.urgent ? 'text-red-600 font-medium' : 'text-muted-foreground'}`}>
-                        {it.urgent ? 'Da' : '—'}
-                      </span>
-                    )}
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2 hidden md:table-cell">
-                    <span className="text-[10px] sm:text-xs text-muted-foreground">
-                      {it.pipeline_id 
-                        ? pipelinesWithIds.find(p => p.id === it.pipeline_id)?.name || '—'
-                        : '—'
-                      }
-                    </span>
-                  </TableCell>
-
-                  <TableCell className="py-1.5 sm:py-2 hidden lg:table-cell">
-                    <span className="text-[10px] sm:text-xs text-muted-foreground">
-                      {it.technician_id 
-                        ? (technicians.find(t => t.id === it.technician_id)?.name || it.technician_id)
-                        : '—'
-                      }
-                    </span>
-                  </TableCell>
-
-                  <TableCell className="text-right font-medium text-xs sm:text-sm py-1.5 sm:py-2">{lineTotal.toFixed(2)}</TableCell>
-
-                  {/* Buton pentru mutarea instrumentului - disponibil doar pentru Receptie */}
-                  {isReceptiePipeline && (
-                    <TableCell className="py-1.5 sm:py-2">
-                      {/* Buton pentru mutarea instrumentului - afișat doar pentru primul item al fiecărui instrument */}
-                      {(() => {
-                        // Găsește instrumentul pentru acest item
-                        let currentInstrumentId: string | null = null
-                        if (it.item_type === 'service' && it.service_id) {
-                          const serviceDef = services.find(s => s.id === it.service_id)
-                          currentInstrumentId = serviceDef?.instrument_id || null
-                        } else if (it.instrument_id) {
-                          currentInstrumentId = it.instrument_id
-                        }
-                        
-                        // Verifică dacă acesta este primul item al acestui instrument în listă
-                        if (currentInstrumentId) {
-                          const instrumentItems = items.filter(item => {
-                            if (item.item_type === 'service' && item.service_id) {
-                              const svc = services.find(s => s.id === item.service_id)
-                              return svc?.instrument_id === currentInstrumentId
-                            }
-                            return item.instrument_id === currentInstrumentId
-                          })
-                          const isFirstItem = instrumentItems.length > 0 && instrumentItems[0].id === it.id
-                          
-                          if (isFirstItem && instrumentItems.length > 0) {
-                            const instrument = instruments.find(i => i.id === currentInstrumentId)
-                            const instrumentGroup = {
-                              instrument: { id: currentInstrumentId, name: instrument?.name || 'Instrument necunoscut' },
-                              items: instrumentItems
-                            }
-                            
-                            return (
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-6 w-6 sm:h-7 sm:w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50" 
-                                onClick={(e) => {
-                                  e.stopPropagation() // Previne propagarea evenimentului către TableRow
-                                  console.log('🔵 [Move Button] Clicked, setting instrument group:', instrumentGroup)
-                                  setInstrumentToMove(instrumentGroup)
-                                  setShowMoveInstrumentDialog(true)
-                                  console.log('🔵 [Move Button] Dialog should be open now')
-                                }}
-                                title={`Mută instrumentul "${instrumentGroup.instrument.name}" și serviciile lui`}
-                              >
-                                <Move className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                              </Button>
-                            )
-                          }
-                        }
-                        return null
-                      })()}
-                    </TableCell>
-                  )}
-
-                  <TableCell className="py-1.5 sm:py-2">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-6 w-6 sm:h-7 sm:w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
-                      onClick={(e) => {
-                        e.stopPropagation() // Previne propagarea evenimentului către TableRow
-                        onDelete(it.id)
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-
-            {items.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={isReceptiePipeline ? 13 : 12} className="text-muted-foreground text-center py-4 sm:py-6 text-xs sm:text-sm">
-                  Nu există poziții încă.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Totals */}
-      <div className="flex justify-end px-1 sm:px-2">
-        <div className="w-full md:w-[280px] lg:w-[320px] space-y-0.5 sm:space-y-1 text-xs sm:text-sm bg-muted/20 rounded-lg p-2 sm:p-3">
-        <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Subtotal</span>
-          <span>{subtotal.toFixed(2)} RON</span>
-        </div>
-        <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Discount</span>
-            <span className="text-red-500">-{totalDiscount.toFixed(2)} RON</span>
-        </div>
-        <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Urgent (+{URGENT_MARKUP_PCT}%)</span>
-            <span className="text-amber-600">+{urgentAmount.toFixed(2)} RON</span>
-        </div>
-          {subscriptionType && (
-            <div className="flex flex-col gap-1">
-              {(subscriptionType === 'services' || subscriptionType === 'both') && (
-          <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Abonament servicii (-10%)</span>
-                  <span className="text-green-600">
-                    -{items
-                      .filter(it => it.item_type === 'service')
-                      .reduce((acc, it) => {
-                        const base = it.qty * it.price
-                        const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
-                        const afterDisc = base - disc
-                        const urgent = it.urgent ? afterDisc * (URGENT_MARKUP_PCT / 100) : 0
-                        return acc + (afterDisc + urgent) * 0.10
-                      }, 0).toFixed(2)} RON
-                  </span>
-          </div>
-        )}
-              {(subscriptionType === 'parts' || subscriptionType === 'both') && (
-          <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Abonament piese (-5%)</span>
-                  <span className="text-green-600">
-                    -{items
-                      .filter(it => it.item_type === 'part')
-                      .reduce((acc, it) => {
-                        const base = it.qty * it.price
-                        const disc = base * (Math.min(100, Math.max(0, it.discount_pct)) / 100)
-                        return acc + (base - disc) * 0.05
-                      }, 0).toFixed(2)} RON
-                  </span>
-                </div>
-              )}
-          </div>
-        )}
-        <div className="h-px bg-border my-2" />
-          <div className="flex items-center justify-between font-semibold text-base">
-          <span>Total</span>
-          <span>{total.toFixed(2)} RON</span>
-      </div>
-      {/* Greutate tăviță */}
-      {(() => {
-        // Calculează greutatea totală a instrumentelor din tăviță (inclusiv cantitatea)
-        let totalWeight = 0
-        
-        // Parcurge toate items-urile și calculează greutatea pentru fiecare
-        items.forEach(item => {
-          let instrumentId: string | null = null
-          let qty = item.qty || 1
-          
+      <ItemsTable
+        items={items}
+        services={services}
+        instruments={instruments}
+        technicians={technicians}
+        pipelinesWithIds={pipelinesWithIds}
+        isReceptiePipeline={isReceptiePipeline}
+        canEditUrgentAndSubscription={canEditUrgentAndSubscription}
+        onUpdateItem={onUpdateItem}
+        onDelete={onDelete}
+        onRowClick={(item) => {
+          // Dacă este un serviciu, populează formularul de serviciu
           if (item.item_type === 'service' && item.service_id) {
             const serviceDef = services.find(s => s.id === item.service_id)
-            if (serviceDef?.instrument_id) {
-              instrumentId = serviceDef.instrument_id
+            if (serviceDef) {
+              setSvc({
+                instrumentId: serviceDef.instrument_id || '',
+                id: item.service_id,
+                qty: String(item.qty || 1),
+                discount: String(item.discount_pct || 0),
+                urgent: false,
+                technicianId: '',
+                pipelineId: '',
+                serialNumberId: '',
+                selectedBrands: [],
+              })
+              setServiceSearchQuery(serviceDef.name)
+              
+              // Populează și formularul de instrument dacă există instrument
+              if (serviceDef.instrument_id) {
+                const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
+                if (instrument) {
+                  setInstrumentForm(prev => ({
+                    ...prev,
+                    instrument: serviceDef.instrument_id || '',
+                    qty: String(item.qty || 1),
+                  }))
+                  
+                  // Populează brand și serial number dacă există
+                  const brandGroups = (item as any).brand_groups || []
+                  if (brandGroups.length > 0) {
+                    const brandSerialGroups = brandGroups.map((bg: any) => ({
+                      brand: bg.brand || '',
+                      serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 
+                        ? bg.serialNumbers 
+                        : [{ serial: '', garantie: false }],
+                      garantie: bg.garantie || false
+                    }))
+                    setInstrumentForm(prev => ({
+                      ...prev,
+                      brandSerialGroups,
+                      garantie: brandGroups[0]?.garantie || false
+                    }))
+                  } else if (item.brand || item.serial_number) {
+                    // Fallback pentru structura veche
+                    setInstrumentForm(prev => ({
+                      ...prev,
+                      brandSerialGroups: [{
+                        brand: item.brand || '',
+                        serialNumbers: item.serial_number ? [{ serial: item.serial_number, garantie: false }] : [{ serial: '', garantie: false }],
+                        garantie: item.garantie || false
+                      }],
+                      garantie: item.garantie || false
+                    }))
+                  }
+                }
+              }
             }
-          } else if (item.item_type === null && item.instrument_id) {
-            // Pentru items cu doar instrument
-            instrumentId = item.instrument_id
-          }
-          
-          // Calculează greutatea pentru acest item (greutate * cantitate)
-          if (instrumentId) {
-            const instrument = instruments.find(i => i.id === instrumentId)
-            if (instrument && instrument.weight) {
-              totalWeight += instrument.weight * qty
+          } else if (item.item_type === 'part') {
+            // Pentru piese, populează formularul de piese
+            setPart({
+              id: item.part_id || '',
+              serialNumberId: item.serial_number || '',
+              qty: String(item.qty || 1),
+              discount: String(item.discount_pct || 0),
+              urgent: false,
+              overridePrice: '',
+            })
+            const partDef = parts.find(p => p.id === item.part_id)
+            if (partDef) {
+              setPartSearchQuery(partDef.name)
             }
           }
-        })
-        
-        if (totalWeight > 0) {
-          return (
-            <div className="flex items-center justify-between text-sm mt-2 pt-2 border-t">
-              <span className="text-muted-foreground">Greutate tăviță</span>
-              <span className="font-medium">{totalWeight.toFixed(2)} kg</span>
-            </div>
-          )
-        }
-        return null
-      })()}
-        </div>
-      </div>
+        }}
+        onMoveInstrument={(instrumentGroup) => {
+          setInstrumentToMove(instrumentGroup)
+          setShowMoveInstrumentDialog(true)
+        }}
+      />
+
+      {/* Totals */}
+      <TotalsSection
+        items={items}
+        subscriptionType={subscriptionType}
+        services={services}
+        instruments={instruments}
+      />
 
       {/* PrintView - ascuns vizual, dar in DOM pentru print */}
       <div className="pb-2">
@@ -8406,51 +7909,12 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
 
       {/* Secțiune Informații Tăviță – mutată în Fișa de serviciu pentru pipeline-urile comerciale */}
       {isCommercialPipeline && quotes.length > 0 && (
-        <div className="px-2 sm:px-3 lg:px-4 pt-2 sm:pt-3 lg:pt-4 pb-2 sm:pb-3 lg:pb-4 border-b bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/70 dark:from-amber-900/40 dark:via-amber-950/40 dark:to-orange-950/30">
-          <div className="flex flex-col gap-2 sm:gap-3 lg:gap-4 rounded-lg sm:rounded-xl border border-amber-300/80 dark:border-amber-700/80 bg-white/70 dark:bg-slate-950/40 px-2 sm:px-3 lg:px-4 py-2 sm:py-3 shadow-sm">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                <div className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-700 dark:text-amber-200 flex-shrink-0">
-                  <Package className="h-3 w-3 sm:h-3.5 sm:w-3.5 lg:h-4 lg:w-4" />
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <span className="font-semibold text-xs sm:text-sm text-amber-900 dark:text-amber-100 tracking-wide">
-                    Informații Fișă Client
-                  </span>
-                  <span className="text-[10px] sm:text-xs text-amber-800/80 dark:text-amber-200/80">
-                    Aici notezi exact ce a spus clientul pentru această fișă. Detaliile sunt vizibile pentru toate tăvițele din fișă.
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Textarea cu detalii pentru fișa de serviciu */}
-            <div className="space-y-1 sm:space-y-1.5">
-              <Label className="text-[10px] sm:text-[11px] font-semibold text-amber-900/90 dark:text-amber-100 uppercase tracking-wide">
-                Detalii comandă comunicate de client (vizibile pentru tehnicieni)
-              </Label>
-              {loadingTrayDetails ? (
-                <div className="flex items-center justify-center py-4 sm:py-6">
-                  <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <>
-                  <Textarea
-                    value={trayDetails}
-                    onChange={(e) => setTrayDetails(e.target.value)}
-                    placeholder="Exemple: „Clienta dorește vârfurile foarte ascuțite, fără polish”, „Nu scurtați lama”, „Preferă retur prin curier”."
-                    className="min-h-[80px] sm:min-h-[100px] lg:min-h-[110px] text-xs sm:text-sm resize-none border-amber-200/80 focus-visible:ring-amber-500/40 bg-white/90 dark:bg-slate-950/60"
-                  />
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-[11px] text-amber-900/80 dark:text-amber-100/80">
-                      Aceste note se salvează automat când închizi panoul și sunt vizibile pentru toate tăvițele din fișă în departamente.
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <TrayDetailsSection
+          trayDetails={trayDetails}
+          loadingTrayDetails={loadingTrayDetails}
+          isCommercialPipeline={isCommercialPipeline}
+          onDetailsChange={setTrayDetails}
+        />
       )}
 
       {/* Dialog pentru mutarea instrumentului - disponibil pentru toate pipeline-urile */}
