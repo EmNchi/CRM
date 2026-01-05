@@ -9,7 +9,9 @@ import {
   Plus, 
   ArrowUpRight,
   ArrowDownRight,
-  DollarSign
+  DollarSign,
+  Wrench,
+  XCircle
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -81,13 +83,15 @@ interface DashboardStatsProps {
     newLeadsToday: number
     conversionRate: number
     averageLeadValue: number
+    totalInLucru: number
+    noDealLeads: number
   } | null
   loading: boolean
 }
 
 export function DashboardStats({ metrics, loading }: DashboardStatsProps) {
   return (
-    <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-6">
       <StatCard
         title="Total Lead-uri"
         value={metrics?.totalLeads.toLocaleString() || '0'}
@@ -98,10 +102,10 @@ export function DashboardStats({ metrics, loading }: DashboardStatsProps) {
         loading={loading}
       />
       <StatCard
-        title="Revenue Total"
+        title="Revenue Today"
         value={`${(metrics?.totalRevenue || 0).toFixed(2)} RON`}
         change={8}
-        changeLabel="față de luna trecută"
+        changeLabel="față de ieri"
         icon={DollarSign}
         iconColor="text-emerald-600"
         loading={loading}
@@ -122,6 +126,20 @@ export function DashboardStats({ metrics, loading }: DashboardStatsProps) {
         changeLabel="față de ieri"
         icon={Plus}
         iconColor="text-purple-600"
+        loading={loading}
+      />
+      <StatCard
+        title="Total În Lucru"
+        value={`${(metrics?.totalInLucru || 0).toFixed(2)} RON`}
+        icon={Wrench}
+        iconColor="text-orange-600"
+        loading={loading}
+      />
+      <StatCard
+        title="No Deal"
+        value={metrics?.noDealLeads || 0}
+        icon={XCircle}
+        iconColor="text-red-500"
         loading={loading}
       />
     </div>

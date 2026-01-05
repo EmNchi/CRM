@@ -43,6 +43,10 @@ export interface Lead {
     retailer_item_id: string | null
     vehicle: string | null
     form_created_time: string | null
+    notes: string | null // Detalii/notițe despre client
+    no_deal: boolean | null // Checkbox pentru "No Deal" în Vânzări
+    call_back: boolean | null // Checkbox pentru "Call Back" în Vânzări
+    nu_raspunde: boolean | null // Checkbox pentru "Nu Raspunde" în Vânzări
     created_at: string
     updated_at: string
 }

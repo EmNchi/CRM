@@ -21,7 +21,7 @@ import {
   type ServiceFile
 } from "@/lib/supabase/serviceFileOperations"
 import { addServiceFileToPipeline, addTrayToPipeline, moveItemToStage, moveServiceFileToPipeline, getPipelineItemForItem } from "@/lib/supabase/pipelineOperations"
-import { listServiceFilesForLead } from "@/lib/supabase/serviceFileOperations"
+import { listServiceFilesForLead, deleteServiceFile } from "@/lib/supabase/serviceFileOperations"
 import { useRole, useAuth } from "@/lib/contexts/AuthContext"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from "@/lib/supabase/imageOperations"
@@ -188,6 +188,9 @@ const listQuoteItems = async (
     }
     
     // Determină item_type
+    // IMPORTANT: Un item este "part" DOAR dacă are explicit part_id setat
+    // Nu marcam automat ca "part" item-urile care nu au instrument_id, deoarece
+    // acestea pot fi item-uri incomplete sau vechi din baza de date
     let item_type: 'service' | 'part' | null = notesData.item_type || null
     if (!item_type) {
       if (item.service_id) {
@@ -195,11 +198,9 @@ const listQuoteItems = async (
       } else if (item.part_id) {
         // Dacă are part_id, este clar un part
         item_type = 'part'
-      } else if (!item.instrument_id) {
-        // Dacă nu are instrument_id, este probabil un part
-        item_type = 'part'
       }
-      // Dacă are instrument_id dar nu are service_id sau part_id, rămâne null (doar instrument)
+      // Dacă nu are nici service_id nici part_id, rămâne null
+      // (poate fi doar instrument sau item incomplet)
     }
     
     // Obține prețul
@@ -622,9 +623,13 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   
-  // State pentru checkbox cash/card
+  // State pentru checkbox cash/card (pentru tăvițe - legacy)
   const [isCash, setIsCash] = useState(false)
   const [isCard, setIsCard] = useState(false)
+  
+  // State pentru payment cash/card la nivel de service file (pentru facturare)
+  const [paymentCash, setPaymentCash] = useState(false)
+  const [paymentCard, setPaymentCard] = useState(false)
   
   // State pentru checkbox-uri livrare (Office direct / Curier Trimis)
   const [officeDirect, setOfficeDirect] = useState(false)
@@ -1227,10 +1232,33 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           return
         }
 
-        setTrayDetails(data?.details || '')
+        const detailsValue = data?.details || ''
+        
+        // Încearcă să parseze ca JSON pentru a extrage payment info
+        try {
+          const parsedDetails = JSON.parse(detailsValue)
+          if (typeof parsedDetails === 'object' && parsedDetails !== null) {
+            // Dacă este JSON cu text și payment info
+            setTrayDetails(parsedDetails.text || '')
+            setPaymentCash(parsedDetails.paymentCash || false)
+            setPaymentCard(parsedDetails.paymentCard || false)
+          } else {
+            // Dacă este doar text, păstrează-l
+            setTrayDetails(detailsValue)
+            setPaymentCash(false)
+            setPaymentCard(false)
+          }
+        } catch {
+          // Dacă nu este JSON, este doar text
+          setTrayDetails(detailsValue)
+          setPaymentCash(false)
+          setPaymentCard(false)
+        }
       } catch (err) {
         console.error('Eroare la încărcarea detaliilor fișei:', err)
         setTrayDetails('')
+        setPaymentCash(false)
+        setPaymentCard(false)
       } finally {
         setLoadingTrayDetails(false)
       }
@@ -1331,21 +1359,65 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   const saveRef = useRef<() => Promise<void>>(async () => {})
   
   // Funcții pentru gestionarea checkbox-urilor NoDeal, NuRaspunde, CallBack (pentru vânzători)
+  // Aceste checkbox-uri se salvează în tabelul leads, nu în service_files
   const handleNoDealChange = useCallback(async (checked: boolean) => {
+    // Folosește leadId (prop obligatoriu) în loc de lead?.id (prop opțional)
+    const targetLeadId = lead?.id || leadId
+    
+    if (!targetLeadId) {
+      console.error('❌ Nu există leadId pentru salvarea no_deal')
+      toast.error('Eroare: Nu s-a găsit ID-ul lead-ului')
+      return
+    }
+    
     if (checked) {
       setNoDeal(true)
       setCallBack(false)
       setNuRaspunde(false)
       
+      // Salvează imediat în baza de date în tabelul leads
+      try {
+        console.log('🔍 Începând salvarea no_deal=true pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ no_deal: true })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea no_deal în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "No Deal": ' + (leadError.message || 'Eroare necunoscută'))
+          setNoDeal(false) // Revert la starea anterioară dacă salvare eșuează
+          return
+        } else {
+          console.log('✅ no_deal salvat cu succes în leads:', data)
+          // Verifică dacă s-a salvat efectiv
+          if (data && data.length > 0 && data[0].no_deal === true) {
+            console.log('✅ Confirmare: no_deal este TRUE în DB')
+            toast.success('"No Deal" salvat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: no_deal nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving no_deal:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "No Deal": ' + (err.message || 'Eroare necunoscută'))
+        setNoDeal(false) // Revert la starea anterioară dacă salvare eșuează
+        return
+      }
+      
+      // Mută lead-ul în stage-ul "No Deal" dacă este în pipeline-ul Vanzari
       if (isVanzariPipeline && isVanzator && vanzariPipelineId) {
         const noDealStage = vanzariStages.find(stage => 
           stage.name.toUpperCase() === 'NO DEAL' || 
           stage.name.toUpperCase() === 'NO-DEAL' ||
           stage.name.toUpperCase().includes('NO DEAL')
         )
-        if (noDealStage && lead?.id) {
+        if (noDealStage && targetLeadId) {
           try {
-            const { error } = await moveItemToStage('lead', lead.id, vanzariPipelineId, noDealStage.id)
+            const { error } = await moveItemToStage('lead', targetLeadId, vanzariPipelineId, noDealStage.id)
             if (error) {
               console.error('Error moving lead to No Deal stage:', error)
               toast.error('Eroare la mutarea cardului')
@@ -1360,24 +1432,97 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       }
     } else {
       setNoDeal(false)
+      
+      // Salvează imediat în baza de date când este debifat
+      try {
+        console.log('🔍 Începând salvarea no_deal=false pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ no_deal: false })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea no_deal în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "No Deal": ' + (leadError.message || 'Eroare necunoscută'))
+          setNoDeal(true) // Revert la starea anterioară dacă salvare eșuează
+        } else {
+          console.log('✅ no_deal salvat cu succes în leads:', data)
+          // Verifică dacă s-a salvat efectiv
+          if (data && data.length > 0 && data[0].no_deal === false) {
+            console.log('✅ Confirmare: no_deal este FALSE în DB')
+            toast.success('"No Deal" eliminat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: no_deal nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving no_deal:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "No Deal": ' + (err.message || 'Eroare necunoscută'))
+        setNoDeal(true) // Revert la starea anterioară dacă salvare eșuează
+      }
     }
-  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id])
+  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id, leadId])
   
   const handleNuRaspundeChange = useCallback(async (checked: boolean) => {
+    // Folosește leadId (prop obligatoriu) în loc de lead?.id (prop opțional)
+    const targetLeadId = lead?.id || leadId
+    
+    if (!targetLeadId) {
+      console.error('❌ Nu există leadId pentru salvarea nu_raspunde')
+      toast.error('Eroare: Nu s-a găsit ID-ul lead-ului')
+      return
+    }
+    
     if (checked) {
       setNoDeal(false)
       setCallBack(false)
       setNuRaspunde(true)
       
+      // Salvează imediat în baza de date în tabelul leads
+      try {
+        console.log('🔍 Începând salvarea nu_raspunde=true pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ nu_raspunde: true })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea nu_raspunde în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "Nu Raspunde": ' + (leadError.message || 'Eroare necunoscută'))
+          setNuRaspunde(false)
+          return
+        } else {
+          console.log('✅ nu_raspunde salvat cu succes în leads:', data)
+          if (data && data.length > 0 && data[0].nu_raspunde === true) {
+            console.log('✅ Confirmare: nu_raspunde este TRUE în DB')
+            toast.success('"Nu Raspunde" salvat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: nu_raspunde nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving nu_raspunde:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "Nu Raspunde": ' + (err.message || 'Eroare necunoscută'))
+        setNuRaspunde(false)
+        return
+      }
+      
+      // Mută lead-ul în stage-ul "Nu Raspunde" dacă este în pipeline-ul Vanzari
       if (isVanzariPipeline && isVanzator && vanzariPipelineId) {
         const nuRaspundeStage = vanzariStages.find(stage => 
           stage.name.toUpperCase() === 'NU RASPUNDE' || 
           stage.name.toUpperCase() === 'NU RASUNDE' ||
           stage.name.toUpperCase().includes('RASPUNDE')
         )
-        if (nuRaspundeStage && lead?.id) {
+        if (nuRaspundeStage && targetLeadId) {
           try {
-            const { error } = await moveItemToStage('lead', lead.id, vanzariPipelineId, nuRaspundeStage.id)
+            const { error } = await moveItemToStage('lead', targetLeadId, vanzariPipelineId, nuRaspundeStage.id)
             if (error) {
               console.error('Error moving lead to Nu Raspunde stage:', error)
               toast.error('Eroare la mutarea cardului')
@@ -1392,15 +1537,87 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       }
     } else {
       setNuRaspunde(false)
+      
+      // Salvează imediat în baza de date când este debifat
+      try {
+        console.log('🔍 Începând salvarea nu_raspunde=false pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ nu_raspunde: false })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea nu_raspunde în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "Nu Raspunde": ' + (leadError.message || 'Eroare necunoscută'))
+          setNuRaspunde(true)
+        } else {
+          console.log('✅ nu_raspunde salvat cu succes în leads:', data)
+          if (data && data.length > 0 && data[0].nu_raspunde === false) {
+            console.log('✅ Confirmare: nu_raspunde este FALSE în DB')
+            toast.success('"Nu Raspunde" eliminat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: nu_raspunde nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving nu_raspunde:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "Nu Raspunde": ' + (err.message || 'Eroare necunoscută'))
+        setNuRaspunde(true)
+      }
     }
-  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id])
+  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id, leadId])
   
   const handleCallBackChange = useCallback(async (checked: boolean) => {
+    // Folosește leadId (prop obligatoriu) în loc de lead?.id (prop opțional)
+    const targetLeadId = lead?.id || leadId
+    
+    if (!targetLeadId) {
+      console.error('❌ Nu există leadId pentru salvarea call_back')
+      toast.error('Eroare: Nu s-a găsit ID-ul lead-ului')
+      return
+    }
+    
     if (checked) {
       setNoDeal(false)
       setNuRaspunde(false)
       setCallBack(true)
       
+      // Salvează imediat în baza de date în tabelul leads
+      try {
+        console.log('🔍 Începând salvarea call_back=true pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ call_back: true })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea call_back în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "Call Back": ' + (leadError.message || 'Eroare necunoscută'))
+          setCallBack(false)
+          return
+        } else {
+          console.log('✅ call_back salvat cu succes în leads:', data)
+          if (data && data.length > 0 && data[0].call_back === true) {
+            console.log('✅ Confirmare: call_back este TRUE în DB')
+            toast.success('"Call Back" salvat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: call_back nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving call_back:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "Call Back": ' + (err.message || 'Eroare necunoscută'))
+        setCallBack(false)
+        return
+      }
+      
+      // Mută lead-ul în stage-ul "Call Back" dacă este în pipeline-ul Vanzari
       if (isVanzariPipeline && isVanzator && vanzariPipelineId) {
         const callBackStage = vanzariStages.find(stage => 
           stage.name.toUpperCase() === 'CALLBACK' || 
@@ -1408,9 +1625,9 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           stage.name.toUpperCase() === 'CALL-BACK' ||
           stage.name.toUpperCase().includes('CALLBACK')
         )
-        if (callBackStage && lead?.id) {
+        if (callBackStage && targetLeadId) {
           try {
-            const { error } = await moveItemToStage('lead', lead.id, vanzariPipelineId, callBackStage.id)
+            const { error } = await moveItemToStage('lead', targetLeadId, vanzariPipelineId, callBackStage.id)
             if (error) {
               console.error('Error moving lead to Call Back stage:', error)
               toast.error('Eroare la mutarea cardului')
@@ -1425,8 +1642,38 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       }
     } else {
       setCallBack(false)
+      
+      // Salvează imediat în baza de date când este debifat
+      try {
+        console.log('🔍 Începând salvarea call_back=false pentru lead:', targetLeadId)
+        const { data, error: leadError } = await supabase
+          .from('leads')
+          .update({ call_back: false })
+          .eq('id', targetLeadId)
+          .select()
+        
+        if (leadError) {
+          console.error('❌ Eroare la salvarea call_back în leads:', leadError)
+          console.error('❌ Detalii eroare:', JSON.stringify(leadError, null, 2))
+          toast.error('Eroare la salvarea "Call Back": ' + (leadError.message || 'Eroare necunoscută'))
+          setCallBack(true)
+        } else {
+          console.log('✅ call_back salvat cu succes în leads:', data)
+          if (data && data.length > 0 && data[0].call_back === false) {
+            console.log('✅ Confirmare: call_back este FALSE în DB')
+            toast.success('"Call Back" eliminat cu succes')
+          } else {
+            console.warn('⚠️ Atenție: call_back nu pare să fie salvat corect:', data)
+          }
+        }
+      } catch (err: any) {
+        console.error('Error saving call_back:', err)
+        console.error('Error details:', JSON.stringify(err, null, 2))
+        toast.error('Eroare la salvarea "Call Back": ' + (err.message || 'Eroare necunoscută'))
+        setCallBack(true)
+      }
     }
-  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id])
+  }, [isVanzariPipeline, isVanzator, vanzariPipelineId, vanzariStages, lead?.id, leadId])
 
   async function saveAllAndLog() {
     setSaving(true)
@@ -1434,15 +1681,22 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       // Salvează detaliile fișei de serviciu dacă există
       if (fisaId && trayDetails !== undefined) {
         try {
+          // Salvează detaliile ca JSON care include textul și payment info
+          const detailsToSave = JSON.stringify({
+            text: trayDetails,
+            paymentCash: paymentCash,
+            paymentCard: paymentCard
+          })
+          
           // Folosește updateServiceFile pentru a păstra toate câmpurile existente
           const { error: detailsError } = await updateServiceFile(fisaId, {
-            details: trayDetails
+            details: detailsToSave
           })
           
           if (detailsError) {
             console.error('Eroare la salvarea detaliilor fișei:', detailsError)
           } else {
-            console.log('✅ Detaliile fișei au fost salvate')
+            console.log('✅ Detaliile fișei au fost salvate (cu payment info)')
           }
         } catch (err: any) {
           console.error('Eroare la salvarea detaliilor fișei:', err)
@@ -1459,10 +1713,12 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       })
       
       if (fisaId) {
+        // Pentru Vanzari, checkbox-urile No Deal, Call Back, Nu Raspunde se salvează în leads, nu în service_files
+        // Doar office_direct și curier_trimis se salvează în service_files
         const { error: serviceFileError, data: updatedServiceFile } = await updateServiceFile(fisaId, {
           office_direct: officeDirect,
           curier_trimis: curierTrimis,
-          no_deal: noDeal,
+          // no_deal nu se mai salvează aici, se salvează în leads prin handleNoDealChange
         })
         
         if (serviceFileError) {
@@ -2290,27 +2546,87 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       // Recalculează totalurile
       await recalcAllSheetsTotal(quotes)
       
-      // Verifică dacă lead-ul are cel puțin o fișă de serviciu și mută-l în "Lead vechi" dacă este în Vanzari
+      // Funcție helper pentru verificarea dacă o fișă are conținut (tăvițe cu items care au instrument_id sau service_id sau part_id)
+      const checkServiceFileHasContent = async (serviceFileId: string): Promise<boolean> => {
+        try {
+          // Obține toate tăvițele pentru fișă
+          const { data: trays } = await listTraysForServiceFile(serviceFileId)
+          if (!trays || trays.length === 0) {
+            return false // Nu are tăvițe = goală
+          }
+          
+          // Verifică fiecare tăviță pentru items cu conținut
+          for (const tray of trays) {
+            const { data: trayItems } = await listTrayItemsForTray(tray.id)
+            if (trayItems && trayItems.length > 0) {
+              // Verifică dacă există cel puțin un item cu instrument_id, service_id sau part_id
+              const hasContent = trayItems.some(item => 
+                item.instrument_id || item.service_id || item.part_id
+              )
+              if (hasContent) {
+                return true // Fișa are conținut
+              }
+            }
+          }
+          
+          return false // Nu are conținut
+        } catch (error) {
+          console.error('Error checking service file content:', error)
+          return false // În caz de eroare, considerăm că nu are conținut
+        }
+      }
+      
+      // Verifică dacă fișa curentă este goală și o șterge dacă este cazul
+      if (fisaId) {
+        const hasContent = await checkServiceFileHasContent(fisaId)
+        if (!hasContent) {
+          console.log('🗑️ Fișa este goală, se șterge automat:', fisaId)
+          const { success, error: deleteError } = await deleteServiceFile(fisaId)
+          if (success) {
+            console.log('✅ Fișa goală a fost ștearsă automat')
+            toast.info('Fișa goală a fost ștearsă automat')
+            // Reîncarcă datele pentru a actualiza UI-ul
+            window.location.reload()
+            return
+          } else {
+            console.error('Eroare la ștergerea fișei goale:', deleteError)
+          }
+        }
+      }
+      
+      // Verifică dacă lead-ul are cel puțin o fișă de serviciu CU CONȚINUT și mută-l în "Lead vechi" dacă este în Vanzari
       if (leadId && isVanzariPipeline && vanzariPipelineId && vanzariStages.length > 0) {
         try {
           const { data: serviceFiles } = await listServiceFilesForLead(leadId)
           if (serviceFiles && serviceFiles.length > 0) {
-            // Caută stage-ul "Lead vechi" în pipeline-ul Vanzari
-            const leadVechiStage = vanzariStages.find(stage => 
-              stage.name.toUpperCase() === 'LEAD VECHI' || 
-              stage.name.toUpperCase() === 'LEAD-VECHI' ||
-              stage.name.toUpperCase().includes('LEAD') && stage.name.toUpperCase().includes('VECHI')
-            )
+            // Verifică dacă există cel puțin o fișă cu conținut
+            let hasAnyFileWithContent = false
+            for (const serviceFile of serviceFiles) {
+              const hasContent = await checkServiceFileHasContent(serviceFile.id)
+              if (hasContent) {
+                hasAnyFileWithContent = true
+                break
+              }
+            }
             
-            if (leadVechiStage && lead?.id) {
-              // Verifică dacă lead-ul nu este deja în stage-ul "Lead vechi"
-              const { data: currentPipelineItem } = await getPipelineItemForItem('lead', lead.id, vanzariPipelineId)
-              if (currentPipelineItem?.stage_id !== leadVechiStage.id) {
-                const { error: moveError } = await moveItemToStage('lead', lead.id, vanzariPipelineId, leadVechiStage.id)
-                if (moveError) {
-                  console.error('Error moving lead to Lead vechi stage:', moveError)
-                } else {
-                  console.log('✅ Lead mutat automat în stage-ul "Lead vechi"')
+            if (hasAnyFileWithContent) {
+              // Caută stage-ul "Lead vechi" în pipeline-ul Vanzari
+              const leadVechiStage = vanzariStages.find(stage => 
+                stage.name.toUpperCase() === 'LEAD VECHI' || 
+                stage.name.toUpperCase() === 'LEAD-VECHI' ||
+                stage.name.toUpperCase().includes('LEAD') && stage.name.toUpperCase().includes('VECHI')
+              )
+              
+              if (leadVechiStage && lead?.id) {
+                // Verifică dacă lead-ul nu este deja în stage-ul "Lead vechi"
+                const { data: currentPipelineItem } = await getPipelineItemForItem('lead', lead.id, vanzariPipelineId)
+                if (currentPipelineItem?.stage_id !== leadVechiStage.id) {
+                  const { error: moveError } = await moveItemToStage('lead', lead.id, vanzariPipelineId, leadVechiStage.id)
+                  if (moveError) {
+                    console.error('Error moving lead to Lead vechi stage:', moveError)
+                  } else {
+                    console.log('✅ Lead mutat automat în stage-ul "Lead vechi" (are fișe cu conținut)')
+                  }
                 }
               }
             }
@@ -2892,36 +3208,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             }
             defaultFisaId = (newServiceFile as any).id
             
-            // Verifică dacă lead-ul are cel puțin o fișă de serviciu și mută-l în "Lead vechi" dacă este în Vanzari
-            if (leadId && isVanzariPipeline && vanzariPipelineId && vanzariStages.length > 0 && lead?.id) {
-              try {
-                const { data: serviceFiles } = await listServiceFilesForLead(leadId)
-                if (serviceFiles && serviceFiles.length > 0) {
-                  // Caută stage-ul "Lead vechi" în pipeline-ul Vanzari
-                  const leadVechiStage = vanzariStages.find(stage => 
-                    stage.name.toUpperCase() === 'LEAD VECHI' || 
-                    stage.name.toUpperCase() === 'LEAD-VECHI' ||
-                    stage.name.toUpperCase().includes('LEAD') && stage.name.toUpperCase().includes('VECHI')
-                  )
-                  
-                  if (leadVechiStage) {
-                    // Verifică dacă lead-ul nu este deja în stage-ul "Lead vechi"
-                    const { data: currentPipelineItem } = await getPipelineItemForItem('lead', lead.id, vanzariPipelineId)
-                    if (currentPipelineItem?.stage_id !== leadVechiStage.id) {
-                      const { error: moveError } = await moveItemToStage('lead', lead.id, vanzariPipelineId, leadVechiStage.id)
-                      if (moveError) {
-                        console.error('Error moving lead to Lead vechi stage:', moveError)
-                      } else {
-                        console.log('✅ Lead mutat automat în stage-ul "Lead vechi"')
-                      }
-                    }
-                  }
-                }
-              } catch (err: any) {
-                console.error('Error checking/moving lead to Lead vechi:', err)
-                // Nu afișăm eroare utilizatorului, doar logăm
-              }
-            }
+            // NOTĂ: Nu mutăm automat în "Lead vechi" la crearea fișei, ci doar după ce se adaugă conținut
+            // Mutarea se face în funcția saveAllAndLog după ce se verifică că fișa are conținut
           } else {
             defaultFisaId = existingServiceFiles[0].id
           }
@@ -2940,36 +3228,8 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
             }
           }
           
-          // Verifică dacă lead-ul are cel puțin o fișă de serviciu și mută-l în "Lead vechi" dacă este în Vanzari
-          if (leadId && isVanzariPipeline && vanzariPipelineId && vanzariStages.length > 0 && lead?.id) {
-            try {
-              const { data: serviceFiles } = await listServiceFilesForLead(leadId)
-              if (serviceFiles && serviceFiles.length > 0) {
-                // Caută stage-ul "Lead vechi" în pipeline-ul Vanzari
-                const leadVechiStage = vanzariStages.find(stage => 
-                  stage.name.toUpperCase() === 'LEAD VECHI' || 
-                  stage.name.toUpperCase() === 'LEAD-VECHI' ||
-                  stage.name.toUpperCase().includes('LEAD') && stage.name.toUpperCase().includes('VECHI')
-                )
-                
-                if (leadVechiStage) {
-                  // Verifică dacă lead-ul nu este deja în stage-ul "Lead vechi"
-                  const { data: currentPipelineItem } = await getPipelineItemForItem('lead', lead.id, vanzariPipelineId)
-                  if (currentPipelineItem?.stage_id !== leadVechiStage.id) {
-                    const { error: moveError } = await moveItemToStage('lead', lead.id, vanzariPipelineId, leadVechiStage.id)
-                    if (moveError) {
-                      console.error('Error moving lead to Lead vechi stage:', moveError)
-                    } else {
-                      console.log('✅ Lead mutat automat în stage-ul "Lead vechi"')
-                    }
-                  }
-                }
-              }
-            } catch (err: any) {
-              console.error('Error checking/moving lead to Lead vechi:', err)
-              // Nu afișăm eroare utilizatorului, doar logăm
-            }
-          }
+          // NOTĂ: Mutarea în "Lead vechi" se face în funcția saveAllAndLog după ce se verifică că fișa are conținut
+          // Nu mutăm automat la încărcare, ci doar după salvare când se verifică conținutul real
         }
         // În modul departament, filtrăm să afișăm doar tăvița curentă (initialQuoteId)
         if (isDepartmentPipeline && initialQuoteId) {
@@ -3013,14 +3273,14 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           setTraysAlreadyInDepartments(false)
         }
         
-        // Încarcă checkbox-urile pentru livrare  din service_file (în paralel)
+        // Încarcă checkbox-urile pentru livrare din service_file (în paralel)
+        // Pentru Vanzari, checkbox-urile No Deal, Call Back, Nu Raspunde se încarcă din leads
         if (fisaId) {
           parallelTasks.push(
             getServiceFile(fisaId).then(({ data: serviceFileData }) => {
               if (serviceFileData) {
                 setOfficeDirect(serviceFileData.office_direct || false)
                 setCurierTrimis(serviceFileData.curier_trimis || false)
-                setNoDeal(serviceFileData.no_deal || false)
                 
                 // Încarcă urgent și subscription_type din service_file
                 setUrgentAllServices(serviceFileData.urgent || false)
@@ -3030,7 +3290,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                   fisaId,
                   office_direct: serviceFileData.office_direct,
                   curier_trimis: serviceFileData.curier_trimis,
-                  no_deal: serviceFileData.no_deal,
                   urgent: serviceFileData.urgent,
                   subscription_type: serviceFileData.subscription_type,
                 })
@@ -3041,7 +3300,60 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           )
         }
         
-        // Încarcă stage-urile pentru pipeline-ul Vânzări (pentru checkbox-uri NoDeal, NuRaspunde, CallBack)
+        // Încarcă checkbox-urile No Deal, Call Back, Nu Raspunde din leads (pentru Vanzari)
+        if (isVanzariPipeline && lead?.id) {
+          parallelTasks.push(
+            supabase
+              .from('leads')
+              .select('no_deal, call_back, nu_raspunde')
+              .eq('id', lead.id)
+              .single()
+              .then(({ data: leadData, error: leadError }) => {
+                if (!leadError && leadData) {
+                  // Verifică multiple formate posibile pentru fiecare checkbox
+                  const noDealValue = leadData.no_deal
+                  const callBackValue = leadData.call_back
+                  const nuRaspundeValue = leadData.nu_raspunde
+                  
+                  setNoDeal(
+                    noDealValue === true || 
+                    noDealValue === 'true' || 
+                    noDealValue === 1 || 
+                    noDealValue === '1' ||
+                    (typeof noDealValue === 'string' && noDealValue.toLowerCase() === 'true')
+                  )
+                  
+                  setCallBack(
+                    callBackValue === true || 
+                    callBackValue === 'true' || 
+                    callBackValue === 1 || 
+                    callBackValue === '1' ||
+                    (typeof callBackValue === 'string' && callBackValue.toLowerCase() === 'true')
+                  )
+                  
+                  setNuRaspunde(
+                    nuRaspundeValue === true || 
+                    nuRaspundeValue === 'true' || 
+                    nuRaspundeValue === 1 || 
+                    nuRaspundeValue === '1' ||
+                    (typeof nuRaspundeValue === 'string' && nuRaspundeValue.toLowerCase() === 'true')
+                  )
+                  
+                  console.log('Încărcare checkbox-uri Vanzari din leads:', {
+                    leadId: lead.id,
+                    no_deal: noDealValue,
+                    call_back: callBackValue,
+                    nu_raspunde: nuRaspundeValue
+                  })
+                }
+              })
+              .catch(err => {
+                console.error('Eroare la încărcarea checkbox-urilor din leads:', err)
+              })
+          )
+        }
+        
+        // Încarcă stage-urile pentru pipeline-ul Vânzări (pentru mutarea cardului)
         if (isVanzariPipeline && isVanzator) {
           parallelTasks.push(
             (async () => {
@@ -3053,24 +3365,6 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                 if (vanzariPipeline) {
                   setVanzariPipelineId(vanzariPipeline.id)
                   setVanzariStages(vanzariPipeline.stages || [])
-                  
-                  // Setează starea checkbox-urilor pe baza stage-ului curent al lead-ului
-                  if (lead?.stage) {
-                    const currentStage = lead.stage.toUpperCase()
-                    if (currentStage.includes('NO DEAL') || currentStage.includes('NO-DEAL')) {
-                      setNoDeal(true)
-                      setCallBack(false)
-                      setNuRaspunde(false)
-                    } else if (currentStage.includes('CALLBACK') || currentStage.includes('CALL BACK') || currentStage.includes('CALL-BACK')) {
-                      setNoDeal(false)
-                      setCallBack(true)
-                      setNuRaspunde(false)
-                    } else if (currentStage.includes('RASPUNDE') || currentStage.includes('RASUNDE')) {
-                      setNoDeal(false)
-                      setCallBack(false)
-                      setNuRaspunde(true)
-                    }
-                  }
                 }
               } catch (err) {
                 console.error('Eroare la încărcarea stage-urilor pentru Vânzări:', err)
@@ -4627,7 +4921,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }
       }, 100)
       
-      return // Ieșim din funcție pentru Vanzari
+      return // Iesim din functie pentru Vanzari
     }
     
     // Logica existentă pentru alte pipeline-uri (non-Vanzari)
@@ -4877,7 +5171,9 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           const firstGroup = instrumentForm.brandSerialGroups[0]
           if (firstGroup.brand && firstGroup.serialNumbers.length > 0 && firstGroup.serialNumbers[0]) {
             partBrand = firstGroup.brand
-            partSerialNumber = firstGroup.serialNumbers[0]
+            // Extrage serial number - poate fi string sau obiect {serial, garantie}
+            const firstSerial = firstGroup.serialNumbers[0]
+            partSerialNumber = typeof firstSerial === 'string' ? firstSerial : (firstSerial.serial || '')
           }
         }
       }
@@ -4894,6 +5190,16 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
     const reparatiiPipeline = pipelinesWithIds.find(p => p.name === 'Reparatii')
     const pipelineIdForPart = reparatiiPipeline?.id || null
     
+    // Atribuie automat tehnicianul pentru piese (doar dacă NU suntem într-un pipeline departament)
+    // Pentru pipeline-urile departament (Saloane, Frizerii, Horeca, Reparatii), NU se face atribuire automată
+    const technicianIdForPart = isDepartmentPipeline ? null : (user?.id || null)
+    console.log('🔧 [onAddPart] Technician assignment:', {
+      isDepartmentPipeline,
+      userId: user?.id,
+      technicianIdForPart,
+      pipelineSlug
+    })
+    
     setItems(prev => [
       ...prev,
       {
@@ -4907,7 +5213,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         discount_pct: discount,
         urgent: urgentAllServices, // Folosește urgentAllServices pentru piese
         pipeline_id: pipelineIdForPart, // Setează automat pipeline-ul "Reparatii" pentru piese
-        technician_id: null,
+        technician_id: technicianIdForPart, // Atribuie automat tehnicianul dacă nu suntem în pipeline departament
         brand: partBrand, // Brand-ul instrumentului căruia îi este destinată piesa
         serial_number: partSerialNumber, // Serial number-ul instrumentului
       } as unknown as LeadQuoteItem
@@ -6945,7 +7251,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
           
           {/* Butoane acțiune fișă */}
           <div className="ml-auto flex items-center gap-2">
-            {/* Buton Facturare - doar în pipeline-ul Recepție și doar când fișa este în stage-ul "Facturat" */}
+            {/* Buton Facturare și checkbox-uri Cash/Card - doar în pipeline-ul Recepție și doar când fișa este în stage-ul "Facturat" */}
             {isReceptiePipeline && currentServiceFileStage && (
               (() => {
                 const normalizedStage = currentServiceFileStage.toLowerCase().trim()
@@ -6953,23 +7259,91 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
                                        normalizedStage === 'facturată' ||
                                        normalizedStage.includes('facturat')
                 return isFacturatStage ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    onClick={() => {
-                      try {
-                        // Folosește PrintViewData deja prezent în DOM pentru layout de factură
-                        window.print()
-                      } catch (err) {
-                        console.error('Eroare la pornirea printării/facturării:', err)
-                        toast.error('Nu s-a putut deschide fereastra de facturare (print).')
-                      }
-                    }}
-                    className="shadow-sm"
-                  >
-                    Facturează fișa
-                  </Button>
+                  <div className="flex items-center gap-3">
+                    {/* Checkbox-uri Cash și Card - mutual exclusive (doar unul poate fi selectat) */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <Checkbox
+                          id="payment-cash"
+                          checked={paymentCash}
+                          onCheckedChange={(checked) => {
+                            const isChecked = !!checked
+                            setPaymentCash(isChecked)
+                            // Dacă se bifează Cash, debifează Card
+                            if (isChecked) {
+                              setPaymentCard(false)
+                            }
+                            // Salvează imediat la schimbare
+                            if (fisaId) {
+                              const detailsToSave = JSON.stringify({
+                                text: trayDetails || '',
+                                paymentCash: isChecked,
+                                paymentCard: false // Card este întotdeauna false când Cash este bifat
+                              })
+                              updateServiceFile(fisaId, { details: detailsToSave })
+                                .then(() => console.log('✅ Payment cash salvat'))
+                                .catch(err => console.error('Eroare la salvarea payment cash:', err))
+                            }
+                          }}
+                        />
+                        <label
+                          htmlFor="payment-cash"
+                          className="text-xs font-medium cursor-pointer"
+                        >
+                          Cash
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Checkbox
+                          id="payment-card"
+                          checked={paymentCard}
+                          onCheckedChange={(checked) => {
+                            const isChecked = !!checked
+                            setPaymentCard(isChecked)
+                            // Dacă se bifează Card, debifează Cash
+                            if (isChecked) {
+                              setPaymentCash(false)
+                            }
+                            // Salvează imediat la schimbare
+                            if (fisaId) {
+                              const detailsToSave = JSON.stringify({
+                                text: trayDetails || '',
+                                paymentCash: false, // Cash este întotdeauna false când Card este bifat
+                                paymentCard: isChecked
+                              })
+                              updateServiceFile(fisaId, { details: detailsToSave })
+                                .then(() => console.log('✅ Payment card salvat'))
+                                .catch(err => console.error('Eroare la salvarea payment card:', err))
+                            }
+                          }}
+                        />
+                        <label
+                          htmlFor="payment-card"
+                          className="text-xs font-medium cursor-pointer"
+                        >
+                          Card
+                        </label>
+                      </div>
+                    </div>
+                    
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        try {
+                          // Folosește PrintViewData deja prezent în DOM pentru layout de factură
+                          window.print()
+                        } catch (err) {
+                          console.error('Eroare la pornirea printării/facturării:', err)
+                          toast.error('Nu s-a putut deschide fereastra de facturare (print).')
+                        }
+                      }}
+                      className="shadow-sm"
+                    >
+                      Facturează fișa
+                    </Button>
+                  </div>
                 ) : null
               })()
             )}

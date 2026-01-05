@@ -226,10 +226,37 @@ const listQuoteItems = async (
       brand: item.brand || (item.tray_item_brands && item.tray_item_brands.length > 0 
         ? item.tray_item_brands[0].brand 
         : null) || notesData.brand || null,
-      serial_number: item.serial_number || (item.tray_item_brands && item.tray_item_brands.length > 0 
-        && item.tray_item_brands[0].tray_item_brand_serials?.length > 0
-        ? item.tray_item_brands[0].tray_item_brand_serials[0].serial_number 
-        : null) || notesData.serial_number || null,
+      serial_number: (() => {
+        // Extrage serial_number - poate fi string sau obiect {serial, garantie}
+        let serialValue: string | null = null
+        
+        if (item.serial_number) {
+          if (typeof item.serial_number === 'string') {
+            serialValue = item.serial_number
+          } else if (typeof item.serial_number === 'object' && item.serial_number !== null && 'serial' in item.serial_number) {
+            serialValue = (item.serial_number as any).serial || null
+          } else {
+            serialValue = String(item.serial_number)
+          }
+        }
+        
+        if (!serialValue && item.tray_item_brands && item.tray_item_brands.length > 0 
+          && item.tray_item_brands[0].tray_item_brand_serials?.length > 0) {
+          serialValue = item.tray_item_brands[0].tray_item_brand_serials[0].serial_number || null
+        }
+        
+        if (!serialValue && notesData.serial_number) {
+          if (typeof notesData.serial_number === 'string') {
+            serialValue = notesData.serial_number
+          } else if (typeof notesData.serial_number === 'object' && notesData.serial_number !== null && 'serial' in notesData.serial_number) {
+            serialValue = notesData.serial_number.serial || null
+          } else {
+            serialValue = String(notesData.serial_number)
+          }
+        }
+        
+        return serialValue
+      })(),
       garantie: (item.tray_item_brands && item.tray_item_brands.length > 0 
         ? item.tray_item_brands[0].garantie 
         : false) || notesData.garantie || false,
@@ -530,9 +557,34 @@ export function LeadDetailsPanel({
         return
       }
       
+      // Verifică dacă există deja payment info în details și păstrează-l
+      const { data: existingData } = await supabase
+        .from('service_files')
+        .select('details')
+        .eq('id', serviceFileId)
+        .single()
+      
+      let detailsToSave = details
+      if (existingData?.details) {
+        try {
+          const parsedDetails = JSON.parse(existingData.details)
+          if (typeof parsedDetails === 'object' && parsedDetails !== null && (parsedDetails.paymentCash !== undefined || parsedDetails.paymentCard !== undefined)) {
+            // Păstrează payment info existent
+            detailsToSave = JSON.stringify({
+              text: details,
+              paymentCash: parsedDetails.paymentCash || false,
+              paymentCard: parsedDetails.paymentCard || false
+            })
+          }
+        } catch {
+          // Dacă nu este JSON valid, folosește doar textul nou
+          detailsToSave = details
+        }
+      }
+      
       const { error } = await supabase
         .from('service_files')
-        .update({ details } as any)
+        .update({ details: detailsToSave } as any)
         .eq('id', serviceFileId)
       
       if (error) {
@@ -594,7 +646,22 @@ export function LeadDetailsPanel({
           .single()
 
         if (!error && data) {
-          setTrayDetails((data as any)?.details || '')
+          const detailsValue = (data as any)?.details || ''
+          
+          // Încearcă să parseze ca JSON pentru a extrage doar textul
+          try {
+            const parsedDetails = JSON.parse(detailsValue)
+            if (typeof parsedDetails === 'object' && parsedDetails !== null && parsedDetails.text !== undefined) {
+              // Dacă este JSON cu text și payment info, extrage doar textul
+              setTrayDetails(parsedDetails.text || '')
+            } else {
+              // Dacă este doar text, păstrează-l
+              setTrayDetails(detailsValue)
+            }
+          } catch {
+            // Dacă nu este JSON, este doar text
+            setTrayDetails(detailsValue)
+          }
         } else {
           setTrayDetails('')
         }
@@ -833,7 +900,22 @@ export function LeadDetailsPanel({
           return
         }
         
-        setTrayDetails(serviceFile?.details || '')
+        const detailsValue = serviceFile?.details || ''
+        
+        // Încearcă să parseze ca JSON pentru a extrage doar textul
+        try {
+          const parsedDetails = JSON.parse(detailsValue)
+          if (typeof parsedDetails === 'object' && parsedDetails !== null && parsedDetails.text !== undefined) {
+            // Dacă este JSON cu text și payment info, extrage doar textul
+            setTrayDetails(parsedDetails.text || '')
+          } else {
+            // Dacă este doar text, păstrează-l
+            setTrayDetails(detailsValue)
+          }
+        } catch {
+          // Dacă nu este JSON, este doar text
+          setTrayDetails(detailsValue)
+        }
       } catch (err) {
         console.error('Error loading service file details:', err)
         setTrayDetails('')

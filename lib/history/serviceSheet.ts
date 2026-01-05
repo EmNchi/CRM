@@ -728,6 +728,18 @@ export async function persistAndLogServiceSheet(params: {
       // Obține part_id din item dacă există
       const partId = (it as any).part_id || null
       
+      // Extrage serial_number - poate fi string sau obiect {serial, garantie}
+      let serialNumberValue: string | null = null
+      if (it.serial_number) {
+        if (typeof it.serial_number === 'string') {
+          serialNumberValue = it.serial_number
+        } else if (typeof it.serial_number === 'object' && it.serial_number !== null && 'serial' in it.serial_number) {
+          serialNumberValue = (it.serial_number as any).serial || null
+        } else {
+          serialNumberValue = String(it.serial_number)
+        }
+      }
+      
       const { data: createdPartItem, error } = await createTrayItem({
         tray_id: quoteId,
         service_id: null, // Piese nu au service_id
@@ -742,7 +754,7 @@ export async function persistAndLogServiceSheet(params: {
         discount_pct: Number(it.discount_pct ?? 0),
         urgent: !!it.urgent,
           brand: it.brand || null,
-          serial_number: it.serial_number || null,
+          serial_number: serialNumberValue,
         garantie: !!it.garantie,
         }), // Salvează informații suplimentare în notes ca JSON (fără pipeline_id)
         pipeline: pipelineNameForPart,
