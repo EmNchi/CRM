@@ -24,6 +24,7 @@ import { addServiceFileToPipeline, addTrayToPipeline, moveItemToStage, moveServi
 import { listServiceFilesForLead, deleteServiceFile } from "@/lib/supabase/serviceFileOperations"
 import { useRole, useAuth } from "@/lib/contexts/AuthContext"
 import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
+import { usePreturiPipeline } from "@/hooks/usePreturiPipeline"
 import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReference, deleteTrayImageReference, type TrayImage } from "@/lib/supabase/imageOperations"
 import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp, Package, ArrowRight, Move } from "lucide-react"
 import { toast } from "sonner"
@@ -704,7 +705,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
 
   const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
 
-  // Verificări pentru restricții bazate pe rol și pipeline
+  // Verificări pentru restricții bazate pe rol și pipeline - folosim hook-ul usePreturiPipeline
   const { role, loading: roleLoading } = useRole()
   const { user } = useAuth()
   const [isTechnician, setIsTechnician] = useState(false)
@@ -730,67 +731,18 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   // Verifică dacă utilizatorul este vânzător (nu tehnician)
   const isVanzator = !isTechnician && (role === 'admin' || role === 'owner' || role === 'member')
 
-  // Verifică dacă suntem în pipeline-ul Vânzări
-  const isVanzariPipeline = useMemo(() => {
-    if (!pipelineSlug) return false
-    return pipelineSlug.toLowerCase().includes('vanzari') || pipelineSlug.toLowerCase().includes('sales')
-  }, [pipelineSlug])
-
-  // Verifică dacă suntem în pipeline-ul Reparații
-  const isReparatiiPipeline = useMemo(() => {
-    if (!pipelineSlug) return false
-    return pipelineSlug.toLowerCase().includes('reparatii') || pipelineSlug.toLowerCase().includes('repair')
-  }, [pipelineSlug])
-
-  // Verifică dacă suntem în pipeline-ul Recepție
-  const isReceptiePipeline = useMemo(() => {
-    if (!pipelineSlug) return false
-    return pipelineSlug.toLowerCase().includes('receptie') || pipelineSlug.toLowerCase().includes('reception')
-  }, [pipelineSlug])
-
-  // Verifică dacă suntem în pipeline-ul Curier
-  // Verifică dacă pipeline-ul permite adăugarea de imagini (Saloane, Frizerii, Horeca, Reparatii)
-  // Receptie poate doar VIZUALIZA imagini, nu le poate adăuga
-  const canAddTrayImages = useMemo(() => {
-    if (!pipelineSlug) return false
-    const slug = pipelineSlug.toLowerCase()
-    return slug.includes('saloane') || 
-           slug.includes('frizerii') || 
-           slug.includes('horeca') || 
-           slug.includes('reparatii')
-  }, [pipelineSlug])
-  
-  // Verifică dacă pipeline-ul permite VIZUALIZAREA imaginilor (Receptie poate vedea, dar nu adăuga)
-  const canViewTrayImages = useMemo(() => {
-    if (!pipelineSlug) return false
-    const slug = pipelineSlug.toLowerCase()
-    return canAddTrayImages || slug.includes('receptie') || slug.includes('reception')
-  }, [pipelineSlug, canAddTrayImages])
-
-  const isCurierPipeline = useMemo(() => {
-    if (!pipelineSlug) return false
-    return pipelineSlug.toLowerCase().includes('curier')
-  }, [pipelineSlug])
-
-  // Pipeline-uri comerciale unde vrem să afișăm detalii de tăviță în Fișa de serviciu
-  const isCommercialPipeline = isVanzariPipeline || isReceptiePipeline || isCurierPipeline
-
-  // Restricții pentru tehnicieni în pipeline-urile departament
-  // Urgent și Abonament sunt disponibile doar în Recepție/Vânzări/Curier (NU pentru tehnicieni în departament)
-  const canEditUrgentAndSubscription = useMemo(() => {
-    // În pipeline departament, tehnicianul nu poate modifica Urgent sau Abonament
-    if (isDepartmentPipeline) return false
-    // În alte pipeline-uri (Recepție, Vânzări, Curier), toți pot modifica
-    return true
-  }, [isDepartmentPipeline])
-
-  // Tehnicianul poate adăuga piese doar în Reparații
-  const canAddParts = useMemo(() => {
-    if (isDepartmentPipeline) {
-      return isReparatiiPipeline
-    }
-    return true // În alte pipeline-uri se pot adăuga piese
-  }, [isDepartmentPipeline, isReparatiiPipeline])
+  // Folosim hook-ul usePreturiPipeline pentru verificări pipeline
+  const {
+    isVanzariPipeline,
+    isReparatiiPipeline,
+    isReceptiePipeline,
+    isCurierPipeline,
+    canAddTrayImages,
+    canViewTrayImages,
+    isCommercialPipeline,
+    canEditUrgentAndSubscription,
+    canAddParts,
+  } = usePreturiPipeline(pipelineSlug, isDepartmentPipeline)
 
   // State pentru a stoca cantitatea, brand, serial numbers și garantie pentru fiecare instrument
   // Notă: pipeline_id (pentru departament) este gestionat direct în items, nu în instrumentSettings
