@@ -129,6 +129,8 @@ export function VanzariView({
   onNuRaspundeChange,
   onCallBackChange,
   onSave,
+  onBrandToggle,
+  onSerialNumberChange,
   currentInstrumentId,
   hasServicesOrInstrumentInSheet,
   isTechnician,
@@ -137,6 +139,7 @@ export function VanzariView({
   totalDiscount,
   total,
   instrumentSettings,
+  canEditUrgentAndSubscription = true,
 }: VanzariViewProps) {
   return (
     <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
