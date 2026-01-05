@@ -2,7 +2,7 @@
 
 ## Progres Actual
 
-### ✅ Componente Create (18 componente)
+### ✅ Componente Create (20 componente)
 1. **Formulare:**
    - `AddInstrumentForm.tsx`
    - `AddServiceForm.tsx`
@@ -25,6 +25,10 @@
    - `EditTrayDialog.tsx`
    - `MoveInstrumentDialog.tsx`
 
+5. **Restricții:**
+   - `PipelineRestrictions.tsx`
+   - `PreturiProvider.tsx`
+
 ### ✅ Hook-uri Create (4 hook-uri)
 1. `usePreturiState.ts` - Gestionare state
 2. `usePreturiPipeline.ts` - Logică pipeline
@@ -39,27 +43,33 @@
 
 ### Faza 1: Înlocuire Incrementală (Recomandat)
 
-#### Pasul 1: Înlocuire Dialog-uri
-- [ ] Înlocuiește dialog-ul de creare tăviță cu `<CreateTrayDialog />`
-- [ ] Înlocuiește dialog-ul de editare tăviță cu `<EditTrayDialog />`
-- [ ] Înlocuiește dialog-ul de mutare instrument cu `<MoveInstrumentDialog />`
+#### Pasul 1: Înlocuire Dialog-uri ✅
+- [x] Înlocuiește dialog-ul de creare tăviță cu `<CreateTrayDialog />`
+- [x] Înlocuiește dialog-ul de editare tăviță cu `<EditTrayDialog />`
+- [x] Înlocuiește dialog-ul de mutare instrument cu `<MoveInstrumentDialog />`
 
-#### Pasul 2: Înlocuire Secțiuni UI
-- [ ] Înlocuiește secțiunea de totaluri cu `<TotalsSection />`
-- [ ] Înlocuiește secțiunea de detalii tăviță cu `<TrayDetailsSection />`
-- [ ] Înlocuiește secțiunea de imagini cu `<TrayImagesSection />`
-- [ ] Înlocuiește tabelul de items cu `<ItemsTable />`
+#### Pasul 2: Înlocuire Secțiuni UI ✅
+- [x] Înlocuiește secțiunea de totaluri cu `<TotalsSection />`
+- [x] Înlocuiește secțiunea de detalii tăviță cu `<TrayDetailsSection />`
+- [x] Înlocuiește secțiunea de imagini cu `<TrayImagesSection />`
+- [x] Înlocuiește tabelul de items cu `<ItemsTable />`
 
-#### Pasul 3: Înlocuire Formulare
-- [ ] Înlocuiește formularul de instrument cu `<AddInstrumentForm />`
-- [ ] Înlocuiește formularul de serviciu cu `<AddServiceForm />`
-- [ ] Înlocuiește formularul de piesă cu `<AddPartForm />`
+#### Pasul 3: Înlocuire Formulare (Parțial ✅)
+- [x] Înlocuiește formularul de instrument pentru modul vânzător cu `<AddInstrumentForm />`
+- [x] Înlocuiește formularul de serviciu pentru modul vânzător cu `<AddServiceForm />`
+- [x] Înlocuiește formularul de piesă pentru modul normal cu `<AddPartForm />`
+- [ ] **EXTENDERE NECESARĂ**: Extinde `<AddInstrumentForm />` cu suport pentru `brandSerialGroups` (pentru Reparații)
+- [ ] **EXTENDERE NECESARĂ**: Extinde `<AddServiceForm />` cu selecție brand pentru Vânzări
 
-#### Pasul 4: Înlocuire View-uri Complete
-- [ ] Pentru pipeline Vanzari: înlocuiește întreaga secțiune cu `<VanzariView />`
-- [ ] Pentru pipeline Receptie: înlocuiește întreaga secțiune cu `<ReceptieView />`
-- [ ] Pentru pipeline-uri departament: înlocuiește cu `<DepartmentView />`
-- [ ] Pentru pipeline Curier: înlocuiește cu `<CurierView />`
+#### Pasul 4: Înlocuire View-uri Complete ✅
+- [x] Pentru pipeline Vanzari: înlocuiește întreaga secțiune cu `<VanzariView />`
+- [x] Pentru pipeline Receptie: înlocuiește întreaga secțiune cu `<ReceptieView />`
+- [x] Pentru pipeline-uri departament: înlocuiește cu `<DepartmentView />`
+- [x] Pentru pipeline Curier: înlocuiește cu `<CurierView />`
+
+#### Pasul 5: Integrare Componente Restricții
+- [ ] Integrează `<PreturiProvider />` sau `<PipelineRestrictions />` în `preturi.tsx`
+- [ ] Înlocuiește verificările inline de restricții cu componentele modulare
 
 #### Pasul 5: Integrare Hook-uri
 - [ ] Înlocuiește state management cu `usePreturiState`
@@ -132,9 +142,16 @@
 )}
 ```
 
-## Status
+## Status Actualizat
 
-- ✅ Toate componentele sunt create și testate pentru linter errors
-- ⏳ Refactorizarea componentei principale este în așteptare
-- 📝 Acest document servește ca ghid pentru integrare
+- ✅ **Fazele 1-7 completate**: Toate componentele, hook-urile și utilitarele sunt create
+- ✅ **Integrare parțială**: Dialog-uri, secțiuni UI, view-uri pipeline și formulare vânzător sunt integrate
+- ⏳ **În progres**: 
+  - Extindere formulare modul normal (brandSerialGroups pentru Reparații)
+  - Integrare componente restricții
+  - Cleanup cod vechi
+- 📝 **Următorii pași**: 
+  1. Extinde `AddInstrumentForm` cu suport `brandSerialGroups`
+  2. Integrează componente restricții în `preturi.tsx`
+  3. Cleanup și optimizare finală
 
