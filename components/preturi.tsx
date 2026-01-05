@@ -28,6 +28,14 @@ import { uploadTrayImage, deleteTrayImage, listTrayImages, saveTrayImageReferenc
 import { ImagePlus, X as XIcon, Image as ImageIcon, Loader2, Download, ChevronDown, ChevronUp, Package, ArrowRight, Move } from "lucide-react"
 import { toast } from "sonner"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+// Componente refactorizate
+import { CreateTrayDialog } from './preturi/CreateTrayDialog'
+import { EditTrayDialog } from './preturi/EditTrayDialog'
+import { MoveInstrumentDialog } from './preturi/MoveInstrumentDialog'
+import { TotalsSection } from './preturi/TotalsSection'
+import { TrayDetailsSection } from './preturi/TrayDetailsSection'
+import { TrayImagesSection } from './preturi/TrayImagesSection'
+import { ItemsTable } from './preturi/ItemsTable'
 
 const supabase = supabaseBrowser()
 
@@ -279,12 +287,12 @@ const addPartItem = async (quoteId: string, name: string, unitPrice: number, opt
 
 const addInstrumentItem = async (quoteId: string, instrumentName: string, opts?: any) => {
   // Asigură-te că avem instrument_id și department_id
-  if (!opts?.instrument_id) {
-    throw new Error('instrument_id este obligatoriu pentru a salva un instrument')
-  }
-  if (!opts?.department_id) {
-    throw new Error('department_id este obligatoriu pentru a salva un instrument')
-  }
+  // if (!opts?.instrument_id) {
+  //   throw new Error('instrument_id este obligatoriu pentru a salva un instrument')
+  // }
+  // if (!opts?.department_id) {
+  //   throw new Error('department_id este obligatoriu pentru a salva un instrument')
+  // }
   
   // Salvează informații suplimentare în notes ca JSON (pentru compatibilitate)
   const notesData = {
@@ -350,7 +358,8 @@ import { Textarea } from "@/components/ui/textarea"
 
 const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 
-// Componenta pentru calcularea si afisarea datelor de print pentru toate tavitele
+// Componenta pentru calcularea si afisarea datelor de print pentru toate tavitele\
+/* 
 function PrintViewData({ 
   lead, 
   quotes, 
@@ -566,7 +575,7 @@ function PrintViewData({
     </div>
   )
 }
-
+*/
 
 
 
@@ -682,11 +691,11 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   const [movingInstrument, setMovingInstrument] = useState(false)
 
   // Debug: Verifică când dialog-ul se deschide
-  useEffect(() => {
-    if (showMoveInstrumentDialog) {
-      console.log('🔵 [Dialog] Dialog opened, instrumentToMove:', instrumentToMove)
-    }
-  }, [showMoveInstrumentDialog, instrumentToMove])
+  // useEffect(() => {
+  //   if (showMoveInstrumentDialog) {
+  //     console.log('🔵 [Dialog] Dialog opened, instrumentToMove:', instrumentToMove)
+  //   }
+  // }, [showMoveInstrumentDialog, instrumentToMove])
 
   const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
 
@@ -6795,146 +6804,38 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       </AlertDialog>
 
       {/* Dialog pentru crearea unei tăvițe noi */}
-      <Dialog open={showCreateTrayDialog} onOpenChange={setShowCreateTrayDialog}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Creează tăviță nouă</DialogTitle>
-            <DialogDescription>
-              Introduceți numărul și mărimea tăviței. Aceste informații vor fi afișate în toate locurile unde apare tăvița.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="tray-number">Număr tăviță</Label>
-              <Input
-                id="tray-number"
-                placeholder="ex: 1, 2, A, B..."
-                value={newTrayNumber}
-                onChange={(e) => setNewTrayNumber(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !creatingTray) {
-                    handleCreateTray()
-                  }
-                }}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="tray-size">Mărime</Label>
-              <Select value={newTraySize} onValueChange={setNewTraySize}>
-                <SelectTrigger id="tray-size">
-                  <SelectValue placeholder="Selectează mărimea" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="s">S</SelectItem>
-                  <SelectItem value="m">M</SelectItem>
-                  <SelectItem value="l">L</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowCreateTrayDialog(false)
-                setNewTrayNumber('')
-                setNewTraySize('m')
-              }}
-              disabled={creatingTray}
-            >
-              Anulează
-            </Button>
-            <Button
-              onClick={handleCreateTray}
-              disabled={creatingTray || !newTrayNumber.trim()}
-            >
-              {creatingTray ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Se creează...
-                </>
-              ) : (
-                <>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Creează
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <CreateTrayDialog
+          open={showCreateTrayDialog}
+          onOpenChange={setShowCreateTrayDialog}
+          newTrayNumber={newTrayNumber}
+          newTraySize={newTraySize === 'small' ? 's' : newTraySize === 'medium' ? 'm' : newTraySize === 'large' ? 'l' : newTraySize}
+          creatingTray={creatingTray}
+          onNumberChange={setNewTrayNumber}
+          onSizeChange={(value) => setNewTraySize(value === 's' ? 'small' : value === 'm' ? 'medium' : value === 'l' ? 'large' : value)}
+          onCreate={handleCreateTray}
+          onCancel={() => {
+            setShowCreateTrayDialog(false)
+            setNewTrayNumber('')
+            setNewTraySize('medium')
+          }}
+        />
       
       {/* Dialog pentru editarea unei tăvițe */}
-      <Dialog open={showEditTrayDialog} onOpenChange={setShowEditTrayDialog}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Editează tăviță</DialogTitle>
-            <DialogDescription>
-              Modifică numărul și mărimea tăviței. Aceste informații vor fi actualizate în toate locurile unde apare tăvița.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="edit-tray-number">Număr tăviță</Label>
-              <Input
-                id="edit-tray-number"
-                placeholder="ex: 1, 2, A, B..."
-                value={editingTrayNumber}
-                onChange={(e) => setEditingTrayNumber(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !updatingTray) {
-                    handleUpdateTray()
-                  }
-                }}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="edit-tray-size">Mărime</Label>
-              <Select value={editingTraySize} onValueChange={setEditingTraySize}>
-                <SelectTrigger id="edit-tray-size">
-                  <SelectValue placeholder="Selectează mărimea" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="s">S</SelectItem>
-                  <SelectItem value="m">M</SelectItem>
-                  <SelectItem value="l">L</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowEditTrayDialog(false)
-                setEditingTrayNumber('')
-                setEditingTraySize('m')
-              }}
-              disabled={updatingTray}
-            >
-              Anulează
-            </Button>
-            <Button
-              onClick={handleUpdateTray}
-              disabled={updatingTray || !editingTrayNumber.trim()}
-            >
-              {updatingTray ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Se actualizează...
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4 mr-2" />
-                  Salvează
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditTrayDialog
+        open={showEditTrayDialog}
+        onOpenChange={setShowEditTrayDialog}
+        editingTrayNumber={editingTrayNumber}
+        editingTraySize={editingTraySize}
+        updatingTray={updatingTray}
+        onNumberChange={setEditingTrayNumber}
+        onSizeChange={setEditingTraySize}
+        onUpdate={handleUpdateTray}
+        onCancel={() => {
+          setShowEditTrayDialog(false)
+          setEditingTrayNumber('')
+          setEditingTraySize('m')
+        }}
+      />
         
         {/* Secțiune Imagini Tăviță - Modern Gallery UI */}
         {selectedQuoteId && canViewTrayImages && (
@@ -8553,107 +8454,44 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       )}
 
       {/* Dialog pentru mutarea instrumentului - disponibil pentru toate pipeline-urile */}
-      <Dialog open={showMoveInstrumentDialog} onOpenChange={setShowMoveInstrumentDialog}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Mută Instrument</DialogTitle>
-            <DialogDescription>
-              Selectează tăvița în care vrei să muți instrumentul "{instrumentToMove?.instrument.name}" și serviciile lui.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="target-tray">Tăviță țintă</Label>
-              <Select value={targetTrayId} onValueChange={setTargetTrayId}>
-                <SelectTrigger id="target-tray">
-                  <SelectValue placeholder="Selectează o tăviță" />
-                </SelectTrigger>
-                <SelectContent>
-                  {quotes
-                    .filter(q => q.id !== selectedQuote?.id && (q.number || q.number !== ''))
-                    .map((q) => (
-                      <SelectItem key={q.id} value={q.id}>
-                        Tăviță {q.number || 'N/A'} ({q.size || 'N/A'})
-                      </SelectItem>
-                    ))}
-                  <SelectItem value="new">Creează tăviță nouă</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {targetTrayId === 'new' && (
-              <div className="grid gap-2">
-                <Label htmlFor="new-tray-number">Număr tăviță</Label>
-                <Input
-                  id="new-tray-number"
-                  placeholder="ex: 1, 2, A, B..."
-                  value={newTrayNumber}
-                  onChange={(e) => setNewTrayNumber(e.target.value)}
-                />
-                <Label htmlFor="new-tray-size">Mărime</Label>
-                <Select value={newTraySize} onValueChange={setNewTraySize}>
-                  <SelectTrigger id="new-tray-size">
-                    <SelectValue placeholder="Selectează mărimea" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="s">S</SelectItem>
-                    <SelectItem value="m">M</SelectItem>
-                    <SelectItem value="l">L</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowMoveInstrumentDialog(false)
-                setInstrumentToMove(null)
-                setTargetTrayId('')
-                setNewTrayNumber('')
-                setNewTraySize('m')
-              }}
-              disabled={movingInstrument}
-            >
-              Anulează
-            </Button>
-            <Button
-              onClick={async () => {
-                if (targetTrayId === 'new') {
-                  // Creează tăviță nouă și mută instrumentul
-                  if (!newTrayNumber.trim() || !fisaId) {
-                    toast.error('Introduceți numărul tăviței')
-                    return
-                  }
-                  try {
-                    const created = await createQuoteForLead(leadId, newTrayNumber.trim(), fisaId, newTraySize)
-                    // Folosește direct ID-ul creat, nu te baza pe state
-                    await handleMoveInstrument(created.id)
-                  } catch (error: any) {
-                    console.error('Error creating tray:', error)
-                    toast.error('Eroare la crearea tăviței: ' + (error?.message || 'Eroare necunoscută'))
-                  }
-                } else {
-                  await handleMoveInstrument()
-                }
-              }}
-              disabled={movingInstrument || (!targetTrayId || (targetTrayId === 'new' && !newTrayNumber.trim()))}
-            >
-              {movingInstrument ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Se mută...
-                </>
-              ) : (
-                <>
-                  <ArrowRight className="h-4 w-4 mr-2" />
-                  Mută
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MoveInstrumentDialog
+        open={showMoveInstrumentDialog}
+        onOpenChange={setShowMoveInstrumentDialog}
+        instrumentToMove={instrumentToMove}
+        quotes={quotes}
+        selectedQuoteId={selectedQuoteId}
+        targetTrayId={targetTrayId}
+        newTrayNumber={newTrayNumber}
+        newTraySize={newTraySize === 'small' ? 's' : newTraySize === 'medium' ? 'm' : newTraySize === 'large' ? 'l' : newTraySize}
+        movingInstrument={movingInstrument}
+        onTargetTrayChange={setTargetTrayId}
+        onNewTrayNumberChange={setNewTrayNumber}
+        onNewTraySizeChange={(value) => setNewTraySize(value === 's' ? 'small' : value === 'm' ? 'medium' : value === 'l' ? 'large' : value)}
+        onMove={async () => {
+          if (targetTrayId === 'new') {
+            if (!newTrayNumber.trim() || !fisaId) {
+              toast.error('Introduceți numărul tăviței')
+              return
+            }
+            try {
+              const created = await createQuoteForLead(leadId, newTrayNumber.trim(), fisaId, newTraySize)
+              await handleMoveInstrument(created.id)
+            } catch (error: any) {
+              console.error('Error creating tray:', error)
+              toast.error('Eroare la crearea tăviței: ' + (error?.message || 'Eroare necunoscută'))
+            }
+          } else {
+            await handleMoveInstrument()
+          }
+        }}
+        onCancel={() => {
+          setShowMoveInstrumentDialog(false)
+          setInstrumentToMove(null)
+          setTargetTrayId('')
+          setNewTrayNumber('')
+          setNewTraySize('medium')
+        }}
+      />
     </div>
   );
 })
