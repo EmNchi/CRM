@@ -39,6 +39,7 @@ import { ItemsTable } from './preturi/ItemsTable'
 import { AddInstrumentForm } from './preturi/AddInstrumentForm'
 import { AddServiceForm } from './preturi/AddServiceForm'
 import { AddPartForm } from './preturi/AddPartForm'
+import { VanzariView } from './preturi/VanzariView'
 
 const supabase = supabaseBrowser()
 
@@ -6027,334 +6028,99 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
   // Variantă simplificată pentru vânzători în pipeline-ul Vânzări
   if (isVanzatorMode) {
     return (
-      <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b">
-          <div className="px-4 pt-4 pb-3">
-            <h3 className="font-semibold text-base text-foreground">Comandă Nouă</h3>
-            <p className="text-sm text-muted-foreground mt-1">Adaugă instrumente și servicii pentru această comandă</p>
-          </div>
-        </div>
-        
-        {/* Informații Contact */}
-        {lead && (
-          <div className="px-4 py-3 bg-muted/30 border-b">
-            <h4 className="font-medium text-sm mb-2">Informații Contact</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-              <div>
-                <span className="text-muted-foreground">Nume: </span>
-                <span className="font-medium">{lead.name || '—'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Email: </span>
-                <span className="font-medium">{lead.email || '—'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Telefon: </span>
-                <span className="font-medium">{lead.phone || '—'}</span>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Adăugare Instrument și Servicii - fără tăviță definită */}
-        {/* Add Instrument */}
-        <AddInstrumentForm
-          instrumentForm={instrumentForm}
-          availableInstruments={availableInstruments}
-          instrumentSettings={instrumentSettings}
-          hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
-          isVanzariPipeline={isVanzariPipeline}
-          isDepartmentPipeline={isDepartmentPipeline}
-          isTechnician={isTechnician}
-          onInstrumentChange={(newInstrumentId) => {
-            const savedSettings = instrumentSettings[newInstrumentId] || {}
-            setInstrumentForm(prev => ({
+      <VanzariView
+        instrumentForm={instrumentForm}
+        svc={svc}
+        serviceSearchQuery={serviceSearchQuery}
+        serviceSearchFocused={serviceSearchFocused}
+        items={items}
+        subscriptionType={subscriptionType}
+        trayDetails={trayDetails}
+        loadingTrayDetails={loadingTrayDetails}
+        urgentAllServices={urgentAllServices}
+        officeDirect={officeDirect}
+        curierTrimis={curierTrimis}
+        noDeal={noDeal}
+        nuRaspunde={nuRaspunde}
+        callBack={callBack}
+        loading={loading}
+        saving={saving}
+        isDirty={isDirty}
+        availableInstruments={availableInstruments}
+        availableServices={availableServices}
+        services={services}
+        instruments={instruments}
+        lead={lead}
+        onInstrumentChange={(newInstrumentId) => {
+          const savedSettings = instrumentSettings[newInstrumentId] || {}
+          setInstrumentForm(prev => ({
+            ...prev,
+            instrument: newInstrumentId,
+            qty: savedSettings?.qty || prev.qty || '1'
+          }))
+          setSvc(s => ({ 
+            ...s, 
+            instrumentId: newInstrumentId, 
+            id: '',
+            qty: savedSettings?.qty || s.qty || '1'
+          }))
+          setIsDirty(true)
+        }}
+        onQtyChange={(newQty) => {
+          setInstrumentForm(prev => ({ ...prev, qty: newQty }))
+          if (instrumentForm.instrument) {
+            setInstrumentSettings(prev => ({
               ...prev,
-              instrument: newInstrumentId,
-              qty: savedSettings?.qty || prev.qty || '1'
+              [instrumentForm.instrument]: {
+                qty: newQty,
+                brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [{ serial: '', garantie: false }] }],
+                garantie: prev[instrumentForm.instrument]?.garantie || false
+              }
             }))
-            setSvc(s => ({ 
-              ...s, 
-              instrumentId: newInstrumentId, 
-              id: '',
-              qty: savedSettings?.qty || s.qty || '1'
-            }))
-            setIsDirty(true)
-          }}
-          onQtyChange={(newQty) => {
-            setInstrumentForm(prev => ({ ...prev, qty: newQty }))
-            if (instrumentForm.instrument) {
-              setInstrumentSettings(prev => ({
-                ...prev,
-                [instrumentForm.instrument]: {
-                  qty: newQty,
-                  brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [{ serial: '', garantie: false }] }],
-                  garantie: prev[instrumentForm.instrument]?.garantie || false
-                }
-              }))
-              setSvc(s => ({ ...s, qty: newQty }))
-            }
-          }}
-        />
-        
-        {/* Add Service */}
-        <AddServiceForm
-          svc={svc}
-          serviceSearchQuery={serviceSearchQuery}
-          serviceSearchFocused={serviceSearchFocused}
-          currentInstrumentId={currentInstrumentId}
-          availableServices={availableServices}
-          onServiceSearchChange={setServiceSearchQuery}
-          onServiceSearchFocus={() => setServiceSearchFocused(true)}
-          onServiceSearchBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
-          onServiceSelect={(serviceId, serviceName) => {
-            setSvc(prev => ({ ...prev, id: serviceId }))
-            setServiceSearchQuery(serviceName)
-            setServiceSearchFocused(false)
-          }}
-          onServiceDoubleClick={(serviceId, serviceName) => {
-            setSvc(prev => ({ ...prev, id: serviceId }))
-            setServiceSearchQuery(serviceName)
-            setServiceSearchFocused(false)
-            setTimeout(() => {
-              onAddService()
-            }, 50)
-          }}
-          onQtyChange={(qty) => setSvc(s => ({ ...s, qty }))}
-          onDiscountChange={(discount) => setSvc(s => ({ ...s, discount }))}
-          onAddService={onAddService}
-        />
-        
-        {/* Items Table - simplificat */}
-        <div className="p-0 mx-4 overflow-x-auto border rounded-lg bg-card">
-          <Table className="text-sm min-w-[600px]">
-            <TableHeader>
-              <TableRow className="bg-muted/30">
-                <TableHead className="text-xs font-semibold">Serviciu</TableHead>
-                <TableHead className="text-xs font-semibold text-center">Cant.</TableHead>
-                <TableHead className="text-xs font-semibold text-center">Preț</TableHead>
-                <TableHead className="text-xs font-semibold text-center">Disc%</TableHead>
-                <TableHead className="text-xs font-semibold text-right">Total</TableHead>
-                <TableHead className="w-8"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.filter(it => it.item_type !== null).map(it => {
-                const disc = Math.min(100, Math.max(0, it.discount_pct));
-                const base = it.qty * it.price;
-                const afterDisc = base * (1 - disc / 100);
-                const lineTotal = it.urgent ? afterDisc * (1 + URGENT_MARKUP_PCT / 100) : afterDisc;
-                
-                return (
-                  <TableRow key={it.id} className="hover:bg-muted/30">
-                    <TableCell className="font-medium text-sm py-2">
-                      {it.name_snapshot}
-                    </TableCell>
-                    <TableCell className="py-2">
-                      <Input
-                        className="h-7 text-sm text-center w-14"
-                        inputMode="numeric"
-                        value={String(it.qty)}
-                        onChange={e => {
-                          const v = Math.max(1, Number(e.target.value || 1));
-                          onUpdateItem(it.id, { qty: v });
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell className="text-center text-sm py-2">
-                      {it.price.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="py-2">
-                      <Input
-                        className="h-7 text-sm text-center w-12"
-                        inputMode="decimal"
-                        value={String(it.discount_pct)}
-                        onChange={e => {
-                          const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
-                          onUpdateItem(it.id, { discount_pct: v });
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right font-medium text-sm py-2">{lineTotal.toFixed(2)}</TableCell>
-                    <TableCell className="py-2">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
-                        onClick={(e) => {
-                          e.stopPropagation() // Previne propagarea evenimentului către TableRow
-                          onDelete(it.id)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              {items.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground text-center py-6 text-sm">
-                    Nu există poziții încă.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        
-        {/* Totals */}
-        <div className="flex justify-end px-4">
-          <div className="w-full md:w-[280px] space-y-1 text-sm bg-muted/20 rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span>{subtotal.toFixed(2)} RON</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Discount</span>
-              <span className="text-red-500">-{totalDiscount.toFixed(2)} RON</span>
-            </div>
-            <div className="h-px bg-border my-2" />
-            <div className="flex items-center justify-between font-semibold text-base">
-              <span>Total</span>
-              <span>{total.toFixed(2)} RON</span>
-            </div>
-          </div>
-        </div>
-        
-        {/* Checkbox-uri Office Direct / Curier Trimis */}
-        <div className="mx-4 p-3 rounded-lg bg-muted/30 border">
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                id="office-direct-vanzator"
-                checked={officeDirect}
-                disabled={curierTrimis}
-                onCheckedChange={async (c: any) => {
-                  const isChecked = !!c
-                  setOfficeDirect(isChecked)
-                  if (isChecked) setCurierTrimis(false)
-                  setIsDirty(true)
-                  if (isChecked) await handleDeliveryCheckboxChange(true)
-                }}
-                className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
-              />
-              <span className={`text-sm font-medium transition-colors ${officeDirect ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-                Office direct
-              </span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                id="curier-trimis-vanzator"
-                checked={curierTrimis}
-                disabled={officeDirect}
-                onCheckedChange={async (c: any) => {
-                  const isChecked = !!c
-                  setCurierTrimis(isChecked)
-                  if (isChecked) setOfficeDirect(false)
-                  setIsDirty(true)
-                  if (isChecked) await handleDeliveryCheckboxChange(false)
-                }}
-                className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
-              />
-              <span className={`text-sm font-medium transition-colors ${curierTrimis ? 'text-purple-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-                Curier Trimis
-              </span>
-            </label>
-          </div>
-        </div>
-        
-        {/* Detalii comandă */}
-        <div className="px-4 pt-2 pb-4 border-b bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/70 dark:from-amber-900/40 dark:via-amber-950/40 dark:to-orange-950/30">
-          <div className="rounded-lg border border-amber-300/80 dark:border-amber-700/80 bg-white/70 dark:bg-slate-950/40 px-3 py-3 shadow-sm">
-            <Label className="text-xs font-semibold text-amber-900/90 dark:text-amber-100 uppercase tracking-wide mb-2 block">
-              Detalii comandă comunicate de client
-            </Label>
-            {loadingTrayDetails ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <>
-                <Textarea
-                  value={trayDetails}
-                  onChange={(e) => setTrayDetails(e.target.value)}
-                  placeholder="Exemple: „Clienta dorește vârfurile foarte ascuțite, fără polish”, „Nu scurtați lama”, „Preferă retur prin curier”."
-                  className="min-h-[80px] text-sm resize-none border-amber-200/80 focus-visible:ring-amber-500/40 bg-white/90 dark:bg-slate-950/60"
-                />
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-amber-900/80 dark:text-amber-100/80">
-                    Aceste note se salvează automat când închizi panoul.
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-        
-        {/* Checkbox-uri NoDeal, NuRaspunde, CallBack */}
-        <div className="px-4 py-3 bg-muted/30 border-b">
-          <h4 className="font-medium text-sm mb-3">Acțiuni Lead</h4>
-          <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                id="no-deal-vanzator"
-                checked={noDeal}
-                disabled={nuRaspunde || callBack}
-                onCheckedChange={handleNoDealChange}
-                className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
-              />
-              <span className={`text-sm font-medium transition-colors ${noDeal ? 'text-red-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-                No Deal
-              </span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                id="nu-raspunde-vanzator"
-                checked={nuRaspunde}
-                disabled={noDeal || callBack}
-                onCheckedChange={handleNuRaspundeChange}
-                className="data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
-              />
-              <span className={`text-sm font-medium transition-colors ${nuRaspunde ? 'text-orange-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-                Nu Raspunde
-              </span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <Checkbox
-                id="callback-vanzator"
-                checked={callBack}
-                disabled={noDeal || nuRaspunde}
-                onCheckedChange={handleCallBackChange}
-                className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
-              />
-              <span className={`text-sm font-medium transition-colors ${callBack ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-                Call Back
-              </span>
-            </label>
-          </div>
-        </div>
-        
-        {/* Buton Salvare */}
-        <div className="px-4 py-3 flex justify-end">
-          <Button 
-            size="sm" 
-            onClick={saveAllAndLog} 
-            disabled={loading || saving || !isDirty}
-            className="shadow-sm"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                Se salvează…
-              </>
-            ) : (
-              "Salvează Comandă"
-            )}
-          </Button>
-        </div>
-      </div>
+            setSvc(s => ({ ...s, qty: newQty }))
+          }
+        }}
+        onServiceSearchChange={setServiceSearchQuery}
+        onServiceSearchFocus={() => setServiceSearchFocused(true)}
+        onServiceSearchBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
+        onServiceSelect={(serviceId, serviceName) => {
+          setSvc(prev => ({ ...prev, id: serviceId }))
+          setServiceSearchQuery(serviceName)
+          setServiceSearchFocused(false)
+        }}
+        onServiceDoubleClick={(serviceId, serviceName) => {
+          setSvc(prev => ({ ...prev, id: serviceId }))
+          setServiceSearchQuery(serviceName)
+          setServiceSearchFocused(false)
+          setTimeout(() => {
+            onAddService()
+          }, 50)
+        }}
+        onSvcQtyChange={(qty) => setSvc(s => ({ ...s, qty }))}
+        onSvcDiscountChange={(discount) => setSvc(s => ({ ...s, discount }))}
+        onAddService={onAddService}
+        onUpdateItem={onUpdateItem}
+        onDelete={onDelete}
+        onDetailsChange={setTrayDetails}
+        onOfficeDirectChange={async (isOfficeDirect) => {
+          setOfficeDirect(isOfficeDirect)
+          if (isOfficeDirect) setCurierTrimis(false)
+          setIsDirty(true)
+          await handleDeliveryCheckboxChange(isOfficeDirect)
+        }}
+        onNoDealChange={handleNoDealChange}
+        onNuRaspundeChange={handleNuRaspundeChange}
+        onCallBackChange={handleCallBackChange}
+        onSave={saveAllAndLog}
+        currentInstrumentId={currentInstrumentId}
+        hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
+        isTechnician={isTechnician}
+        isDepartmentPipeline={isDepartmentPipeline}
+        subtotal={subtotal}
+        totalDiscount={totalDiscount}
+        total={total}
+        instrumentSettings={instrumentSettings}
+      />
     )
   }
 
