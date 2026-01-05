@@ -40,6 +40,9 @@ import { AddInstrumentForm } from './preturi/AddInstrumentForm'
 import { AddServiceForm } from './preturi/AddServiceForm'
 import { AddPartForm } from './preturi/AddPartForm'
 import { VanzariView } from './preturi/VanzariView'
+import { ReceptieView } from './preturi/ReceptieView'
+import { DepartmentView } from './preturi/DepartmentView'
+import { CurierView } from './preturi/CurierView'
 
 const supabase = supabaseBrowser()
 
@@ -6507,19 +6510,244 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }}
       />
         
-        {/* Secțiune Imagini Tăviță */}
-        <TrayImagesSection
-          trayImages={trayImages}
-          uploadingImage={uploadingImage}
-          isImagesExpanded={isImagesExpanded}
-          canAddTrayImages={canAddTrayImages}
-          canViewTrayImages={canViewTrayImages}
-          selectedQuoteId={selectedQuoteId}
-          onToggleExpanded={() => setIsImagesExpanded(!isImagesExpanded)}
-          onImageUpload={handleTrayImageUpload}
-          onDownloadAll={handleDownloadAllImages}
-          onImageDelete={handleTrayImageDelete}
-        />
+        {/* View-uri pipeline specifice */}
+        {isReceptiePipeline && selectedQuote && !undefinedTray ? (
+          <ReceptieView
+            items={items}
+            subscriptionType={subscriptionType}
+            trayImages={trayImages}
+            uploadingImage={uploadingImage}
+            isImagesExpanded={isImagesExpanded}
+            selectedQuoteId={selectedQuoteId}
+            services={services}
+            instruments={instruments}
+            technicians={technicians}
+            pipelinesWithIds={pipelinesWithIds}
+            quotes={quotes}
+            onUpdateItem={onUpdateItem}
+            onDelete={onDelete}
+            onRowClick={(item) => {
+              // Dacă este un serviciu, populează formularul de serviciu
+              if (item.item_type === 'service' && item.service_id) {
+                const serviceDef = services.find(s => s.id === item.service_id)
+                if (serviceDef) {
+                  setSvc({
+                    instrumentId: serviceDef.instrument_id || '',
+                    id: item.service_id,
+                    qty: String(item.qty || 1),
+                    discount: String(item.discount_pct || 0),
+                    urgent: false,
+                    technicianId: '',
+                    pipelineId: '',
+                    serialNumberId: '',
+                    selectedBrands: [],
+                  })
+                  setServiceSearchQuery(serviceDef.name)
+                }
+              }
+            }}
+            onMoveInstrument={(instrumentGroup) => {
+              setInstrumentToMove(instrumentGroup)
+              setShowMoveInstrumentDialog(true)
+            }}
+            onToggleImagesExpanded={() => setIsImagesExpanded(!isImagesExpanded)}
+            onImageUpload={handleTrayImageUpload}
+            onDownloadAll={handleDownloadAllImages}
+            onImageDelete={handleTrayImageDelete}
+            canAddTrayImages={canAddTrayImages}
+            canViewTrayImages={canViewTrayImages}
+          />
+        ) : isCurierPipeline && selectedQuote ? (
+          <CurierView
+            items={items}
+            subscriptionType={subscriptionType}
+            services={services}
+            instruments={instruments}
+            technicians={technicians}
+            pipelinesWithIds={pipelinesWithIds}
+            onUpdateItem={onUpdateItem}
+            onDelete={onDelete}
+            onRowClick={(item) => {
+              // Dacă este un serviciu, populează formularul de serviciu
+              if (item.item_type === 'service' && item.service_id) {
+                const serviceDef = services.find(s => s.id === item.service_id)
+                if (serviceDef) {
+                  setSvc({
+                    instrumentId: serviceDef.instrument_id || '',
+                    id: item.service_id,
+                    qty: String(item.qty || 1),
+                    discount: String(item.discount_pct || 0),
+                    urgent: false,
+                    technicianId: '',
+                    pipelineId: '',
+                    serialNumberId: '',
+                    selectedBrands: [],
+                  })
+                  setServiceSearchQuery(serviceDef.name)
+                }
+              }
+            }}
+          />
+        ) : isDepartmentPipeline && selectedQuote ? (
+          <DepartmentView
+            instrumentForm={instrumentForm}
+            svc={svc}
+            part={part}
+            serviceSearchQuery={serviceSearchQuery}
+            serviceSearchFocused={serviceSearchFocused}
+            partSearchQuery={partSearchQuery}
+            partSearchFocused={partSearchFocused}
+            items={items}
+            subscriptionType={subscriptionType}
+            availableInstruments={availableInstruments}
+            availableServices={availableServices}
+            services={services}
+            parts={parts}
+            instruments={instruments}
+            technicians={technicians}
+            pipelinesWithIds={pipelinesWithIds}
+            onInstrumentChange={(newInstrumentId) => {
+              const savedSettings = instrumentSettings[newInstrumentId] || {}
+              const savedQty = savedSettings.qty || '1'
+              const savedBrandGroups = savedSettings.brandSerialGroups && savedSettings.brandSerialGroups.length > 0
+                ? savedSettings.brandSerialGroups.map(g => ({
+                    ...g,
+                    qty: g.qty || String(g.serialNumbers?.length || 1),
+                    serialNumbers: g.serialNumbers.map((sn: any) => 
+                      typeof sn === 'string' ? { serial: sn, garantie: false } : sn
+                    )
+                  }))
+                : [{ brand: '', serialNumbers: [{ serial: '', garantie: false }], qty: '1' }]
+              const savedGarantie = savedSettings.garantie || false
+              
+              setInstrumentForm(prev => ({
+                ...prev,
+                instrument: newInstrumentId,
+                qty: savedQty,
+                brandSerialGroups: savedBrandGroups,
+                garantie: savedGarantie,
+              }))
+              setSvc(s => ({ 
+                ...s, 
+                instrumentId: newInstrumentId, 
+                id: '',
+                qty: savedQty
+              }))
+              setIsDirty(true)
+            }}
+            onQtyChange={(newQty) => {
+              setInstrumentForm(prev => ({ ...prev, qty: newQty }))
+              if (instrumentForm.instrument) {
+                setInstrumentSettings(prev => ({
+                  ...prev,
+                  [instrumentForm.instrument]: {
+                    qty: newQty,
+                    brandSerialGroups: prev[instrumentForm.instrument]?.brandSerialGroups || [{ brand: '', serialNumbers: [{ serial: '', garantie: false }] }],
+                    garantie: prev[instrumentForm.instrument]?.garantie || false
+                  }
+                }))
+                setSvc(s => ({ ...s, qty: newQty }))
+              }
+            }}
+            onServiceSearchChange={setServiceSearchQuery}
+            onServiceSearchFocus={() => setServiceSearchFocused(true)}
+            onServiceSearchBlur={() => setTimeout(() => setServiceSearchFocused(false), 200)}
+            onServiceSelect={(serviceId, serviceName) => {
+              setSvc(prev => ({ ...prev, id: serviceId }))
+              setServiceSearchQuery(serviceName)
+              setServiceSearchFocused(false)
+            }}
+            onServiceDoubleClick={(serviceId, serviceName) => {
+              setSvc(prev => ({ ...prev, id: serviceId }))
+              setServiceSearchQuery(serviceName)
+              setServiceSearchFocused(false)
+              setTimeout(() => {
+                onAddService()
+              }, 50)
+            }}
+            onSvcQtyChange={(qty) => setSvc(s => ({ ...s, qty }))}
+            onSvcDiscountChange={(discount) => setSvc(s => ({ ...s, discount }))}
+            onAddService={onAddService}
+            onPartSearchChange={setPartSearchQuery}
+            onPartSearchFocus={() => setPartSearchFocused(true)}
+            onPartSearchBlur={() => setTimeout(() => setPartSearchFocused(false), 200)}
+            onPartSelect={(partId, partName) => {
+              setPart(prev => ({ ...prev, id: partId, overridePrice: '' }))
+              setPartSearchQuery(partName)
+              setPartSearchFocused(false)
+            }}
+            onPartDoubleClick={(partId, partName) => {
+              setPart(prev => ({ ...prev, id: partId, overridePrice: '' }))
+              setPartSearchQuery(partName)
+              setPartSearchFocused(false)
+              setTimeout(() => {
+                onAddPart()
+              }, 50)
+            }}
+            onPartQtyChange={(qty) => setPart(p => ({ ...p, qty }))}
+            onSerialNumberChange={(serialNumberId) => setPart(p => ({ ...p, serialNumberId }))}
+            onAddPart={onAddPart}
+            onUpdateItem={onUpdateItem}
+            onDelete={onDelete}
+            onRowClick={(item) => {
+              // Dacă este un serviciu, populează formularul de serviciu
+              if (item.item_type === 'service' && item.service_id) {
+                const serviceDef = services.find(s => s.id === item.service_id)
+                if (serviceDef) {
+                  setSvc({
+                    instrumentId: serviceDef.instrument_id || '',
+                    id: item.service_id,
+                    qty: String(item.qty || 1),
+                    discount: String(item.discount_pct || 0),
+                    urgent: false,
+                    technicianId: '',
+                    pipelineId: '',
+                    serialNumberId: '',
+                    selectedBrands: [],
+                  })
+                  setServiceSearchQuery(serviceDef.name)
+                }
+              } else if (item.item_type === 'part') {
+                // Pentru piese, populează formularul de piese
+                setPart({
+                  id: item.part_id || '',
+                  serialNumberId: item.serial_number || '',
+                  qty: String(item.qty || 1),
+                  discount: String(item.discount_pct || 0),
+                  urgent: false,
+                  overridePrice: '',
+                })
+                const partDef = parts.find(p => p.id === item.part_id)
+                if (partDef) {
+                  setPartSearchQuery(partDef.name)
+                }
+              }
+            }}
+            currentInstrumentId={currentInstrumentId}
+            hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
+            isTechnician={isTechnician}
+            isDepartmentPipeline={isDepartmentPipeline}
+            isReparatiiPipeline={isReparatiiPipeline}
+            canAddParts={canAddParts}
+            canEditUrgentAndSubscription={canEditUrgentAndSubscription}
+          />
+        ) : (
+          <>
+            {/* Secțiune Imagini Tăviță */}
+            <TrayImagesSection
+              trayImages={trayImages}
+              uploadingImage={uploadingImage}
+              isImagesExpanded={isImagesExpanded}
+              canAddTrayImages={canAddTrayImages}
+              canViewTrayImages={canViewTrayImages}
+              selectedQuoteId={selectedQuoteId}
+              onToggleExpanded={() => setIsImagesExpanded(!isImagesExpanded)}
+              onImageUpload={handleTrayImageUpload}
+              onDownloadAll={handleDownloadAllImages}
+              onImageDelete={handleTrayImageDelete}
+            />
+          </>
+        )}
         
         {/* Opțiuni Urgent & Abonament - Compact Bar */}
         <div className="mx-1 sm:mx-2 lg:mx-3 mb-2 sm:mb-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-muted/30 border border-border/40">
@@ -7326,104 +7554,108 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         />
       )}
 
-      {/* Items Table */}
-      <ItemsTable
-        items={items}
-        services={services}
-        instruments={instruments}
-        technicians={technicians}
-        pipelinesWithIds={pipelinesWithIds}
-        isReceptiePipeline={isReceptiePipeline}
-        canEditUrgentAndSubscription={canEditUrgentAndSubscription}
-        onUpdateItem={onUpdateItem}
-        onDelete={onDelete}
-        onRowClick={(item) => {
-          // Dacă este un serviciu, populează formularul de serviciu
-          if (item.item_type === 'service' && item.service_id) {
-            const serviceDef = services.find(s => s.id === item.service_id)
-            if (serviceDef) {
-              setSvc({
-                instrumentId: serviceDef.instrument_id || '',
-                id: item.service_id,
-                qty: String(item.qty || 1),
-                discount: String(item.discount_pct || 0),
-                urgent: false,
-                technicianId: '',
-                pipelineId: '',
-                serialNumberId: '',
-                selectedBrands: [],
-              })
-              setServiceSearchQuery(serviceDef.name)
-              
-              // Populează și formularul de instrument dacă există instrument
-              if (serviceDef.instrument_id) {
-                const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
-                if (instrument) {
-                  setInstrumentForm(prev => ({
-                    ...prev,
-                    instrument: serviceDef.instrument_id || '',
+      {/* Items Table și Totals - doar pentru pipeline-urile non-specifice */}
+      {!isReceptiePipeline && !isCurierPipeline && !isDepartmentPipeline && (
+        <>
+          <ItemsTable
+            items={items}
+            services={services}
+            instruments={instruments}
+            technicians={technicians}
+            pipelinesWithIds={pipelinesWithIds}
+            isReceptiePipeline={isReceptiePipeline}
+            canEditUrgentAndSubscription={canEditUrgentAndSubscription}
+            onUpdateItem={onUpdateItem}
+            onDelete={onDelete}
+            onRowClick={(item) => {
+              // Dacă este un serviciu, populează formularul de serviciu
+              if (item.item_type === 'service' && item.service_id) {
+                const serviceDef = services.find(s => s.id === item.service_id)
+                if (serviceDef) {
+                  setSvc({
+                    instrumentId: serviceDef.instrument_id || '',
+                    id: item.service_id,
                     qty: String(item.qty || 1),
-                  }))
+                    discount: String(item.discount_pct || 0),
+                    urgent: false,
+                    technicianId: '',
+                    pipelineId: '',
+                    serialNumberId: '',
+                    selectedBrands: [],
+                  })
+                  setServiceSearchQuery(serviceDef.name)
                   
-                  // Populează brand și serial number dacă există
-                  const brandGroups = (item as any).brand_groups || []
-                  if (brandGroups.length > 0) {
-                    const brandSerialGroups = brandGroups.map((bg: any) => ({
-                      brand: bg.brand || '',
-                      serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 
-                        ? bg.serialNumbers 
-                        : [{ serial: '', garantie: false }],
-                      garantie: bg.garantie || false
-                    }))
-                    setInstrumentForm(prev => ({
-                      ...prev,
-                      brandSerialGroups,
-                      garantie: brandGroups[0]?.garantie || false
-                    }))
-                  } else if (item.brand || item.serial_number) {
-                    // Fallback pentru structura veche
-                    setInstrumentForm(prev => ({
-                      ...prev,
-                      brandSerialGroups: [{
-                        brand: item.brand || '',
-                        serialNumbers: item.serial_number ? [{ serial: item.serial_number, garantie: false }] : [{ serial: '', garantie: false }],
-                        garantie: item.garantie || false
-                      }],
-                      garantie: item.garantie || false
-                    }))
+                  // Populează și formularul de instrument dacă există instrument
+                  if (serviceDef.instrument_id) {
+                    const instrument = instruments.find(i => i.id === serviceDef.instrument_id)
+                    if (instrument) {
+                      setInstrumentForm(prev => ({
+                        ...prev,
+                        instrument: serviceDef.instrument_id || '',
+                        qty: String(item.qty || 1),
+                      }))
+                      
+                      // Populează brand și serial number dacă există
+                      const brandGroups = (item as any).brand_groups || []
+                      if (brandGroups.length > 0) {
+                        const brandSerialGroups = brandGroups.map((bg: any) => ({
+                          brand: bg.brand || '',
+                          serialNumbers: bg.serialNumbers && bg.serialNumbers.length > 0 
+                            ? bg.serialNumbers 
+                            : [{ serial: '', garantie: false }],
+                          garantie: bg.garantie || false
+                        }))
+                        setInstrumentForm(prev => ({
+                          ...prev,
+                          brandSerialGroups,
+                          garantie: brandGroups[0]?.garantie || false
+                        }))
+                      } else if (item.brand || item.serial_number) {
+                        // Fallback pentru structura veche
+                        setInstrumentForm(prev => ({
+                          ...prev,
+                          brandSerialGroups: [{
+                            brand: item.brand || '',
+                            serialNumbers: item.serial_number ? [{ serial: item.serial_number, garantie: false }] : [{ serial: '', garantie: false }],
+                            garantie: item.garantie || false
+                          }],
+                          garantie: item.garantie || false
+                        }))
+                      }
+                    }
                   }
                 }
+              } else if (item.item_type === 'part') {
+                // Pentru piese, populează formularul de piese
+                setPart({
+                  id: item.part_id || '',
+                  serialNumberId: item.serial_number || '',
+                  qty: String(item.qty || 1),
+                  discount: String(item.discount_pct || 0),
+                  urgent: false,
+                  overridePrice: '',
+                })
+                const partDef = parts.find(p => p.id === item.part_id)
+                if (partDef) {
+                  setPartSearchQuery(partDef.name)
+                }
               }
-            }
-          } else if (item.item_type === 'part') {
-            // Pentru piese, populează formularul de piese
-            setPart({
-              id: item.part_id || '',
-              serialNumberId: item.serial_number || '',
-              qty: String(item.qty || 1),
-              discount: String(item.discount_pct || 0),
-              urgent: false,
-              overridePrice: '',
-            })
-            const partDef = parts.find(p => p.id === item.part_id)
-            if (partDef) {
-              setPartSearchQuery(partDef.name)
-            }
-          }
-        }}
-        onMoveInstrument={(instrumentGroup) => {
-          setInstrumentToMove(instrumentGroup)
-          setShowMoveInstrumentDialog(true)
-        }}
-      />
+            }}
+            onMoveInstrument={(instrumentGroup) => {
+              setInstrumentToMove(instrumentGroup)
+              setShowMoveInstrumentDialog(true)
+            }}
+          />
 
-      {/* Totals */}
-      <TotalsSection
-        items={items}
-        subscriptionType={subscriptionType}
-        services={services}
-        instruments={instruments}
-      />
+          {/* Totals */}
+          <TotalsSection
+            items={items}
+            subscriptionType={subscriptionType}
+            services={services}
+            instruments={instruments}
+          />
+        </>
+      )}
 
       {/* PrintView - ascuns vizual, dar in DOM pentru print */}
       <div className="pb-2">
