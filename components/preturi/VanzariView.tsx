@@ -201,8 +201,8 @@ export function VanzariView({
           </TableHeader>
           <TableBody>
             {items.filter(it => it.item_type !== null).map(it => {
-              const disc = Math.min(100, Math.max(0, it.discount_pct));
-              const base = it.qty * it.price;
+              const disc = Math.min(100, Math.max(0, it.discount_pct || 0));
+              const base = (it.qty || 0) * (it.price || 0);
               const afterDisc = base * (1 - disc / 100);
               const lineTotal = it.urgent ? afterDisc * (1 + URGENT_MARKUP_PCT / 100) : afterDisc;
               
