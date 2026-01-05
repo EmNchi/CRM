@@ -365,8 +365,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 const URGENT_MARKUP_PCT = 30; // +30% per line if urgent
 
-// Componenta pentru calcularea si afisarea datelor de print pentru toate tavitele\
-/* 
+// Componenta pentru calcularea si afisarea datelor de print pentru toate tavitele
 function PrintViewData({ 
   lead, 
   quotes, 
@@ -582,7 +581,6 @@ function PrintViewData({
     </div>
   )
 }
-*/
 
 
 
