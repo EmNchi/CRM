@@ -20,7 +20,7 @@ interface VanzariViewProps {
   instrumentForm: { 
     instrument: string
     qty: string
-    brandSerialGroups?: Array<{ brand: string; serialNumbers: Array<{ serial: string; garantie: boolean }> | string[] }>
+    brandSerialGroups?: Array<{ brand: string; serialNumbers: Array<{ serial: string; garantie: boolean }> | string[]; qty?: string }>
   }
   svc: { 
     id: string
