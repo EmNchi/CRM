@@ -236,7 +236,7 @@ export function VanzariView({
                       }}
                     />
                   </TableCell>
-                  <TableCell className="text-right font-medium text-sm py-2">{lineTotal.toFixed(2)}</TableCell>
+                  <TableCell className="text-right font-medium text-sm py-2">{lineTotal?.toFixed(2) || '0.00'}</TableCell>
                   <TableCell className="py-2">
                     <Button 
                       variant="ghost" 
