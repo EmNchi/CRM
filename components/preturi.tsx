@@ -2515,11 +2515,40 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
         }
       }
       
+      // IMPORTANT: Reîncarcă toate items-urile existente din DB înainte de a salva
+      // pentru a preveni ștergerea instrumentelor existente
+      const allExistingItems = await listQuoteItems(quoteToUse.id, services, instruments, pipelinesWithIds)
+      
+      // Combină items-urile existente cu cele noi din UI
+      // Creează un map pentru items-urile existente (după ID)
+      const existingItemsMap = new Map(allExistingItems.map(it => [String(it.id), it]))
+      
+      // Adaugă sau actualizează items-urile din UI
+      const itemsToSave = [...allExistingItems]
+      for (const uiItem of items) {
+        if (isLocalId(uiItem.id)) {
+          // Item nou din UI - va fi adăugat de persistAndLogServiceSheet
+          itemsToSave.push(uiItem)
+        } else {
+          // Item existent - actualizează-l cu datele din UI
+          const existingItem = existingItemsMap.get(String(uiItem.id))
+          if (existingItem) {
+            // Actualizează item-ul existent cu datele din UI
+            const index = itemsToSave.findIndex(it => String(it.id) === String(uiItem.id))
+            if (index !== -1) {
+              itemsToSave[index] = { ...existingItem, ...uiItem }
+            }
+          }
+        }
+      }
+      
       console.log('🔧 Pregătire salvare tăviță:', {
         leadId,
         quoteId: quoteToUse.id,
-        itemsCount: items.length,
-        items: items.map(it => ({ 
+        itemsCount: itemsToSave.length,
+        existingItemsCount: allExistingItems.length,
+        uiItemsCount: items.length,
+        items: itemsToSave.map(it => ({ 
           id: it.id, 
           type: it.item_type, 
           name: it.name_snapshot,
@@ -2534,7 +2563,7 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       if (!isVanzariPipeline && !isCurierPipeline) {
         const instrumentIds = Array.from(
           new Set(
-            items
+            itemsToSave
               .filter(it => it.instrument_id)
               .map(it => String(it.instrument_id))
           )
@@ -2546,6 +2575,9 @@ const Preturi = forwardRef<PreturiRef, PreturiProps>(function Preturi({ leadId, 
       }
 
       const { items: fresh, snapshot } = await persistAndLogServiceSheet({
+        leadId,
+        quoteId: quoteToUse.id,
+        items: itemsToSave,
         leadId,
         quoteId: quoteToUse.id,
         items,
