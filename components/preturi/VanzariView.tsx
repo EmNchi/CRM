@@ -218,7 +218,15 @@ export function VanzariView({
         serviceSearchFocused={serviceSearchFocused}
         currentInstrumentId={currentInstrumentId}
         availableServices={availableServices}
-        instrumentForm={instrumentForm}
+        instrumentForm={{
+          ...instrumentForm,
+          brandSerialGroups: instrumentForm.brandSerialGroups?.map(group => ({
+            ...group,
+            serialNumbers: Array.isArray(group.serialNumbers) && group.serialNumbers.length > 0 && typeof group.serialNumbers[0] === 'string'
+              ? group.serialNumbers.map(sn => ({ serial: sn, garantie: false }))
+              : group.serialNumbers as Array<{ serial: string; garantie: boolean }>
+          }))
+        }}
         isVanzariPipeline={true}
         canEditUrgentAndSubscription={canEditUrgentAndSubscription !== false}
         onServiceSearchChange={onServiceSearchChange}
