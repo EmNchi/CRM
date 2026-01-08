@@ -196,6 +196,11 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     }
 
     try {
+      // Verifica cache-ul mai întâi
+      if (senderNamesCache[senderId]) {
+        return senderNamesCache[senderId]
+      }
+
       // 1. Caută în technicians tabel
       const { data: techData } = await supabase
         .from('technicians')
@@ -208,46 +213,29 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         return techData.name
       }
 
-      // 2. Caută display_name din auth.users (metadata)
-      const { data: userData } = await supabase
-        .from('app_members')
-        .select('user_id')
-        .eq('user_id', senderId)
-        .single()
-
-      if (userData) {
-        // Caută display_name din profiles sau metadata
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('display_name')
-          .eq('id', senderId)
-          .single()
-
-        if (profileData?.display_name) {
-          setSenderNamesCache((prev) => ({ ...prev, [senderId]: profileData.display_name }))
-          return profileData.display_name
-        }
-      }
-
-      // 3. Fallback la email
+      // 2. Caută în app_members pentru email (și eventual display_name dacă exista)
       const { data: memberData } = await supabase
         .from('app_members')
-        .select('email')
+        .select('email, display_name')
         .eq('user_id', senderId)
         .single()
 
-      if (memberData?.email) {
-        const name = memberData.email.split('@')[0]
-        setSenderNamesCache((prev) => ({ ...prev, [senderId]: name }))
-        return name
+      if (memberData) {
+        // Prioritate: display_name > email prefix
+        const displayName = memberData.display_name || memberData.email?.split('@')[0] || 'User'
+        setSenderNamesCache((prev) => ({ ...prev, [senderId]: displayName }))
+        return displayName
       }
 
+      // 3. Fallback - nu gasim user-ul, returnez User
+      setSenderNamesCache((prev) => ({ ...prev, [senderId]: 'User' }))
       return 'User'
     } catch (error) {
       console.error('Error fetching sender name:', error)
+      setSenderNamesCache((prev) => ({ ...prev, [senderId]: 'User' }))
       return 'User'
     }
-  }, [user?.id, user?.email, user?.user_metadata?.display_name, userName])
+  }, [user?.id, user?.email, user?.user_metadata?.display_name, userName, senderNamesCache])
 
   // Pre-load sender names for all messages
   useEffect(() => {
