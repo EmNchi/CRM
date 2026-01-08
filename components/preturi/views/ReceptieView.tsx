@@ -262,7 +262,7 @@ export function ReceptieView(props: ReceptieViewProps) {
             grouped.get(instrument.id)!.items.push(safeItem as LeadQuoteItem)
           } catch (err) {
             // Dacă extragerea eșuează, ignorăm item-ul
-            console.log('Eroare la extragerea item-ului pentru mutare:', err)
+            // console.log('Eroare la extragerea item-ului pentru mutare:', err)
           }
         }
       }

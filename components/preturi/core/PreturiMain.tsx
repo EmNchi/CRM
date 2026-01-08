@@ -470,6 +470,7 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
     setTrayDetails: state.setTrayDetails,
     setLoadingTrayDetails: state.setLoadingTrayDetails,
     setItems: state.setItems,
+    setTrayImages: state.setTrayImages,
     setIsDirty: state.setIsDirty,
     setOfficeDirect: state.setOfficeDirect,
     setCurierTrimis: state.setCurierTrimis,
@@ -744,15 +745,15 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
       // Quick actions for department view
       onMarkInProgress={() => {
         // TODO: Implementare logică pentru "În lucru"
-        console.log('Marcat ca În lucru')
+        // console.log('Marcat ca În lucru')
       }}
       onMarkComplete={() => {
         // TODO: Implementare logică pentru "Finalizare"
-        console.log('Marcat ca Finalizat')
+        // console.log('Marcat ca Finalizat')
       }}
       onMarkWaiting={() => {
         // TODO: Implementare logică pentru "În așteptare"
-        console.log('Marcat ca În așteptare')
+        // console.log('Marcat ca În așteptare')
       }}
       onSaveToHistory={async () => {
         // Salvează în istoric folosind funcția existentă

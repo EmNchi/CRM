@@ -226,7 +226,8 @@ export const listQuoteItems = async (
         id: b.id || '',
         brand: b.brand || '',
         garantie: b.garantie || false,
-        serialNumbers: safeSerials.map((s: any) => s?.serial_number || '').filter((sn: string) => sn)
+        // IMPORTANT: Include TOȚI serial numbers-urile, inclusiv cele goale (nu filtra)
+        serialNumbers: safeSerials.map((s: any) => s?.serial_number || '')
       }
     })
     

@@ -38,70 +38,66 @@ export function TrayImagesSection({
 
   return (
     <div className="mx-2 sm:mx-4">
-      <div className="mx-2 sm:mx-4">
-  <div className="rounded-xl border-2 border-slate-200/80 dark:border-slate-700/50 
-    bg-gradient-to-br from-orange-50 via-orange-100/40 to-slate-50 
-    dark:from-orange-950/30 dark:via-orange-900/20 dark:to-slate-950/20 
-    shadow-sm overflow-hidden">
+      <div className="rounded-xl border-2 border-slate-200/80 dark:border-slate-700/50 
+        bg-gradient-to-br from-orange-50 via-orange-100/40 to-slate-50 
+        dark:from-orange-950/30 dark:via-orange-900/20 dark:to-slate-950/20 
+        shadow-sm overflow-hidden">
 
-    {/* Header */}
-    <div className="px-4 py-3 
-      bg-gradient-to-r from-orange-100/80 to-slate-100/60 
-      dark:from-orange-900/40 dark:to-slate-900/30 
-      border-b border-orange-200/60 dark:border-orange-700/40">
+        {/* Header */}
+        <div className="px-4 py-3 
+          bg-gradient-to-r from-orange-100/80 to-slate-100/60 
+          dark:from-orange-900/40 dark:to-slate-900/30 
+          border-b border-orange-200/60 dark:border-orange-700/40">
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl 
-            bg-gradient-to-br from-orange-400 to-orange-500 
-            flex items-center justify-center shadow-sm">
-            <ImageIcon className="h-4.5 w-4.5 text-white" />
-          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl 
+                bg-gradient-to-br from-orange-400 to-orange-500 
+                flex items-center justify-center shadow-sm">
+                <ImageIcon className="h-4.5 w-4.5 text-white" />
+              </div>
 
-          <div>
-            <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100">
-              Imagini Tăviță ({imagesArray.length})
-            </h3>
-            <p className="text-[11px] text-slate-700/80 dark:text-slate-300/70">
-              Galerie imagini pentru tăviță • {imagesArray.length === 0
-                ? 'Nu există imagini'
-                : `${imagesArray.length} imagine${imagesArray.length === 1 ? '' : 'i'}`}
-            </p>
+              <div>
+                <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100">
+                  Imagini Tăviță ({imagesArray.length})
+                </h3>
+                <p className="text-[11px] text-slate-700/80 dark:text-slate-300/70">
+                  Galerie imagini pentru tăviță • {imagesArray.length === 0
+                    ? 'Nu există imagini'
+                    : `${imagesArray.length} imagine${imagesArray.length === 1 ? '' : 'i'}`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {imagesArray.length > 0 && isImagesExpanded && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onDownloadAll}
+                  className="h-7 text-xs 
+                    border-orange-200 dark:border-orange-700 
+                    hover:bg-orange-50 dark:hover:bg-orange-900/30">
+                  <Download className="h-3 w-3 mr-1" />
+                  Descarcă toate
+                </Button>
+              )}
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleExpanded}
+                className="h-7 w-7 p-0"
+                title={isImagesExpanded ? 'Minimizează' : 'Maximizează'}>
+                {isImagesExpanded ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          {imagesArray.length > 0 && isImagesExpanded && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onDownloadAll}
-              className="h-7 text-xs 
-                border-orange-200 dark:border-orange-700 
-                hover:bg-orange-50 dark:hover:bg-orange-900/30">
-              <Download className="h-3 w-3 mr-1" />
-              Descarcă toate
-            </Button>
-          )}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onToggleExpanded}
-            className="h-7 w-7 p-0"
-            title={isImagesExpanded ? 'Minimizează' : 'Maximizează'}>
-            {isImagesExpanded ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-
 
         {/* Content */}
         {isImagesExpanded && (
@@ -185,6 +181,3 @@ export function TrayImagesSection({
     </div>
   )
 }
-
-
-

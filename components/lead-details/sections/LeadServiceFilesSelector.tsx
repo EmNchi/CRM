@@ -154,17 +154,8 @@ export function LeadServiceFilesSelector({
                 </div>
               </>
             ) : (
-              /* Pentru tehnicieni: afișează doar tăvița curentă, fără dropdown */
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                  Tăviță curentă
-                </label>
-                <p className="text-sm font-medium">
-                  {allTrays.find(t => t.id === selectedTrayId)?.number
-                    ? `Tăviță #${allTrays.find(t => t.id === selectedTrayId)!.number} - ${allTrays.find(t => t.id === selectedTrayId)!.size}`
-                    : 'N/A'}
-                </p>
-              </div>
+              /* Pentru tehnicieni: se afișează în header-ul DepartmentView, nu aici */
+              null
             )}
           </>
         ) : (

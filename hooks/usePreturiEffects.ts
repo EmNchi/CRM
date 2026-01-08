@@ -29,6 +29,7 @@ interface UsePreturiEffectsProps {
   setTrayDetails: (details: string) => void
   setLoadingTrayDetails: (loading: boolean) => void
   setItems: React.Dispatch<React.SetStateAction<LeadQuoteItem[]>>
+  setTrayImages: React.Dispatch<React.SetStateAction<any[]>>
   setIsDirty: (dirty: boolean) => void
   setOfficeDirect: (value: boolean) => void
   setCurierTrimis: (value: boolean) => void
@@ -58,6 +59,7 @@ export function usePreturiEffects({
   setTrayDetails,
   setLoadingTrayDetails,
   setItems,
+  setTrayImages,
   setIsDirty,
   setOfficeDirect,
   setCurierTrimis,
@@ -78,6 +80,27 @@ export function usePreturiEffects({
       }
     })()
   }, [setUrgentTagId])
+
+  // Încarcă imaginile pentru tăvița selectată
+  useEffect(() => {
+    if (!selectedQuoteId) {
+      setTrayImages([])
+      return
+    }
+
+    const loadImages = async () => {
+      try {
+        const { listTrayImages } = await import('@/lib/supabase/imageOperations')
+        const images = await listTrayImages(selectedQuoteId)
+        setTrayImages(images)
+      } catch (error) {
+        console.error('Error loading tray images:', error)
+        setTrayImages([])
+      }
+    }
+
+    loadImages()
+  }, [selectedQuoteId, setTrayImages])
 
   // Sincronizează instrumentForm.instrument cu svc.instrumentId
   useEffect(() => {

@@ -1,6 +1,7 @@
 'use client'
 
-import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Loader2, Save } from 'lucide-react'
 import { AddInstrumentForm } from '../forms/AddInstrumentForm'
 import { AddServiceForm } from '../forms/AddServiceForm'
 import { AddPartForm } from '../forms/AddPartForm'
@@ -8,7 +9,6 @@ import { ItemsTable } from '../sections/ItemsTable'
 import { TotalsSection } from '../sections/TotalsSection'
 import { TrayImagesSection } from '../sections/TrayImagesSection'
 import { TrayTabs } from '../sections/TrayTabs'
-import { TrayActions } from '../sections/TrayActions'
 import { TrayDetailsSection } from '../sections/TrayDetailsSection'
 import type { LeadQuoteItem, LeadQuote } from '@/lib/types/preturi'
 import type { Service } from '@/lib/supabase/serviceOperations'
@@ -236,96 +236,150 @@ export function DepartmentView({
   isCommercialPipeline = false,
   onDetailsChange,
 }: DepartmentViewProps) {
+  const selectedQuote = quotes.find(q => q.id === selectedQuoteId)
+
   return (
-    <div className="space-y-4">
-      {/* TrayTabs - butoanele pentru tăviță */}
-      {quotes.length > 0 && (
-        <TrayTabs
-          quotes={quotes}
-          selectedQuoteId={selectedQuoteId ?? null}
-          isVanzariPipeline={false}
-          isReceptiePipeline={false}
-          isDepartmentPipeline={isDepartmentPipeline}
-          isVanzatorMode={false}
-          sendingTrays={sendingTrays}
-          traysAlreadyInDepartments={traysAlreadyInDepartments}
-          onTraySelect={onTraySelect || (() => {})}
-          onAddTray={onAddTray || (() => {})}
-          onDeleteTray={onDeleteTray || (() => {})}
-          onSendTrays={onSendTrays || (() => {})}
-        />
-      )}
-      
-      {/* Indicator de urgentare și abonament - vizibil (read-only) */}
-      <div className="mx-1 sm:mx-2 px-3 py-2 rounded-lg bg-muted/30 border">
-        <div className="flex flex-wrap items-center gap-4">
-          {/* Urgent toggle - read-only */}
-          <div className="flex items-center gap-2.5 opacity-70">
-            <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 cursor-not-allowed ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'}`}>
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${urgentAllServices ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </div>
-            <span className={`text-sm font-medium ${urgentAllServices ? 'text-red-600' : 'text-muted-foreground'}`}>
-              Urgent
-            </span>
-            {urgentAllServices && (
-              <span className="text-[10px] font-medium text-red-500 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded animate-pulse">
-                +30%
-              </span>
+    <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden pb-4">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            {/* Informații Tăviță (doar pentru tehnicieni) */}
+            {isTechnician && selectedQuote && (
+              <div className="flex flex-col border-r pr-6 border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-0.5">Tăviță curentă</span>
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-xs font-bold text-primary">{selectedQuote.number || '?'}</span>
+                  </div>
+                  <span className="font-semibold text-sm">
+                    {selectedQuote.number ? `Tăviță #${selectedQuote.number}` : 'Tăviță nesetată'} 
+                    {selectedQuote.size ? ` — ${selectedQuote.size}` : ''}
+                  </span>
+                </div>
+              </div>
             )}
-          </div>
-          
-          {/* Divider */}
-          <div className="h-5 w-px bg-border/60" />
-          
-          {/* Abonament - read-only */}
-          <div className="flex items-center gap-1.5 opacity-70">
-            <span className="text-sm text-muted-foreground">Abonament:</span>
-            <span className="text-sm font-medium">
-              {subscriptionType === 'services' ? 'Servicii (-10%)' : 
-               subscriptionType === 'parts' ? 'Piese (-5%)' : 
-               subscriptionType === 'both' ? 'Servicii + Piese' : 
-               'Fără abonament'}
-            </span>
+
+            <div>
+              <h3 className="font-semibold text-base text-foreground">Departament Tehnic</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">Gestionează instrumentele și serviciile din acest departament</p>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* TrayTabs - butoanele pentru tăviță */}
+      {quotes.length > 0 && (
+        <div className="px-4">
+          <TrayTabs
+            quotes={quotes}
+            selectedQuoteId={selectedQuoteId ?? null}
+            isVanzariPipeline={false}
+            isReceptiePipeline={false}
+            isDepartmentPipeline={isDepartmentPipeline}
+            isVanzatorMode={false}
+            sendingTrays={sendingTrays}
+            traysAlreadyInDepartments={traysAlreadyInDepartments}
+            onTraySelect={onTraySelect || (() => {})}
+            onAddTray={onAddTray || (() => {})}
+            onDeleteTray={onDeleteTray || (() => {})}
+            onSendTrays={onSendTrays || (() => {})}
+          />
+        </div>
+      )}
       
-      
-      {/* TrayActions - butoane salvare */}
-      <div className="mx-1 sm:mx-2 flex justify-end">
-        <button
-          onClick={onSaveToHistory}
-          disabled={saving}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {saving ? 'Se salvează...' : '💾 Salvează în istoric'}
-        </button>
+      {/* Indicator de urgentare și abonament - vizibil (read-only) */}
+      <div className="mx-4 px-3 py-2 rounded-lg bg-muted/30 border">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Urgent toggle - read-only */}
+            <div className="flex items-center gap-2.5 opacity-70">
+              <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 cursor-not-allowed ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${urgentAllServices ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </div>
+              <span className={`text-sm font-medium ${urgentAllServices ? 'text-red-600' : 'text-muted-foreground'}`}>
+                Urgent
+              </span>
+              {urgentAllServices && (
+                <span className="text-[10px] font-medium text-red-500 bg-red-50 dark:bg-red-950/30 px-1.5 py-0.5 rounded animate-pulse">
+                  +30%
+                </span>
+              )}
+            </div>
+            
+            {/* Divider */}
+            <div className="h-5 w-px bg-border/60" />
+            
+            {/* Abonament - read-only */}
+            <div className="flex items-center gap-1.5 opacity-70">
+              <span className="text-sm text-muted-foreground">Abonament:</span>
+              <span className="text-sm font-medium">
+                {subscriptionType === 'services' ? 'Servicii (-10%)' : 
+                subscriptionType === 'parts' ? 'Piese (-5%)' : 
+                subscriptionType === 'both' ? 'Servicii + Piese' : 
+                'Fără abonament'}
+              </span>
+            </div>
+          </div>
+
+          {/* Buton Salvare - aliniat la dreapta */}
+          <Button 
+            size="sm"
+            type="button"
+            onClick={onSaveToHistory} 
+            disabled={saving}
+            className="shadow-sm flex-shrink-0 gap-1.5"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Se salvează…
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Salvează în Istoric
+              </>
+            )}
+          </Button>
+        </div>
       </div>
       
-      {/* Fișa de serviciu - header cu imagini și salvare */}
-      <Card className="">
-        <CardContent className="pt-0 space-y-4">
-          {/* Galerie Imagini */}
-          {canViewTrayImages && selectedQuoteId && (
-            <TrayImagesSection
-              trayImages={trayImages}
-              uploadingImage={uploadingImage}
-              isImagesExpanded={isImagesExpanded}
-              canAddTrayImages={canAddTrayImages}
-              canViewTrayImages={canViewTrayImages}
-              selectedQuoteId={selectedQuoteId}
-              onToggleExpanded={onToggleImagesExpanded || (() => {})}
-              onImageUpload={onImageUpload || (() => {})}
-              onDownloadAll={onDownloadAllImages || (() => {})}
-              onImageDelete={onImageDelete || (() => {})}
-            />
-          )}
-          
-        </CardContent>
-      </Card>
+      {/* Detalii comandă comunicate de client */}
+      {isCommercialPipeline && (
+        <TrayDetailsSection
+          trayDetails={trayDetails}
+          loadingTrayDetails={loadingTrayDetails}
+          isCommercialPipeline={true}
+          onDetailsChange={onDetailsChange || (() => {})}
+          setIsDirty={setIsDirty}
+        />
+      )}
 
-      {/* Add Instrument - afișat pentru toți utilizatorii din departament */}
-      <AddInstrumentForm
+      {/* Galerie Imagini */}
+      {canViewTrayImages && selectedQuoteId && (
+        <TrayImagesSection
+          trayImages={trayImages}
+          uploadingImage={uploadingImage}
+          isImagesExpanded={isImagesExpanded}
+          canAddTrayImages={canAddTrayImages}
+          canViewTrayImages={canViewTrayImages}
+          selectedQuoteId={selectedQuoteId}
+          onToggleExpanded={onToggleImagesExpanded || (() => {})}
+          onImageUpload={(event) => {
+            const file = event.target.files?.[0]
+            if (file && onImageUpload) {
+              (onImageUpload as any)(file)
+            }
+          }}
+          onDownloadAll={onDownloadAllImages || (() => {})}
+          onImageDelete={onImageDelete || (() => {})}
+        />
+      )}
+
+      {/* Formulare de adăugare */}
+      <div className="space-y-4">
+        <AddInstrumentForm
           instrumentForm={instrumentForm}
           availableInstruments={availableInstruments}
           instruments={instruments.map(i => ({ id: i.id, name: i.name, department_id: i.department_id ?? null, pipeline: i.pipeline ?? null }))}
@@ -347,68 +401,66 @@ export function DepartmentView({
           onUpdateSerialGarantie={onUpdateSerialGarantie}
           setIsDirty={setIsDirty}
         />
-      
-      {/* Add Service */}
-      <AddServiceForm
-        svc={svc}
-        serviceSearchQuery={serviceSearchQuery}
-        serviceSearchFocused={serviceSearchFocused}
-        currentInstrumentId={currentInstrumentId}
-        availableServices={availableServices}
-        onServiceSearchChange={onServiceSearchChange}
-        onServiceSearchFocus={onServiceSearchFocus}
-        onServiceSearchBlur={onServiceSearchBlur}
-        onServiceSelect={onServiceSelect}
-        onServiceDoubleClick={onServiceDoubleClick}
-        onQtyChange={onSvcQtyChange}
-        onDiscountChange={onSvcDiscountChange}
-        onAddService={onAddService}
-      />
-      
-      {/* Add Part - only for Reparatii */}
-      {isReparatiiPipeline && canAddParts && (
-        <AddPartForm
-          part={part}
-          partSearchQuery={partSearchQuery}
-          partSearchFocused={partSearchFocused}
-          parts={parts}
-          items={items}
-          instrumentForm={{ ...instrumentForm, brandSerialGroups: instrumentForm.brandSerialGroups || [] }}
-          canAddParts={canAddParts}
-          onPartSearchChange={onPartSearchChange}
-          onPartSearchFocus={onPartSearchFocus}
-          onPartSearchBlur={onPartSearchBlur}
-          onPartSelect={onPartSelect}
-          onPartDoubleClick={onPartDoubleClick}
-          onQtyChange={onPartQtyChange}
-          onSerialNumberChange={onSerialNumberChange}
-          onAddPart={onAddPart}
+        
+        <AddServiceForm
+          svc={svc}
+          serviceSearchQuery={serviceSearchQuery}
+          serviceSearchFocused={serviceSearchFocused}
+          currentInstrumentId={currentInstrumentId}
+          availableServices={availableServices}
+          onServiceSearchChange={onServiceSearchChange}
+          onServiceSearchFocus={onServiceSearchFocus}
+          onServiceSearchBlur={onServiceSearchBlur}
+          onServiceSelect={onServiceSelect}
+          onServiceDoubleClick={onServiceDoubleClick}
+          onQtyChange={onSvcQtyChange}
+          onDiscountChange={onSvcDiscountChange}
+          onAddService={onAddService}
         />
-      )}
+        
+        {isReparatiiPipeline && canAddParts && (
+          <AddPartForm
+            part={part}
+            partSearchQuery={partSearchQuery}
+            partSearchFocused={partSearchFocused}
+            parts={parts}
+            items={items}
+            instrumentForm={{ ...instrumentForm, brandSerialGroups: instrumentForm.brandSerialGroups || [] }}
+            canAddParts={canAddParts}
+            onPartSearchChange={onPartSearchChange}
+            onPartSearchFocus={onPartSearchFocus}
+            onPartSearchBlur={onPartSearchBlur}
+            onPartSelect={onPartSelect}
+            onPartDoubleClick={onPartDoubleClick}
+            onQtyChange={onPartQtyChange}
+            onSerialNumberChange={onSerialNumberChange}
+            onAddPart={onAddPart}
+          />
+        )}
+      </div>
       
-      {/* Items Table */}
-      <ItemsTable
-        items={items}
-        services={services}
-        instruments={instruments}
-        technicians={technicians}
-        pipelinesWithIds={pipelinesWithIds}
-        isReceptiePipeline={false}
-        canEditUrgentAndSubscription={canEditUrgentAndSubscription}
-        onUpdateItem={onUpdateItem}
-        onDelete={onDelete}
-        onRowClick={onRowClick}
-      />
-      
-      {/* Totals */}
-      <TotalsSection
-        items={items}
-        subscriptionType={subscriptionType}
-        services={services}
-        instruments={instruments}
-      />
-      
-      
+      {/* Tabel itemi și Totaluri */}
+      <div className="space-y-4">
+        <ItemsTable
+          items={items}
+          services={services}
+          instruments={instruments}
+          technicians={technicians}
+          pipelinesWithIds={pipelinesWithIds}
+          isReceptiePipeline={false}
+          canEditUrgentAndSubscription={canEditUrgentAndSubscription}
+          onUpdateItem={onUpdateItem}
+          onDelete={onDelete}
+          onRowClick={onRowClick}
+        />
+        
+        <TotalsSection
+          items={items}
+          subscriptionType={subscriptionType}
+          services={services}
+          instruments={instruments}
+        />
+      </div>
     </div>
   )
 }

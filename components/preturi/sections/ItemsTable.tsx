@@ -253,7 +253,7 @@ export function ItemsTable({
         items: cleanedItems
       }
     } catch (error: any) {
-      console.log('[ItemsTable] Error building instrumentGroup:', error?.message || 'Unknown error')
+      // console.log('[ItemsTable] Error building instrumentGroup:', error?.message || 'Unknown error')
       return null
     }
   }
@@ -261,7 +261,7 @@ export function ItemsTable({
   const renderBrandSerial = (item: LeadQuoteItem) => {
     try {
       const brandGroups = item && typeof item === 'object' && Array.isArray((item as any)?.brand_groups) ? (item as any).brand_groups : []
-      console.log(`[ItemsTable] Rendering brand/serial for item ${item.id}:`, brandGroups)
+      // console.log(`[ItemsTable] Rendering brand/serial for item ${item.id}:`, brandGroups)
       
       if (brandGroups.length > 0) {
         return (

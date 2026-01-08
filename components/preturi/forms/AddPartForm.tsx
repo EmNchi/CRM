@@ -3,9 +3,10 @@
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { Package, Plus, X as XIcon } from 'lucide-react'
+import { Package, Plus, X as XIcon, Search } from 'lucide-react'
 import type { Part } from '@/lib/supabase/partOperations'
 import type { LeadQuoteItem } from '@/lib/types/preturi'
+import { cn } from '@/lib/utils'
 
 interface AddPartFormProps {
   part: {
@@ -66,128 +67,153 @@ export function AddPartForm({
   const hasMultipleInstruments = uniqueInstruments.size > 1
 
   return (
-    <form
-      onSubmit={e => {
-        e.preventDefault()
-        onAddPart()
-      }}
-      className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30 rounded-lg border border-purple-200 dark:border-purple-800 mx-1 sm:mx-2 p-2 sm:p-3"
-    >
-      <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-purple-600 dark:text-purple-400" />
-          <span className="text-xs sm:text-sm font-medium text-purple-900 dark:text-purple-100">Adaugă Piesă</span>
-        </div>
-        <Button size="sm" type="submit" disabled={!part.id} className="h-6 sm:h-7 text-xs sm:text-sm">
-          <Plus className="h-3 w-3 mr-1" /> Adaugă
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3">
-        {/* Piesă - 6 cols */}
-        <div className="relative col-span-1 sm:col-span-6">
-          <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Piesă</Label>
-          <div className="relative">
-            <Input
-              className="h-7 sm:h-8 text-xs sm:text-sm pr-8"
-              placeholder="Caută piesă sau click pentru lista completă..."
-              value={partSearchQuery}
-              onChange={e => onPartSearchChange(e.target.value)}
-              onFocus={onPartSearchFocus}
-              onBlur={onPartSearchBlur}
-            />
-            {partSearchQuery && (
-              <button
-                type="button"
-                onClick={() => {
-                  onPartSearchChange('')
-                  onPartSelect('', '')
-                }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <XIcon className="h-3 w-3" />
-              </button>
-            )}
+    <div className="mx-2 sm:mx-4">
+      <div className="rounded-xl border-2 border-amber-200/80 dark:border-amber-700/50 bg-gradient-to-br from-amber-50 via-orange-50/50 to-rose-50/30 dark:from-amber-950/40 dark:via-orange-950/30 dark:to-rose-950/20 shadow-sm">
+        {/* Header */}
+        <div className="px-4 py-3 bg-gradient-to-r from-amber-100/80 to-orange-100/60 dark:from-amber-900/40 dark:to-orange-900/30 border-b border-amber-200/60 dark:border-amber-700/40 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-sm">
+              <Package className="h-4.5 w-4.5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm text-amber-900 dark:text-amber-100">
+                Adaugă Piesă
+              </h3>
+              <p className="text-[11px] text-amber-700/80 dark:text-amber-300/70">
+                Caută și adaugă piese pentru reparații
+              </p>
+            </div>
           </div>
-          {(partSearchFocused || partSearchQuery) && (
-            <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto bg-white dark:bg-background border rounded-md shadow-lg">
-              {!partSearchQuery && (
-                <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-b sticky top-0">
-                  {parts.length} piese disponibile
-                </div>
-              )}
-              {parts
-                .filter(p => !partSearchQuery || p.name.toLowerCase().includes(partSearchQuery.toLowerCase()))
-                .slice(0, partSearchQuery ? 10 : 20)
-                .map(p => (
+          <Button 
+            type="submit"
+            size="sm" 
+            onClick={onAddPart} 
+            disabled={!part.id}
+            className="h-9 px-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-sm"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            Adaugă
+          </Button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4">
+          <div className="grid grid-cols-12 gap-3">
+            {/* Piesă cu search */}
+            <div className="relative col-span-12 sm:col-span-6 z-20">
+              <Label className="text-[10px] font-bold text-amber-800/90 dark:text-amber-200 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Search className="h-3 w-3" /> Piesă
+              </Label>
+              <div className="relative">
+                <Input
+                  className={cn(
+                    "h-10 text-sm pr-8 border-2 transition-all",
+                    "border-amber-200/80 dark:border-amber-700/50 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20"
+                  )}
+                  placeholder="Caută piesă sau click pentru lista completă..."
+                  value={partSearchQuery}
+                  onChange={e => onPartSearchChange(e.target.value)}
+                  onFocus={onPartSearchFocus}
+                  onBlur={onPartSearchBlur}
+                />
+                {partSearchQuery && (
                   <button
-                    key={p.id}
                     type="button"
-                    onClick={() => onPartSelect(p.id, p.name)}
-                    onDoubleClick={() => onPartDoubleClick(p.id, p.name)}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between items-center"
-                    title="Click pentru selectare, Double-click pentru adăugare rapidă"
+                    onClick={() => {
+                      onPartSearchChange('')
+                      onPartSelect('', '')
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                   >
-                    <span>{p.name}</span>
-                    <span className="text-muted-foreground">{p.price.toFixed(2)} RON</span>
+                    <XIcon className="h-4 w-4" />
                   </button>
-                ))}
-              {partSearchQuery && parts.filter(p => p.name.toLowerCase().includes(partSearchQuery.toLowerCase())).length === 0 && (
-                <div className="px-3 py-2 text-sm text-muted-foreground">Nu s-au găsit piese</div>
-              )}
-              {!partSearchQuery && parts.length > 20 && (
-                <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t">
-                  Tastează pentru a căuta în toate cele {parts.length} piese...
+                )}
+              </div>
+              
+              {/* Dropdown */}
+              {(partSearchFocused || partSearchQuery) && (
+                <div className="absolute left-0 right-0 z-[100] mt-1 max-h-60 overflow-y-auto bg-white dark:bg-slate-900 border-2 border-amber-200/80 dark:border-amber-700/50 rounded-lg shadow-xl">
+                  {!partSearchQuery && (
+                    <div className="px-3 py-2 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/30 border-b sticky top-0">
+                      {parts.length} piese disponibile
+                    </div>
+                  )}
+                  {parts
+                    .filter(p => !partSearchQuery || p.name.toLowerCase().includes(partSearchQuery.toLowerCase()))
+                    .slice(0, partSearchQuery ? 10 : 20)
+                    .map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => onPartSelect(p.id, p.name)}
+                        onDoubleClick={() => onPartDoubleClick(p.id, p.name)}
+                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-amber-50 dark:hover:bg-amber-950/30 flex justify-between items-center border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors"
+                        title="Click pentru selectare, Double-click pentru adăugare rapidă"
+                      >
+                        <span className="font-medium">{p.name}</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold">{p.price.toFixed(2)} RON</span>
+                      </button>
+                    ))}
+                  {partSearchQuery && parts.filter(p => p.name.toLowerCase().includes(partSearchQuery.toLowerCase())).length === 0 && (
+                    <div className="px-3 py-2 text-sm text-slate-500">Nu s-au găsit piese</div>
+                  )}
+                  {!partSearchQuery && parts.length > 20 && (
+                    <div className="px-3 py-2 text-xs text-slate-500 bg-slate-50 dark:bg-slate-800/30 border-t">
+                      Tastează pentru a căuta în toate cele {parts.length} piese...
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Serial Number - 4 cols */}
-        <div className="col-span-1 sm:col-span-4">
-          <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">
-            Serial Nr. (instrument)
-            {hasMultipleInstruments && <span className="text-red-500 ml-1">*</span>}
-          </Label>
-          <select
-            className="w-full h-7 sm:h-8 text-xs sm:text-sm border rounded-md px-2 bg-background"
-            value={part.serialNumberId}
-            onChange={e => onSerialNumberChange(e.target.value)}
-            required={hasMultipleInstruments}
-          >
-            <option value="">-- Selectează serial --</option>
-            {(Array.isArray(instrumentForm?.brandSerialGroups) ? instrumentForm.brandSerialGroups : []).flatMap((group, gIdx) => {
-              if (!group) return []
-              const serialNumbers = Array.isArray(group?.serialNumbers) ? group.serialNumbers : []
-              return serialNumbers
-                .map(sn => {
-                  const serial = typeof sn === 'string' ? sn : sn?.serial || ''
-                  return serial.trim()
-                })
-                .filter(sn => sn)
-                .map((sn, snIdx) => (
-                  <option key={`${gIdx}-${snIdx}`} value={`${group?.brand || ''}::${sn}`}>
-                    {group?.brand ? `${group.brand} - ${sn}` : sn}
-                  </option>
-                ))
-            })}
-          </select>
-        </div>
+            {/* Serial Number */}
+            <div className="col-span-12 sm:col-span-4">
+              <Label className="text-[10px] font-bold text-amber-800/90 dark:text-amber-200 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                Serial / Brand
+                {hasMultipleInstruments && <span className="text-red-500">*</span>}
+              </Label>
+              <select
+                className="w-full h-10 text-sm border-2 border-amber-200/80 dark:border-amber-700/50 rounded-lg px-3 bg-white dark:bg-slate-900 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 transition-all"
+                value={part.serialNumberId}
+                onChange={e => onSerialNumberChange(e.target.value)}
+                required={hasMultipleInstruments}
+              >
+                <option value="">-- Selectează serial --</option>
+                {(Array.isArray(instrumentForm?.brandSerialGroups) ? instrumentForm.brandSerialGroups : []).flatMap((group, gIdx) => {
+                  if (!group) return []
+                  const serialNumbers = Array.isArray(group?.serialNumbers) ? group.serialNumbers : []
+                  return serialNumbers
+                    .map(sn => {
+                      const serial = typeof sn === 'string' ? sn : sn?.serial || ''
+                      return serial.trim()
+                    })
+                    .filter(sn => sn)
+                    .map((sn, snIdx) => (
+                      <option key={`${gIdx}-${snIdx}`} value={`${group?.brand || ''}::${sn}`}>
+                        {group?.brand ? `${group.brand} — ${sn}` : sn}
+                      </option>
+                    ))
+                })}
+              </select>
+            </div>
 
-        {/* Cant - 2 cols */}
-        <div className="col-span-1 sm:col-span-2">
-          <Label className="text-[10px] sm:text-xs text-muted-foreground mb-1 block">Cant.</Label>
-          <Input
-            className="h-7 sm:h-8 text-xs sm:text-sm text-center"
-            inputMode="numeric"
-            value={part.qty}
-            onChange={e => onQtyChange(e.target.value)}
-            placeholder="1"
-          />
+            {/* Cant */}
+            <div className="col-span-12 sm:col-span-2">
+              <Label className="text-[10px] font-bold text-amber-800/90 dark:text-amber-200 uppercase tracking-wider mb-1.5">
+                Cant.
+              </Label>
+              <Input
+                className="h-10 text-sm text-center border-2 border-amber-200/80 dark:border-amber-700/50 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 transition-all"
+                inputMode="numeric"
+                value={part.qty}
+                onChange={e => onQtyChange(e.target.value)}
+                placeholder="1"
+              />
+            </div>
+          </div>
         </div>
       </div>
-    </form>
+    </div>
   )
 }
 

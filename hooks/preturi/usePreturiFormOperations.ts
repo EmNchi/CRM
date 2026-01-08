@@ -168,11 +168,14 @@ export function usePreturiFormOperations({
         }
         
         // Altfel, folosim brand-urile din instrumentSettings
+        const groupsToReturn = savedSettings?.brandSerialGroups || []
+        // Calculează qty-ul TOTAL din suma qty-urilor brandurilor
+        const totalQtyToReturn = groupsToReturn.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
         return {
           ...prev,
           instrument: instrumentId,
-          brandSerialGroups: savedSettings?.brandSerialGroups || [],
-          qty: savedSettings?.qty || prev?.qty || '1'
+          brandSerialGroups: groupsToReturn,
+          qty: String(totalQtyToReturn || 1)
         }
       })
       return
@@ -243,11 +246,14 @@ export function usePreturiFormOperations({
         })
         
         // Transformă map-ul în array
-        brandSerialGroups = Array.from(brandGroupsMap.values()).map(bg => ({
-          brand: bg.brand,
-          serialNumbers: bg.serialNumbers.length > 0 ? bg.serialNumbers : [{ serial: '', garantie: false }],
-          qty: String(bg.serialNumbers.length || 1)
-        }))
+        brandSerialGroups = Array.from(brandGroupsMap.values()).map(bg => {
+          const snArray = bg.serialNumbers.length > 0 ? bg.serialNumbers : [{ serial: '', garantie: false }]
+          return {
+            brand: bg.brand,
+            serialNumbers: snArray,
+            qty: String(snArray.length) // qty = numărul total de serial numbers (inclusiv cele goale)
+          }
+        })
       } else if (targetItem?.brand || targetItem?.serial_number) {
         // Fallback la câmpurile vechi pentru compatibilitate
         const serialNumbers = targetItem.serial_number 
@@ -256,7 +262,7 @@ export function usePreturiFormOperations({
         brandSerialGroups = [{
           brand: targetItem.brand || '',
           serialNumbers: serialNumbers,
-          qty: String(serialNumbers.length || 1)
+          qty: String(serialNumbers.length) // qty = numărul total de serial numbers
         }]
       } else {
         // Dacă nu există date în DB, verifică dacă există brand-uri în formular sau în instrumentSettings
@@ -367,11 +373,13 @@ export function usePreturiFormOperations({
             // Folosește brand-urile din formular sau din instrumentSettings
             const brandsToKeep = hasValidBrandsInForm ? prev?.brandSerialGroups : (savedSettings?.brandSerialGroups || [])
             if (brandsToKeep && brandsToKeep.length > 0) {
+              // Calculează qty-ul TOTAL din suma qty-urilor brandurilor
+              const totalQtyToKeep = brandsToKeep.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
               return {
                 ...prev,
                 instrument: instrumentId,
                 brandSerialGroups: brandsToKeep,
-                qty: savedSettings?.qty || prev?.qty || '1'
+                qty: String(totalQtyToKeep || 1)
               }
             }
           }
@@ -408,11 +416,14 @@ export function usePreturiFormOperations({
           }
         }
         
+        // Calculează qty-ul TOTAL al instrumentului din suma qty-urilor brandurilor
+        const totalQty = finalGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
+        
         return {
           ...prev,
           instrument: instrumentId,
           brandSerialGroups: finalGroups,
-          qty: instrumentSettings[instrumentId]?.qty || prev?.qty || '1'
+          qty: String(totalQty || 1)
         }
       })
       
@@ -450,10 +461,13 @@ export function usePreturiFormOperations({
       }
       
       if (hasValidData) {
+        // Calculează qty-ul TOTAL din suma qty-urilor brandurilor
+        const totalQtyForSettings = (Array.isArray(brandSerialGroups) ? brandSerialGroups : []).reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
+        
         setInstrumentSettings((prev: any) => ({
           ...prev,
           [instrumentId]: {
-            qty: prev[instrumentId]?.qty || '1',
+            qty: String(totalQtyForSettings || 1),
             brandSerialGroups: brandSerialGroups
           }
         }))
@@ -495,11 +509,14 @@ export function usePreturiFormOperations({
         }
         
         if (hasSavedBrands) {
+          const groupsToReturn = savedSettings.brandSerialGroups || []
+          // Calculează qty-ul TOTAL din suma qty-urilor brandurilor
+          const totalQtyForSavedBrands = groupsToReturn.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
           return {
             ...prev,
             instrument: instrumentId,
-            brandSerialGroups: savedSettings.brandSerialGroups,
-            qty: savedSettings?.qty || prev?.qty || '1'
+            brandSerialGroups: groupsToReturn,
+            qty: String(totalQtyForSavedBrands || 1)
           }
         }
         
@@ -542,22 +559,13 @@ export function usePreturiFormOperations({
       const prevBrandSerialGroups = Array.isArray(prev?.brandSerialGroups) ? prev.brandSerialGroups : []
       const newGroups = [...prevBrandSerialGroups, { brand: '', serialNumbers: [{ serial: '', garantie: false }], qty: '1' }]
       
-      // IMPORTANT: Recalculează cantitatea instrumentului bazată pe numărul de serial numbers care NU sunt goale
-      let totalValidSerials = 0
-      newGroups.forEach((group: any) => {
-        const validSerials = group.serialNumbers.filter((sn: any) => {
-          const serial = typeof sn === 'string' ? sn : sn.serial || ''
-          return serial && serial.trim()
-        })
-        totalValidSerials += validSerials.length
-      })
-      
-      const newQty = totalValidSerials > 0 ? String(totalValidSerials) : prev?.qty || '1'
+      // IMPORTANT: Recalculează cantitatea instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForInstrument = newGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
       return {
         ...prev,
         brandSerialGroups: newGroups,
-        qty: newQty
+        qty: String(totalQtyForInstrument || 1)
       }
     })
     setIsDirty(true)
@@ -569,22 +577,13 @@ export function usePreturiFormOperations({
       const prevBrandSerialGroups = Array.isArray(prev?.brandSerialGroups) ? prev.brandSerialGroups : []
       const updatedGroups = prevBrandSerialGroups.filter((_: any, i: number) => i !== groupIndex)
       
-      // IMPORTANT: Recalculează cantitatea instrumentului bazată pe numărul de serial numbers care NU sunt goale
-      let totalValidSerials = 0
-      updatedGroups.forEach((group: any) => {
-        const validSerials = group.serialNumbers.filter((sn: any) => {
-          const serial = typeof sn === 'string' ? sn : sn.serial || ''
-          return serial && serial.trim()
-        })
-        totalValidSerials += validSerials.length
-      })
-      
-      const newQty = totalValidSerials > 0 ? String(totalValidSerials) : prev?.qty || '1'
+      // IMPORTANT: Recalculează cantitatea instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForRemove = updatedGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
       return {
         ...prev,
         brandSerialGroups: updatedGroups,
-        qty: newQty
+        qty: String(totalQtyForRemove || 1)
       }
     })
     setIsDirty(true)
@@ -617,11 +616,10 @@ export function usePreturiFormOperations({
         return group
       })
       
-      // IMPORTANT: Recalculează cantitatea instrumentului bazată pe numărul TOTAL de serial numbers (inclusiv cele goale)
-      const totalSerials = updatedGroups.reduce((sum: number, group: any) => sum + (group.serialNumbers?.length || 0), 0)
-      const newQty = String(totalSerials || 1)
+      // IMPORTANT: Recalculează cantitatea instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForInstrumentUpdate = updatedGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
-      return { ...prev, brandSerialGroups: updatedGroups, qty: newQty }
+      return { ...prev, brandSerialGroups: updatedGroups, qty: String(totalQtyForInstrumentUpdate || 1) }
     })
     setIsDirty(true)
   }, [setInstrumentForm, setIsDirty])
@@ -647,19 +645,18 @@ export function usePreturiFormOperations({
             garantie: updatedSerialNumbers[serialIndex]?.garantie || false
           }
           
-          // Actualizează cantitatea brand-ului pentru a reflecta numărul de serial numbers
-          const brandQty = Math.max(updatedSerialNumbers.length, Number(group.qty || 1))
+          // Actualizează cantitatea brand-ului = lungimea serialNumbers
+          const brandQty = updatedSerialNumbers.length
           
           return { ...group, serialNumbers: updatedSerialNumbers, qty: String(brandQty) }
         }
         return group
       })
       
-      // IMPORTANT: Recalculează cantitatea instrumentului bazată pe numărul TOTAL de serial numbers (inclusiv cele goale)
-      const totalSerials = updatedGroups.reduce((sum: number, group: any) => sum + (group.serialNumbers?.length || 0), 0)
-      const newQty = String(totalSerials || 1)
+      // IMPORTANT: Recalculează cantitatea instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForUpdate = updatedGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
-      return { ...prev, brandSerialGroups: updatedGroups, qty: newQty }
+      return { ...prev, brandSerialGroups: updatedGroups, qty: String(totalQtyForUpdate || 1) }
     })
     setIsDirty(true)
   }, [setInstrumentForm, setIsDirty])
@@ -672,17 +669,16 @@ export function usePreturiFormOperations({
         if (i === groupIndex) {
           const currentSerialNumbers = Array.isArray(group.serialNumbers) ? group.serialNumbers : []
           const newSerialNumbers = [...currentSerialNumbers, { serial: '', garantie: false }]
-          // Actualizează cantitatea brand-ului pentru a reflecta numărul de serial numbers
+          // Actualizează cantitatea brand-ului = lungimea serialNumbers
           return { ...group, serialNumbers: newSerialNumbers, qty: String(newSerialNumbers.length) }
         }
         return group
       })
       
-      // Recalculează cantitatea totală a instrumentului bazată pe numărul TOTAL de serial numbers (inclusiv cele goale)
-      const totalSerials = updatedGroups.reduce((sum: number, group: any) => sum + (group.serialNumbers?.length || 0), 0)
-      const newQty = String(totalSerials || 1)
+      // Recalculează cantitatea totală a instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForAdd = updatedGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
-      return { ...prev, brandSerialGroups: updatedGroups, qty: newQty }
+      return { ...prev, brandSerialGroups: updatedGroups, qty: String(totalQtyForAdd || 1) }
     })
     setIsDirty(true)
   }, [setInstrumentForm, setIsDirty])
@@ -698,17 +694,16 @@ export function usePreturiFormOperations({
           const newSerialNumbers = currentSerialNumbers.filter((_: any, idx: number) => idx !== serialIndex)
           // Asigură că există cel puțin un serial number
           const finalSerialNumbers = newSerialNumbers.length > 0 ? newSerialNumbers : [{ serial: '', garantie: false }]
-          // Actualizează cantitatea brand-ului
+          // Actualizează cantitatea brand-ului = lungimea serialNumbers
           return { ...group, serialNumbers: finalSerialNumbers, qty: String(finalSerialNumbers.length) }
         }
         return group
       })
       
-      // Recalculează cantitatea totală a instrumentului bazată pe numărul TOTAL de serial numbers (inclusiv cele goale)
-      const totalSerials = updatedGroups.reduce((sum: number, group: any) => sum + (group.serialNumbers?.length || 0), 0)
-      const newQty = String(totalSerials || 1)
+      // Recalculează cantitatea totală a instrumentului = suma qty-urilor din toate brandurile
+      const totalQtyForRemoveSerial = updatedGroups.reduce((sum: number, group: any) => sum + (Number(group.qty) || 0), 0)
       
-      return { ...prev, brandSerialGroups: updatedGroups, qty: newQty }
+      return { ...prev, brandSerialGroups: updatedGroups, qty: String(totalQtyForRemoveSerial || 1) }
     })
     setIsDirty(true)
   }, [setInstrumentForm, setIsDirty])
@@ -738,10 +733,14 @@ export function usePreturiFormOperations({
     // Restaurează brand-urile originale din instrumentSettings
     const savedSettings = currentInstrumentId ? instrumentSettings[currentInstrumentId] : null
     
+    // Calculează qty din serial numbers dacă există
+    const groupsForQty = savedSettings?.brandSerialGroups || (instrumentForm?.brandSerialGroups || [])
+    const totalSerialsForQty = groupsForQty.reduce((sum: number, group: any) => sum + ((Array.isArray(group.serialNumbers) ? group.serialNumbers.length : 0) || 1), 0)
+    
     setSvc({
       instrumentId: currentInstrumentId, // Păstrează instrumentId pentru a nu afecta brand-urile
       id: '',
-      qty: savedSettings?.qty || instrumentForm.qty || '1', // Folosește cantitatea originală
+      qty: String(totalSerialsForQty || 1), // Calculează din serial numbers
       discount: '0',
       urgent: false,
       technicianId: '',
@@ -754,11 +753,13 @@ export function usePreturiFormOperations({
     if (currentInstrumentId) {
       if (savedSettings?.brandSerialGroups && savedSettings.brandSerialGroups.length > 0) {
         // Restaurează din instrumentSettings
+        const groupsToRestaurate = savedSettings.brandSerialGroups
+        const totalSerialsRestaured = groupsToRestaurate.reduce((sum: number, group: any) => sum + ((Array.isArray(group.serialNumbers) ? group.serialNumbers.length : 0) || 1), 0)
         setInstrumentForm((prev: any) => ({
           ...prev,
           instrument: currentInstrumentId,
-          brandSerialGroups: savedSettings.brandSerialGroups,
-          qty: savedSettings.qty || prev.qty || '1'
+          brandSerialGroups: groupsToRestaurate,
+          qty: String(totalSerialsRestaured || 1)
         }))
       } else {
         // Dacă nu există în instrumentSettings, reîncarcă din DB

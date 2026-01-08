@@ -621,6 +621,7 @@ export function LeadDetailsPanel({
         leadEmail={lead.email}
         leadPhone={lead.phone}
         isOwner={isOwner}
+        isAdmin={role === 'admin' || role === 'owner'}
         isDepartmentPipeline={isDepartmentPipeline}
         showActionCheckboxes={showActionCheckboxes}
         isCurierPipeline={isCurierPipeline}
@@ -839,13 +840,7 @@ export function LeadDetailsPanel({
               </div>
             )}
 
-          {/* Mesagerie - Refactorizat */}
-          <LeadMessengerSection
-            isMessengerOpen={business.state.isMessengerOpen}
-            setIsMessengerOpen={business.state.setIsMessengerOpen}
-            leadId={business.getLeadId()}
-            leadTechnician={lead.technician}
-          />
+          
         </div>
 
 
@@ -960,7 +955,18 @@ export function LeadDetailsPanel({
                 </>
               }
               deConfirmatContent={
-                <div>De Confirmat content</div>
+                lead?.id ? (
+                  <LeadMessengerSection
+                    isMessengerOpen={business.state.isMessengerOpen}
+                    setIsMessengerOpen={business.state.setIsMessengerOpen}
+                    leadId={lead.id}
+                    leadTechnician={lead.technician}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center py-12">
+                    <p className="text-sm text-muted-foreground">Nu este disponibil</p>
+                  </div>
+                )
               }
               istoricContent={
                 <LeadHistory leadId={business.getLeadId()} />

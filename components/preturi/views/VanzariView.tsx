@@ -206,27 +206,27 @@ export function VanzariView({
   
   // Debug logging pentru a identifica de ce checkbox-urile sunt disabled
   useEffect(() => {
-    console.log('[VanzariView] Delivery checkbox debug:', {
-      canSelectDelivery,
-      fisaId: fisaId || 'LIPSEȘTE',
-      selectedQuoteId: selectedQuoteId || 'LIPSEȘTE',
-      itemsLength: items.length,
-      officeDirect,
-      curierTrimis,
-      loading,
-      saving,
-      officeDirectDisabled: !canSelectDelivery || curierTrimis || loading || saving,
-      curierTrimisDisabled: !canSelectDelivery || officeDirect || loading || saving,
-      reasons: {
-        noFisaId: !fisaId,
-        noSelectedQuoteId: !selectedQuoteId,
-        noItems: items.length === 0,
-        otherChecked: officeDirect || curierTrimis,
-        isLoading: loading,
-        isSaving: saving
-      },
-      canSaveDelivery
-    })
+    // console.log('[VanzariView] Delivery checkbox debug:', {
+    //   canSelectDelivery,
+    //   fisaId: fisaId || 'LIPSEȘTE',
+    //   selectedQuoteId: selectedQuoteId || 'LIPSEȘTE',
+    //   itemsLength: items.length,
+    //   officeDirect,
+    //   curierTrimis,
+    //   loading,
+    //   saving,
+    //   officeDirectDisabled: !canSelectDelivery || curierTrimis || loading || saving,
+    //   curierTrimisDisabled: !canSelectDelivery || officeDirect || loading || saving,
+    //   reasons: {
+    //     noFisaId: !fisaId,
+    //     noSelectedQuoteId: !selectedQuoteId,
+    //     noItems: items.length === 0,
+    //     otherChecked: officeDirect || curierTrimis,
+    //     isLoading: loading,
+    //     isSaving: saving
+    //   },
+    //   canSaveDelivery
+    // })
   }, [canSelectDelivery, fisaId, selectedQuoteId, items.length, officeDirect, curierTrimis, loading, saving])
 
   return (

@@ -476,7 +476,7 @@ export async function createTrayItem(data: {
 
     // Salvează brand-urile și serial numbers în noile tabele
     if (data.brandSerialGroups && data.brandSerialGroups.length > 0) {
-      console.log('[createTrayItem] Saving brandSerialGroups:', JSON.stringify(data.brandSerialGroups, null, 2))
+      // console.log('[createTrayItem] Saving brandSerialGroups:', JSON.stringify(data.brandSerialGroups, null, 2))
       for (const group of data.brandSerialGroups) {
         const brandName = group.brand?.trim()
         if (!brandName) {
@@ -489,7 +489,7 @@ export async function createTrayItem(data: {
         // IMPORTANT: Include toate serial numbers-urile, inclusiv cele goale (pentru a păstra pozițiile ocupate)
         const serialNumbers = safeSerialNumbers.map(sn => sn && sn.trim() ? sn.trim() : '')
         
-        console.log(`[createTrayItem] Creating brand "${brandName}" with ${serialNumbers.length} serial numbers:`, serialNumbers)
+        // console.log(`[createTrayItem] Creating brand "${brandName}" with ${serialNumbers.length} serial numbers:`, serialNumbers)
         
         // Creează brand-ul în tray_item_brands
         const { data: brandResult, error: brandError } = await supabase
@@ -511,10 +511,10 @@ export async function createTrayItem(data: {
         if (serialNumbers.length > 0) {
           const serialsToInsert = serialNumbers.map(sn => ({
             brand_id: brandResult.id,
-            serial_number: sn || null, // Permite null pentru serial numbers goale
+            serial_number: sn || '', // Salvează string gol pentru serial numbers goale (nu null)
           }))
           
-          console.log(`[createTrayItem] Inserting ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
+          // console.log(`[createTrayItem] Inserting ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
           
           const { error: serialsError } = await supabase
             .from('tray_item_brand_serials')
@@ -523,7 +523,7 @@ export async function createTrayItem(data: {
           if (serialsError) {
             console.error('[createTrayItem] Error creating serials:', serialsError?.message || 'Unknown error')
           } else {
-            console.log(`[createTrayItem] Successfully created ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
+            // console.log(`[createTrayItem] Successfully created ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
           }
         }
       }

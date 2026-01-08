@@ -5,7 +5,7 @@ import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Send, MessageSquare, Loader2, User, Wrench } from 'lucide-react'
+import { Send, MessageSquare, Loader2, User, Paperclip, X, AtSign } from 'lucide-react'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns'
 import { ro } from 'date-fns/locale/ro'
@@ -16,12 +16,13 @@ const supabase = supabaseBrowser()
 
 export interface LeadMessage {
   id: string
-  lead_id: string
+  conversation_id: string
   sender_id: string
-  sender_name: string
-  sender_role: string
-  message: string
+  content: string
+  message_type: string
+  file_url?: string | null
   created_at: string
+  updated_at?: string
 }
 
 interface LeadMessengerProps {
@@ -38,8 +39,173 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   const [userRole, setUserRole] = useState<string | null>(null)
   const [userName, setUserName] = useState<string>('')
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [senderNamesCache, setSenderNamesCache] = useState<Record<string, string>>({})
+  const [attachedImages, setAttachedImages] = useState<Array<{ file: File; preview: string }>>([])
+  const [mentionSuggestions, setMentionSuggestions] = useState<Array<{ id: string; name: string; type: string }>>([])
+  const [showMentions, setShowMentions] = useState(false)
+  const [messageAttachments, setMessageAttachments] = useState<Record<string, any[]>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const conversationInitializedRef = useRef(false)
+
+  // Handle file attachment
+  const handleAttachImage = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files) return
+
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        toast.error('Doar imagini sunt acceptate')
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const preview = e.target?.result as string
+        setAttachedImages((prev) => [...prev, { file, preview }])
+      }
+      reader.readAsDataURL(file)
+    })
+  }, [])
+
+  // Remove attached image
+  const removeAttachedImage = useCallback((index: number) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // Handle @mention suggestions
+  const handleMentionInput = useCallback((text: string) => {
+    const lastAtIndex = text.lastIndexOf('@')
+    if (lastAtIndex === -1) {
+      setShowMentions(false)
+      return
+    }
+
+    const mentionText = text.substring(lastAtIndex + 1).toLowerCase()
+    if (mentionText.length === 0) {
+      setShowMentions(false)
+      return
+    }
+
+    // Cauta in DB pentru servicii, taguri, etc.
+    async function fetchSuggestions() {
+      try {
+        const suggestions: Array<{ id: string; name: string; type: string }> = []
+
+        // Cauta servicii
+        const { data: servicesData } = await supabase
+          .from('tray_items')
+          .select('id, item_name')
+          .ilike('item_name', `%${mentionText}%`)
+          .limit(5)
+
+        if (servicesData) {
+          servicesData.forEach((s: any) => {
+            suggestions.push({
+              id: s.id,
+              name: s.item_name || 'Serviciu',
+              type: 'serviciu',
+            })
+          })
+        }
+
+        setMentionSuggestions(suggestions)
+        setShowMentions(suggestions.length > 0)
+      } catch (error) {
+        console.error('Error fetching mention suggestions:', error)
+      }
+    }
+
+    if (mentionText.length >= 2) {
+      fetchSuggestions()
+    }
+  }, [])
+
+  // Insert mention
+  const insertMention = useCallback((mention: { id: string; name: string; type: string }) => {
+    const lastAtIndex = newMessage.lastIndexOf('@')
+    const before = newMessage.substring(0, lastAtIndex)
+    const after = newMessage.substring(newMessage.lastIndexOf('@') + 1)
+    const afterText = after.substring(after.search(/\s/) === -1 ? after.length : after.search(/\s/))
+
+    setNewMessage(`${before}@${mention.name} ${afterText}`)
+    setShowMentions(false)
+  }, [newMessage])
+
+  // Obține numele expeditorului din sender_id
+  const getSenderName = useCallback(async (senderId: string) => {
+    // Dacă e user-ul curent, returnează userName
+    if (senderId === user?.id) {
+      return userName || user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'
+    }
+
+    try {
+      // 1. Caută în technicians tabel
+      const { data: techData } = await supabase
+        .from('technicians')
+        .select('name')
+        .eq('user_id', senderId)
+        .single()
+
+      if (techData?.name) {
+        setSenderNamesCache((prev) => ({ ...prev, [senderId]: techData.name }))
+        return techData.name
+      }
+
+      // 2. Caută display_name din auth.users (metadata)
+      const { data: userData } = await supabase
+        .from('app_members')
+        .select('user_id')
+        .eq('user_id', senderId)
+        .single()
+
+      if (userData) {
+        // Caută display_name din profiles sau metadata
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('display_name')
+          .eq('id', senderId)
+          .single()
+
+        if (profileData?.display_name) {
+          setSenderNamesCache((prev) => ({ ...prev, [senderId]: profileData.display_name }))
+          return profileData.display_name
+        }
+      }
+
+      // 3. Fallback la email
+      const { data: memberData } = await supabase
+        .from('app_members')
+        .select('email')
+        .eq('user_id', senderId)
+        .single()
+
+      if (memberData?.email) {
+        const name = memberData.email.split('@')[0]
+        setSenderNamesCache((prev) => ({ ...prev, [senderId]: name }))
+        return name
+      }
+
+      return 'User'
+    } catch (error) {
+      console.error('Error fetching sender name:', error)
+      return 'User'
+    }
+  }, [user?.id, user?.email, user?.user_metadata?.display_name, userName])
+
+  // Pre-load sender names for all messages
+  useEffect(() => {
+    const senderIds = new Set(messages.map((msg) => msg.sender_id))
+    
+    senderIds.forEach((senderId) => {
+      if (senderNamesCache[senderId]) return // Skip if already cached
+      
+      // Load sender name
+      getSenderName(senderId)
+    })
+  }, [messages, senderNamesCache, getSenderName])
 
   // obtine rolul si numele utilizatorului
   useEffect(() => {
@@ -76,28 +242,86 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     fetchUserInfo()
   }, [user])
 
+  // Inițializează conversația la primeiro load
+  useEffect(() => {
+    if (!leadId || !user || conversationInitializedRef.current) return
+
+    async function ensureConversation() {
+      try {
+        // Încearcă să găsești conversația existentă
+        const { data: convData } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('related_id', leadId)
+          .eq('type', 'lead')
+          .single()
+
+        if (convData) {
+          setConversationId(convData.id)
+          conversationInitializedRef.current = true
+          return
+        }
+
+        // Dacă nu există, creează una nouă
+        const { data: newConv, error: createError } = await supabase
+          .from('conversations')
+          .insert({
+            related_id: leadId,
+            type: 'lead',
+            created_by: user.id,
+          })
+          .select('id')
+          .single()
+
+        if (createError) {
+          console.error('Error creating conversation:', createError?.message)
+          conversationInitializedRef.current = true
+          setLoading(false)
+          return
+        }
+
+        if (newConv) {
+          setConversationId(newConv.id)
+        }
+
+        conversationInitializedRef.current = true
+      } catch (error) {
+        console.error('Error ensuring conversation:', error)
+        conversationInitializedRef.current = true
+        setLoading(false)
+      }
+    }
+
+    ensureConversation()
+  }, [leadId, user])
+
   // incarca mesajele pentru acest lead
   useEffect(() => {
-    if (!leadId) return
+    if (!leadId || !conversationId) return
+
+    let isMounted = true
 
     async function loadMessages() {
       setLoading(true)
       try {
+        // Încarcă mesajele pentru această conversație
         const { data, error } = await supabase
-          .from('lead_messages')
+          .from('messages')
           .select('*')
-          .eq('lead_id', leadId)
+          .eq('conversation_id', conversationId)
           .order('created_at', { ascending: true })
 
         if (error) {
-          console.error('Error loading messages:', error)
-        } else {
+          console.error('Error loading messages:', error.message || error)
+        } else if (isMounted) {
           setMessages(data || [])
         }
       } catch (error) {
         console.error('Error loading messages:', error)
       } finally {
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
 
@@ -105,18 +329,25 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
 
     // subscribe la modificari in timp real
     const channel = supabase
-      .channel(`lead_messages:${leadId}`)
+      .channel(`messages:${conversationId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'lead_messages',
-          filter: `lead_id=eq.${leadId}`,
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
+          if (!isMounted) return
+
           if (payload.eventType === 'INSERT') {
-            setMessages((prev) => [...prev, payload.new as LeadMessage])
+            // Adaugă mesajul nou doar dacă nu e deja în lista (evita duplicate din optimistic update)
+            setMessages((prev) => {
+              const exists = prev.some((msg) => msg.id === payload.new.id)
+              if (exists) return prev
+              return [...prev, payload.new as LeadMessage]
+            })
           } else if (payload.eventType === 'UPDATE') {
             setMessages((prev) =>
               prev.map((msg) => (msg.id === payload.new.id ? (payload.new as LeadMessage) : msg))
@@ -129,9 +360,45 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       .subscribe()
 
     return () => {
+      isMounted = false
       supabase.removeChannel(channel)
     }
-  }, [leadId])
+  }, [leadId, conversationId])
+
+  // Load attachments for messages
+  useEffect(() => {
+    async function loadAttachments() {
+      const messageIds = messages
+        .filter((msg) => msg.message_type === 'image')
+        .map((msg) => msg.id)
+
+      if (messageIds.length === 0) return
+
+      try {
+        const { data, error } = await supabase
+          .from('message_attachments')
+          .select('*')
+          .in('message_id', messageIds)
+
+        if (error) throw error
+
+        if (data) {
+          const attachmentsByMessage: Record<string, any[]> = {}
+          data.forEach((attachment) => {
+            if (!attachmentsByMessage[attachment.message_id]) {
+              attachmentsByMessage[attachment.message_id] = []
+            }
+            attachmentsByMessage[attachment.message_id].push(attachment)
+          })
+          setMessageAttachments(attachmentsByMessage)
+        }
+      } catch (error) {
+        console.error('Error loading attachments:', error)
+      }
+    }
+
+    loadAttachments()
+  }, [messages])
 
   // scroll la ultimul mesaj cu debounce pentru performanta
   useEffect(() => {
@@ -152,59 +419,108 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   // Trimite mesaj cu optimistic update
   const handleSendMessage = useCallback(async () => {
     const messageText = newMessage.trim()
-    if (!messageText || !user || !userRole || sending) return
-
-    // optimistic update - adauga mesajul local imediat
-    const tempId = `temp-${Date.now()}`
-    const optimisticMessage: LeadMessage = {
-      id: tempId,
-      lead_id: leadId,
-      sender_id: user.id,
-      sender_name: userName,
-      sender_role: userRole,
-      message: messageText,
-      created_at: new Date().toISOString(),
+    // Expect conversationId sa existe - daca nu, nu trimite mesaj
+    if ((!messageText && attachedImages.length === 0) || !user || !userRole || sending || !conversationId) {
+      if (!conversationId) {
+        toast.error('Conversația se inițializează. Așteptați câteva secunde și reîncercați.')
+      }
+      return
     }
 
-    setPendingMessage(tempId)
-    setMessages((prev) => [...prev, optimisticMessage])
-    setNewMessage('')
-    setSending(true)
-
     try {
+      setSending(true)
+      let uploadedImageUrls: string[] = []
+
+      // Upload imagini atasate
+      if (attachedImages.length > 0) {
+        for (const { file } of attachedImages) {
+          const fileExt = file.name.split('.').pop()
+          const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${fileExt}`
+          const filePath = `messages/${conversationId}/${fileName}`
+
+          const { data, error } = await supabase.storage
+            .from('tray_images')
+            .upload(filePath, file)
+
+          if (error) {
+            console.error('Upload error:', error)
+            toast.error('Eroare la upload imagine')
+            continue
+          }
+
+          uploadedImageUrls.push(data?.path || '')
+        }
+      }
+
+      // optimistic update - adauga mesajul local imediat
+      const tempId = `temp-${Date.now()}`
+      const optimisticMessage: LeadMessage = {
+        id: tempId,
+        conversation_id: conversationId,
+        sender_id: user.id,
+        content: messageText,
+        message_type: attachedImages.length > 0 ? 'image' : 'text',
+        created_at: new Date().toISOString(),
+      }
+
+      setPendingMessage(tempId)
+      setMessages((prev) => [...prev, optimisticMessage])
+      setNewMessage('')
+      setAttachedImages([])
+
+      // Inserează mesajul în baza de date
       const { data, error } = await supabase
-        .from('lead_messages')
+        .from('messages')
         .insert({
-          lead_id: leadId,
+          conversation_id: conversationId,
           sender_id: user.id,
-          sender_name: userName,
-          sender_role: userRole,
-          message: messageText,
+          content: messageText,
+          message_type: attachedImages.length > 0 ? 'image' : 'text',
+          has_attachments: uploadedImageUrls.length > 0,
         })
         .select()
         .single()
 
       if (error) throw error
 
-      // inlocuieste mesajul optimist cu cel real
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === tempId ? data : msg))
-      )
+      // Salvează attachment-urile
+      if (uploadedImageUrls.length > 0 && data) {
+        const attachments = uploadedImageUrls.map((url) => ({
+          message_id: data.id,
+          file_url: url,
+          attachment_type: 'image',
+        }))
+
+        const { error: attachError } = await supabase
+          .from('message_attachments')
+          .insert(attachments)
+
+        if (attachError) {
+          console.error('Error saving attachments:', attachError)
+        }
+      }
+
+      // Înlocuiește mesajul optimist (temp) cu mesajul real din DB
+      setMessages((prev) => {
+        // Găsește indexul mesajului optimist și înlocuiește-l
+        const updatedMessages = prev.map((msg) => 
+          msg.id === tempId ? (data as LeadMessage) : msg
+        )
+        return updatedMessages
+      })
       setPendingMessage(null)
       toast.success('Mesaj trimis cu succes')
     } catch (error: any) {
       console.error('Error sending message:', error)
-      // elimina mesajul optimist in caz de eroare
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId))
-      setNewMessage(messageText) // restaureaza textul
-      setPendingMessage(null)
+      // Elimină mesajul optimist dacă a eșuat
+      setMessages((prev) => prev.filter((msg) => !msg.id.startsWith('temp-')))
       toast.error('Eroare la trimiterea mesajului', {
         description: error?.message || 'Te rugăm să încerci din nou.',
       })
     } finally {
       setSending(false)
     }
-  }, [newMessage, user, userRole, sending, leadId, userName])
+  }, [newMessage, attachedImages, user, userRole, sending, conversationId])
 
   // verifica daca utilizatorul este receptie sau tehnician
   const isReception = userRole === 'admin' || userRole === 'owner' || userRole === 'member'
@@ -250,6 +566,17 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <MessageSquare className="h-4 w-4" />
           <span>Trebuie să fii autentificat pentru a folosi mesageria.</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="mt-4 p-4 rounded-lg border bg-muted/50">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Se inițializează mesageria...</span>
         </div>
       </div>
     )
@@ -308,15 +635,17 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                     </div>
 
                     {/* Mesajele din grup */}
-                    {group.messages.map((msg) => {
+                    {group.messages.map((msg, idx) => {
                       const isOwnMessage = msg.sender_id === user.id
-                      const isFromTechnician = msg.sender_role === 'technician'
                       const isPending = pendingMessage === msg.id
                       const isRecent = isToday(new Date(msg.created_at))
+                      const messageKey = `${msg.id}-${idx}`
+                      // Get sender name from cache
+                      const senderName = senderNamesCache[msg.sender_id] || 'User'
 
                       return (
                         <div
-                          key={msg.id}
+                          key={messageKey}
                           className={cn(
                             'flex gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300',
                             isOwnMessage ? 'justify-end' : 'justify-start'
@@ -324,35 +653,17 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                         >
                           {/* Avatar pentru mesajele altora */}
                           {!isOwnMessage && (
-                            <div
-                              className={cn(
-                                'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium',
-                                isFromTechnician
-                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-100'
-                                  : 'bg-muted text-muted-foreground'
-                              )}
-                            >
-                              {isFromTechnician ? (
-                                <Wrench className="h-4 w-4" />
-                              ) : (
-                                <User className="h-4 w-4" />
-                              )}
+                            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium bg-muted text-muted-foreground">
+                              <User className="h-4 w-4" />
                             </div>
                           )}
 
                           <div className={cn('flex flex-col gap-1', isOwnMessage ? 'items-end' : 'items-start', 'max-w-[75%]')}>
-                            {/* Numele expeditorului */}
+                            {/* Nume expeditor */}
                             {!isOwnMessage && (
-                              <div className="flex items-center gap-1.5 px-1">
-                                <span className="text-xs font-medium text-foreground">
-                                  {msg.sender_name}
-                                </span>
-                                {isFromTechnician && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-100">
-                                    Tehnician
-                                  </span>
-                                )}
-                              </div>
+                              <span className="text-xs font-semibold text-muted-foreground px-1">
+                                {senderName}
+                              </span>
                             )}
 
                             {/* Bula de mesaj */}
@@ -361,15 +672,58 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                                 'rounded-lg px-3 py-2 shadow-sm',
                                 isOwnMessage
                                   ? 'bg-primary text-primary-foreground rounded-br-sm'
-                                  : isFromTechnician
-                                  ? 'bg-blue-50 text-blue-900 dark:bg-blue-950 dark:text-blue-100 rounded-bl-sm border border-blue-200 dark:border-blue-800'
                                   : 'bg-muted text-muted-foreground rounded-bl-sm',
                                 isPending && 'opacity-60'
                               )}
                             >
+                              {/* Imagine atasata */}
+                              {msg.message_type === 'image' && messageAttachments[msg.id] && (
+                                <div className="mb-2 max-w-xs">
+                                  <div className="flex gap-2 flex-wrap">
+                                    {messageAttachments[msg.id].map((attachment) => (
+                                      <div
+                                        key={attachment.id}
+                                        className="relative group cursor-pointer"
+                                        onClick={() => {
+                                          const url = attachment.file_url
+                                          const baseUrl = supabase.storage.from('tray_images').getPublicUrl(url).data.publicUrl
+                                          window.open(baseUrl, '_blank')
+                                        }}
+                                      >
+                                        <img
+                                          src={supabase.storage.from('tray_images').getPublicUrl(attachment.file_url).data.publicUrl}
+                                          alt="message attachment"
+                                          className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
+                                        />
+                                        <div className="absolute inset-0 bg-black/50 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                          <span className="text-white text-xs">Click pentru a deschide</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Mențiuni inline */}
                               <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-                                {msg.message}
+                                {msg.content.split(/(@\w+)/g).map((part, i) => {
+                                  if (part.startsWith('@')) {
+                                    return (
+                                      <span
+                                        key={i}
+                                        className={cn(
+                                          'font-semibold',
+                                          isOwnMessage ? 'text-primary-foreground/90' : 'text-primary'
+                                        )}
+                                      >
+                                        {part}
+                                      </span>
+                                    )
+                                  }
+                                  return part
+                                })}
                               </div>
+
                               <div
                                 className={cn(
                                   'flex items-center gap-1 mt-1.5 text-[10px]',
@@ -409,7 +763,43 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         </ScrollArea>
 
         {/* Input pentru mesaj nou */}
-        <div className="border-t bg-muted/30 p-3">
+        <div className="border-t bg-muted/30 p-3 space-y-3">
+          {/* Preview imagini atasate */}
+          {attachedImages.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {attachedImages.map((img, idx) => (
+                <div key={idx} className="relative">
+                  <img src={img.preview} alt="preview" className="h-20 w-20 object-cover rounded border border-muted" />
+                  <button
+                    type="button"
+                    onClick={() => removeAttachedImage(idx)}
+                    className="absolute -top-2 -right-2 bg-destructive text-white rounded-full p-1"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Mention suggestions */}
+          {showMentions && mentionSuggestions.length > 0 && (
+            <div className="bg-muted border rounded p-2 space-y-1">
+              {mentionSuggestions.map((suggestion) => (
+                <button
+                  key={`${suggestion.type}-${suggestion.id}`}
+                  type="button"
+                  onClick={() => insertMention(suggestion)}
+                  className="w-full text-left px-2 py-1 hover:bg-muted-foreground/20 rounded text-sm flex items-center gap-2"
+                >
+                  <AtSign className="h-3 w-3" />
+                  <span>{suggestion.name}</span>
+                  <span className="text-xs text-muted-foreground">{suggestion.type}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -421,7 +811,10 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
               <Textarea
                 ref={textareaRef}
                 value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
+                onChange={(e) => {
+                  setNewMessage(e.target.value)
+                  handleMentionInput(e.target.value)
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
@@ -429,11 +822,13 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                   }
                 }}
                 placeholder={
-                  isTechnician
-                    ? 'Scrie un mesaj pentru recepție...'
-                    : 'Scrie un mesaj pentru tehnician...'
+                  !conversationId
+                    ? 'Se inițializează mesageria...'
+                    : isTechnician
+                    ? 'Scrie un mesaj pentru recepție... (@pentru mențiuni)'
+                    : 'Scrie un mesaj pentru tehnician... (@pentru mențiuni)'
                 }
-                disabled={sending}
+                disabled={sending || !conversationId || loading}
                 className="min-h-[40px] max-h-[120px] resize-none pr-10"
                 rows={1}
               />
@@ -443,9 +838,31 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                 </div>
               )}
             </div>
+
+            {/* Attach Image Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || !conversationId || loading}
+              size="icon"
+              className="shrink-0 relative"
+              title="Atașează imagini"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={handleAttachImage}
+              className="hidden"
+            />
+
             <Button
               type="submit"
-              disabled={!newMessage.trim() || sending}
+              disabled={!newMessage.trim() || sending || !conversationId || loading}
               size="icon"
               className="shrink-0"
             >

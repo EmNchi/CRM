@@ -15,6 +15,7 @@ interface LeadDetailsHeaderProps {
   leadEmail?: string | null
   leadPhone?: string | null
   isOwner: boolean
+  isAdmin: boolean
   isDepartmentPipeline: boolean
   showActionCheckboxes: boolean
   isCurierPipeline: boolean
@@ -61,6 +62,7 @@ export function LeadDetailsHeader({
   leadEmail,
   leadPhone,
   isOwner,
+  isAdmin,
   isDepartmentPipeline,
   showActionCheckboxes,
   isCurierPipeline,
@@ -119,6 +121,7 @@ export function LeadDetailsHeader({
                     variant="ghost" 
                     size="sm" 
                     className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                    disabled={!isAdmin}
                   >
                     <Tag className="h-3 w-3" />
                     Etichete
@@ -259,6 +262,7 @@ export function LeadDetailsHeader({
             <ActionCheckbox
               checked={callBack}
               onChange={onCallBackChange}
+              disabled={!isAdmin}
               icon={<PhoneCall className="h-3.5 w-3.5" />}
               label="Call Back"
               color="blue"
@@ -268,6 +272,7 @@ export function LeadDetailsHeader({
               <ActionCheckbox
                 checked={noDeal}
                 onChange={onNoDealChange}
+                disabled={!isAdmin}
                 icon={<Ban className="h-3.5 w-3.5" />}
                 label="No Deal"
                 color="red"
@@ -275,6 +280,7 @@ export function LeadDetailsHeader({
               <ActionCheckbox
                 checked={callBack}
                 onChange={onCallBackChange}
+                disabled={!isAdmin}
                 icon={<PhoneCall className="h-3.5 w-3.5" />}
                 label="Call Back"
                 color="blue"
@@ -282,6 +288,7 @@ export function LeadDetailsHeader({
               <ActionCheckbox
                 checked={nuRaspunde}
                 onChange={onNuRaspundeChange}
+                disabled={!isAdmin}
                 icon={<PhoneOff className="h-3.5 w-3.5" />}
                 label="Nu răspunde"
                 color="amber"
@@ -298,12 +305,14 @@ export function LeadDetailsHeader({
 function ActionCheckbox({ 
   checked, 
   onChange, 
+  disabled,
   icon, 
   label, 
   color 
 }: { 
   checked: boolean
   onChange: (checked: boolean) => void
+  disabled?: boolean
   icon: React.ReactNode
   label: string
   color: 'red' | 'blue' | 'amber' | 'green'
@@ -340,14 +349,16 @@ function ActionCheckbox({
   return (
     <label 
       className={cn(
-        "flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all",
+        "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+        !disabled ? "cursor-pointer" : "cursor-default opacity-60",
         classes.base,
         checked && classes.checked
       )}
     >
       <Checkbox
         checked={checked}
-        onCheckedChange={(c: any) => onChange(!!c)}
+        onCheckedChange={(c: any) => !disabled && onChange(!!c)}
+        disabled={disabled}
         className={classes.checkbox}
       />
       <span className={cn(

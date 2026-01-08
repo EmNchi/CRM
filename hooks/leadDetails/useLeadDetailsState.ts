@@ -105,7 +105,7 @@ export function useLeadDetailsState(initialStage?: string) {
   // State pentru collapsible sections
   const [isContactOpen, setIsContactOpen] = useState(true)
   const [isTrayInfoOpen, setIsTrayInfoOpen] = useState(true)
-  const [isMessengerOpen, setIsMessengerOpen] = useState(false)
+  const [isMessengerOpen, setIsMessengerOpen] = useState(true)
   
   // State pentru informații tavita - per tăviță
   const [selectedTrayForDetails, setSelectedTrayForDetails] = useState<string>('')

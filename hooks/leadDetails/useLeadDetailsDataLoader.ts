@@ -843,7 +843,7 @@ const listQuoteItems = async (
           const safeSerials = Array.isArray(b.tray_item_brand_serials) ? b.tray_item_brand_serials : []
           // IMPORTANT: Include toate serial numbers-urile, inclusiv cele goale
           const serialNumbers = safeSerials.map((s: any) => s?.serial_number || '')
-          console.log(`[useLeadDetailsDataLoader] Loading brand "${b.brand}" with ${serialNumbers.length} serial numbers:`, serialNumbers)
+          // console.log(`[useLeadDetailsDataLoader] Loading brand "${b.brand}" with ${serialNumbers.length} serial numbers:`, serialNumbers)
           return {
             id: b.id || '',
             brand: b.brand || '',
@@ -851,7 +851,7 @@ const listQuoteItems = async (
             serialNumbers: serialNumbers
           }
         })
-        console.log(`[useLeadDetailsDataLoader] Loaded ${brandGroups.length} brand groups for item ${item.id}:`, brandGroups)
+        // console.log(`[useLeadDetailsDataLoader] Loaded ${brandGroups.length} brand groups for item ${item.id}:`, brandGroups)
         return brandGroups
       })(),
       pipeline_id: pipelineId, // Adăugat pipeline_id pentru afișare în tabel

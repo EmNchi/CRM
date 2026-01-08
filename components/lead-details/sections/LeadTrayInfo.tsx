@@ -5,6 +5,7 @@
 import { Textarea } from "@/components/ui/textarea"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Package, ChevronDown, ChevronRight, Loader2 } from "lucide-react"
+import { useRole } from "@/lib/contexts/AuthContext"
 
 interface LeadTrayInfoProps {
   isTrayInfoOpen: boolean
@@ -33,6 +34,7 @@ export function LeadTrayInfo({
   setTrayDetails,
   loadingTrayDetails,
 }: LeadTrayInfoProps) {
+  const { isAdmin } = useRole()
   // Vizibil doar pentru pipeline-urile tehnice (departamente) sau pentru tehnicieni pe card de tăviță
   if (!isDepartmentPipeline && !(isTechnician && getTrayId())) {
     return null
@@ -73,13 +75,16 @@ export function LeadTrayInfo({
                   <Textarea
                     value={trayDetails}
                     onChange={(e) => {
-                      if (!isTechnician) {
+                      if (isAdmin) {
                         setTrayDetails(e.target.value)
                       }
                     }}
-                    placeholder="Introduceți detaliile comenzii comunicate de client pentru această fișă..."
+                    placeholder={isAdmin 
+                      ? "Introduceți detaliile comenzii comunicate de client pentru această fișă..." 
+                      : "Doar administratorii pot edita aceste informații."
+                    }
                     className="min-h-[80px] sm:min-h-[100px] lg:min-h-[120px] text-xs sm:text-sm resize-none"
-                    readOnly={isTechnician}
+                    readOnly={!isAdmin}
                   />
                 )}
               </div>

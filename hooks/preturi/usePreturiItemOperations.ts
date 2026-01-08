@@ -477,8 +477,8 @@ export function usePreturiItemOperations({
       // Folosește cantitatea totală calculată (toate serial numbers-urile, inclusiv cele goale)
       const finalQty = totalQtyFromBrands > 0 ? totalQtyFromBrands : qty
       
-      console.log('[onAddService] brandSerialGroupsToSave:', JSON.stringify(brandSerialGroupsToSave, null, 2))
-      console.log('[onAddService] Total brands to save:', brandSerialGroupsToSave.length)
+      // console.log('[onAddService] brandSerialGroupsToSave:', JSON.stringify(brandSerialGroupsToSave, null, 2))
+      // console.log('[onAddService] Total brands to save:', brandSerialGroupsToSave.length)
       
       // IMPORTANT: Creează un SINGUR serviciu cu TOATE brand-urile asociate
       try {

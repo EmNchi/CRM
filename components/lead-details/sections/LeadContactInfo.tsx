@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { format } from "date-fns"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
+import { useRole } from "@/lib/contexts/AuthContext"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -85,6 +86,7 @@ export function LeadContactInfo({
   onEmailClick,
   onLeadUpdate,
 }: LeadContactInfoProps) {
+  const { isAdmin } = useRole()
   const [isEditing, setIsEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editData, setEditData] = useState<Record<string, string>>({})
@@ -134,7 +136,7 @@ export function LeadContactInfo({
         updated_at: new Date().toISOString()
       }
 
-      console.log('[LeadContactInfo] Saving to DB:', { leadId: lead.id, dbUpdate })
+      // console.log('[LeadContactInfo] Saving to DB:', { leadId: lead.id, dbUpdate })
 
       const { error } = await supabase
         .from('leads')
@@ -317,15 +319,17 @@ export function LeadContactInfo({
                   </Button>
                 </>
               ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleEdit}
-                  className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10 hover:border-primary"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Editează
-                </Button>
+                isAdmin && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleEdit}
+                    className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10 hover:border-primary"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Editează
+                  </Button>
+                )
               )}
             </div>
 

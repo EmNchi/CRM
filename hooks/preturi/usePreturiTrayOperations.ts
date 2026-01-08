@@ -10,6 +10,7 @@ import {
   deleteTray,
   deleteTrayItem,
 } from '@/lib/supabase/serviceFileOperations'
+import { listTrayImages } from '@/lib/supabase/imageOperations'
 import { addTrayToPipeline } from '@/lib/supabase/pipelineOperations'
 import { 
   createQuoteForLead,
@@ -441,7 +442,7 @@ export function usePreturiTrayOperations({
       }
       
       // Mută items-urile în tăvița țintă
-      console.log('[handleMoveInstrument] STEP 1: Mutare items', itemIds.length, 'items în tăvița', actualTrayId)
+      // console.log('[handleMoveInstrument] STEP 1: Mutare items', itemIds.length, 'items în tăvița', actualTrayId)
       for (const itemId of itemIds) {
         const { error } = await supabase
           .from('tray_items')
@@ -458,30 +459,30 @@ export function usePreturiTrayOperations({
           throw new Error(`Item ${itemId}: ${errorMsg}`)
         }
       }
-      console.log('[handleMoveInstrument] STEP 2: Items mutate cu succes')
+      // console.log('[handleMoveInstrument] STEP 2: Items mutate cu succes')
 
       // Folosește doar string-uri simple, nu obiectul instrumentToMove
-      console.log('[handleMoveInstrument] STEP 3: Toast success')
+      // console.log('[handleMoveInstrument] STEP 3: Toast success')
       try {
         toast.success(`Instrumentul "${instrumentName}" și serviciile lui au fost mutate cu succes`)
       } catch (toastError) {
-        console.log('[handleMoveInstrument] Toast error (ignorat)')
+        // console.log('[handleMoveInstrument] Toast error (ignorat)')
       }
       
       // Actualizează lista de tăvițe și items-urile
-      console.log('[handleMoveInstrument] STEP 4: Actualizare tăvițe')
+      // console.log('[handleMoveInstrument] STEP 4: Actualizare tăvițe')
       if (fisaId) {
         const { data: updatedQuotesData } = await listTraysForServiceFile(fisaId)
         const updatedQuotes = updatedQuotesData || []
-        console.log('[handleMoveInstrument] STEP 5: setQuotes cu', updatedQuotes.length, 'tăvițe')
+        // console.log('[handleMoveInstrument] STEP 5: setQuotes cu', updatedQuotes.length, 'tăvițe')
         setQuotes(updatedQuotes)
         
         // Dacă am creat o tăviță nouă, o selectăm automat
         if (actualTrayId && (trayIdOverride === 'new' || targetTrayId === 'new')) {
-          console.log('[handleMoveInstrument] STEP 6: Selectare tăviță nouă')
+          // console.log('[handleMoveInstrument] STEP 6: Selectare tăviță nouă')
           setSelectedQuoteId(actualTrayId)
           const qi = await listQuoteItems(actualTrayId, services, instruments, pipelinesWithIds)
-          console.log('[handleMoveInstrument] STEP 7: setItems cu', qi?.length || 0, 'items')
+          // console.log('[handleMoveInstrument] STEP 7: setItems cu', qi?.length || 0, 'items')
           setItems(qi ?? [])
         } else if (selectedQuoteId) {
           // Altfel, actualizează items-urile pentru tăvița curent selectată
@@ -489,17 +490,22 @@ export function usePreturiTrayOperations({
           setItems(qi ?? [])
         }
         
-        console.log('[handleMoveInstrument] STEP 8: Verificare ștergere tăviță undefined')
+        // console.log('[handleMoveInstrument] STEP 8: Verificare ștergere tăviță undefined')
         if (isReceptiePipeline) {
           const currentUndefinedTray = updatedQuotes.find((q: any) => !q.number || q.number === '')
-          console.log('[handleMoveInstrument] STEP 9: Tăviță undefined găsită:', !!currentUndefinedTray)
+          // console.log('[handleMoveInstrument] STEP 9: Tăviță undefined găsită:', !!currentUndefinedTray)
           
           if (currentUndefinedTray) {
-            const undefinedTrayItems = await listQuoteItems(currentUndefinedTray.id, services, instruments, pipelinesWithIds)
-            console.log('[handleMoveInstrument] STEP 10: Items în tăviță undefined:', undefinedTrayItems?.length || 0)
+            const [undefinedTrayItems, undefinedTrayImages] = await Promise.all([
+              listQuoteItems(currentUndefinedTray.id, services, instruments, pipelinesWithIds),
+              listTrayImages(currentUndefinedTray.id)
+            ])
+            // console.log('[handleMoveInstrument] Items în tăviță undefined:', undefinedTrayItems?.length || 0)
+            // console.log('[handleMoveInstrument] Imagini în tăviță undefined:', undefinedTrayImages?.length || 0)
             
-            if (!undefinedTrayItems || undefinedTrayItems.length === 0) {
-              console.log('[handleMoveInstrument] STEP 11: Ștergere tăviță undefined')
+            // Ștergem tăvița undefined DOAR dacă este goală (nu are nici items, nici imagini)
+            if ((!undefinedTrayItems || undefinedTrayItems.length === 0) && (!undefinedTrayImages || undefinedTrayImages.length === 0)) {
+              // console.log('[handleMoveInstrument] STEP 11: Ștergere tăviță undefined')
               try {
                 const { success, error } = await deleteTray(currentUndefinedTray.id)
                 if (success && !error) {
@@ -517,12 +523,12 @@ export function usePreturiTrayOperations({
                 } else {
                   // IMPORTANT: Nu logăm error direct pentru a evita referințe circulare
                   const errMsg = error?.message || error?.code || 'Eroare necunoscută'
-                  console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
+                  // console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
                 }
               } catch (deleteError: any) {
                 // IMPORTANT: Nu logăm deleteError direct pentru a evita referințe circulare
                 const errMsg = deleteError?.message || deleteError?.code || 'Eroare necunoscută'
-                console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
+                // console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
               }
             }
           }
@@ -530,13 +536,13 @@ export function usePreturiTrayOperations({
       }
       
       // Resetează câmpurile pentru tăviță nouă
-      console.log('[handleMoveInstrument] STEP FINAL: Resetare state')
+      // console.log('[handleMoveInstrument] STEP FINAL: Resetare state')
       setNewTrayNumber('')
       setNewTraySize('m')
       setShowMoveInstrumentDialog(false)
       setInstrumentToMove(null)
       setTargetTrayId('')
-      console.log('[handleMoveInstrument] DONE: Mutare completă!')
+      // console.log('[handleMoveInstrument] DONE: Mutare completă!')
     } catch (error: any) {
       // IMPORTANT: Nu folosim niciodată obiectul error direct în console.error sau toast
       // pentru a evita referințe circulare (HTMLButtonElement, FiberNode, etc.)
@@ -562,7 +568,7 @@ export function usePreturiTrayOperations({
       // Log doar string-ul, nu obiectul error
       try {
         // Folosim console.log în loc de console.error pentru a evita serializarea automată
-        console.log('[handleMoveInstrument] Eroare:', errorDetails)
+        // console.log('[handleMoveInstrument] Eroare:', errorDetails)
       } catch {
         // Ignoră dacă logging-ul eșuează
       }
