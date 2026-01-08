@@ -172,8 +172,8 @@ export function usePreturiDataLoader({
             
             if (!trayError && undefinedTray) {
               quotesArray = [undefinedTray]
-            } else {
-              console.error('Error creating undefined tray:', trayError)
+            } else if (trayError) {
+              console.error('Error creating undefined tray:', trayError?.message || trayError)
             }
           } catch (trayErr) {
             console.error('Error importing or creating undefined tray:', trayErr)

@@ -302,7 +302,7 @@ export function useLeadDetailsDepartmentActions({
           console.error('Eroare la mutarea cardului fișei:', serviceFileError)
           toast.error('Eroare la mutarea cardului fișei')
         }
-        
+
         toast.success('Tăvița a fost atribuită și mutată în IN LUCRU')
         setStage(inLucruStage)
       } catch (error) {

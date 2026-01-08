@@ -837,41 +837,9 @@ export function usePreturiTrayOperations({
         }
       }
 
-      if (successCount > 0 && errorCount === 0) {
-        // IMPORTANT: Creează conversații pentru TOATE tăvițele din această fișă
-        try {
-          const currentUser = (await supabase.auth.getSession()).data?.session?.user
-          if (currentUser && leadId) {
-            // Creează conversație per lead dacă nu există deja
-            const { data: existingConv } = await supabase
-              .from('conversations')
-              .select('id')
-              .eq('related_id', leadId)
-              .eq('type', 'lead')
-              .maybeSingle()
-            
-            if (!existingConv) {
-              await supabase
-                .from('conversations')
-                .insert({
-                  related_id: leadId,
-                  type: 'lead',
-                  created_by: currentUser.id,
-                })
-                .select('id')
-                .single()
-              
-              console.log('✅ Conversație creată pentru lead:', leadId)
-            } else {
-              console.log('✅ Conversație deja existentă pentru lead:', leadId)
-            }
-          }
-        } catch (convError) {
-          console.error('⚠️ Eroare la crearea conversației:', convError)
-          // Nu aruncam eroare, continuam
-        }
-        
-        toast.success(`${successCount} tăviț${successCount === 1 ? 'ă trimisă' : 'e trimise'} cu succes!`)
+      // IMPORTANT: Creează conversație pentru lead indiferent de rezultat (daca cel putin o tăviță a fost trimisă)
+      if (successCount > 0) {
+        toast.success(`${successCount} tăviț${successCount === 1 ? 'ă transmisă' : 'e transmise'} cu succes!`)
         setTraysAlreadyInDepartments(true)
       } else if (successCount > 0 && errorCount > 0) {
         toast.warning(`${successCount} trimise, ${errorCount} erori`)

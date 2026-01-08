@@ -222,7 +222,7 @@ export async function createLeadWithPipeline(
       throw new Error(errorMessage)
     }
 
-    // Atribuie automat tag-ul de departament după creare
+    // Atribuie automat tag-ul de departament după criere
     const { data: pipeline } = await supabase
       .from('pipelines')
       .select('name')
@@ -231,6 +231,54 @@ export async function createLeadWithPipeline(
     
     if (pipeline?.name) {
       await assignDepartmentTagToLead(lead.id, pipeline.name)
+    }
+
+    // ✅ TRIGGER: Crează conversație PUBLICĂ pentru lead cand se creează lead-ul
+    try {
+      console.log('🔍 Creating conversation for newly created lead:', lead.id)
+      
+      // Obține current user ID
+      const { data: { session } } = await supabase.auth.getSession()
+      const currentUserId = session?.user?.id
+      
+      if (!currentUserId) {
+        console.warn('⚠️ No authenticated user found - cannot create conversation')
+      } else {
+        // Verifică dacă conversația deja există (safety check)
+        const { data: existingConv, error: searchError } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('related_id', lead.id)
+          .eq('type', 'lead')
+          .maybeSingle()
+
+        if (searchError && searchError.code !== 'PGRST116') {
+          console.warn('⚠️ Error searching for conversation:', searchError)
+        } else if (!existingConv) {
+          // Conversația nu există, crează-o
+          console.log('➕ Creating new conversation for lead:', lead.id)
+          const { data: newConv, error: insertError } = await supabase
+            .from('conversations')
+            .insert({
+              related_id: lead.id,
+              type: 'lead',
+              created_by: currentUserId, // Created by current user
+            })
+            .select('id')
+            .single()
+
+          if (insertError) {
+            console.error('❌ Error creating conversation:', insertError)
+          } else {
+            console.log('✅ Conversation created successfully for lead:', newConv?.id)
+          }
+        } else {
+          console.log('✅ Conversation already exists for lead:', existingConv.id)
+        }
+      }
+    } catch (convError) {
+      console.error('⚠️ Error in conversation creation process:', convError)
+      // Nu oprim procesul dacă crearea conversației eșuează
     }
 
     return {

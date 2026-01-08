@@ -262,16 +262,15 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
   }, [user])
 
   // Inițializează conversația la primul load
-  // Doar CAUTA conversația existentă (creată din Recepție când s-au atribuit instrumentele)
-  // Nu o mai creează automat
+  // CAUTA conversația existentă (creată automat când se creează lead-ul)
   useEffect(() => {
-    if (!leadId || !user || conversationInitializedRef.current) return
+    if (!leadId || !user) return
 
     async function loadConversation() {
       try {
         console.log('Loading conversation for lead:', leadId)
 
-        // Încearcă să găsești conversația existentă
+        // Încearcă să găsești conversația existentă pentru LEAD
         const { data: convData, error: searchError } = await (supabase
           .from('conversations')
           .select('id')
@@ -282,29 +281,30 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
         if (searchError && searchError.code !== 'PGRST116') {
           // PGRST116 = no rows found, asta e OK
           console.error('Error searching conversation:', searchError?.message)
-          conversationInitializedRef.current = true
           if (isMounted.current) setLoading(false)
           return
         }
 
         if (convData) {
-          console.log('Found existing conversation:', convData.id)
+          console.log('Found existing conversation for lead:', convData.id)
           if (isMounted.current) setConversationId(convData.id)
+          conversationInitializedRef.current = true
         } else {
-          console.log('No conversation found for lead yet. It will be created when instruments are assigned from Reception.')
+          console.log('No conversation found for lead - it should have been created when lead was created.')
+          conversationInitializedRef.current = true
         }
 
-        conversationInitializedRef.current = true
         if (isMounted.current) setLoading(false)
       } catch (error) {
         console.error('Error loading conversation:', error)
-        conversationInitializedRef.current = true
         if (isMounted.current) setLoading(false)
       }
     }
 
-    loadConversation()
-  }, [leadId, user])
+    if (!conversationId) {
+      loadConversation()
+    }
+  }, [leadId, user, conversationId])
 
   // incarca mesajele pentru acest lead
   useEffect(() => {
@@ -487,7 +487,6 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
         sender_id: user.id,
         content: messageText,
         message_type: 'text',
-        tray_id: selectedQuoteId || undefined,
         created_at: new Date().toISOString(),
       }
 
@@ -504,7 +503,6 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
           sender_id: user.id,
           content: messageText,
           message_type: 'text',
-          tray_id: selectedQuoteId || null,
         })
         .select()
         .single() as any)
@@ -560,10 +558,8 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     let currentDate = ''
     let currentGroup: LeadMessage[] = []
 
-    // Filtrez mesajele pe baza selectedQuoteId dacă e selectată o tăviță
-    const filteredMessages = selectedQuoteId 
-      ? messages.filter(msg => msg.tray_id === selectedQuoteId)
-      : messages.filter(msg => !msg.tray_id) // Arată doar mesajele fără tray_id la nivel lead
+    // Arată toate mesajele de nivel lead (fără filtrare pe tray)
+    const filteredMessages = messages
 
     filteredMessages.forEach((msg) => {
       const msgDate = format(new Date(msg.created_at), 'yyyy-MM-dd')
@@ -615,14 +611,14 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     )
   }
 
-  // Dacă nu e conversație, afișează mesaj că trebuie trimise tăvițele din Recepție
+  // Dacă nu e conversație, afișează mesaj că nu există
   if (!conversationId) {
     return (
       <div className="mt-4 p-4 rounded-lg border bg-muted/50">
         <div className="flex flex-col items-center justify-center gap-2">
           <MessageSquare className="h-5 w-5 text-muted-foreground" />
           <span className="text-sm text-muted-foreground text-center">
-            Conversația se va crea automat când se apasă "Trimite Tăvițe" din Recepție
+            Nu s-a găsit conversație pentru acest lead
           </span>
         </div>
       </div>
