@@ -20,7 +20,7 @@ export interface LeadMessage {
   sender_id: string
   content: string
   message_type: string
-  file_url?: string | null
+  tray_id?: string | null
   created_at: string
   updated_at?: string
 }
@@ -28,9 +28,10 @@ export interface LeadMessage {
 interface LeadMessengerProps {
   leadId: string
   leadTechnician?: string | null
+  selectedQuoteId?: string | null
 }
 
-export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerProps) {
+export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId }: LeadMessengerProps) {
   const { user } = useAuth()
   const [messages, setMessages] = useState<LeadMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
@@ -50,29 +51,10 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   const [trayImages, setTrayImages] = useState<Array<{ id: string; file_path: string }>>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const conversationInitializedRef = useRef(false)
   const isMounted = useRef(true)
 
   // Handle file attachment
-  const handleAttachImage = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files
-    if (!files) return
-
-    Array.from(files).forEach((file) => {
-      if (!file.type.startsWith('image/')) {
-        toast.error('Doar imagini sunt acceptate')
-        return
-      }
-
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        const preview = e.target?.result as string
-        setAttachedImages((prev) => [...prev, { file, preview }])
-      }
-      reader.readAsDataURL(file)
-    })
-  }, [])
 
   // Attach tray image
   const handleAttachTrayImage = useCallback((imagePath: string) => {
@@ -208,7 +190,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     }, 0)
   }, [newMessage])
 
-  // Obține numele expeditorului din sender_id
+  // Obține display_name din auth.users (via app_members cu user_id = sender_id)
   const getSenderName = useCallback(async (senderId: string) => {
     // Dacă e user-ul curent, returnează userName
     if (senderId === user?.id) {
@@ -221,33 +203,19 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         return senderNamesCache[senderId]
       }
 
-      // 1. Caută în technicians tabel
-      const { data: techData } = await supabase
-        .from('technicians')
-        .select('name')
-        .eq('user_id', senderId)
-        .single()
-
-      if (techData?.name) {
-        setSenderNamesCache((prev) => ({ ...prev, [senderId]: techData.name }))
-        return techData.name
-      }
-
-      // 2. Caută în app_members pentru name (care e username-ul)
+      // Cauta în app_members cu user_id = sender_id pentru display_name din auth.users
       const { data: memberData } = await supabase
         .from('app_members')
-        .select('name, email')
+        .select('display_name')
         .eq('user_id', senderId)
         .single()
 
-      if (memberData) {
-        // Prioritate: name (username) > email prefix
-        const displayName = memberData.name || memberData.email?.split('@')[0] || 'User'
-        setSenderNamesCache((prev) => ({ ...prev, [senderId]: displayName }))
-        return displayName
+      if (memberData?.display_name) {
+        setSenderNamesCache((prev) => ({ ...prev, [senderId]: memberData.display_name }))
+        return memberData.display_name
       }
 
-      // 3. Fallback - nu gasim user-ul, returnez User
+      // Fallback - nu gasim user-ul, returnez User
       setSenderNamesCache((prev) => ({ ...prev, [senderId]: 'User' }))
       return 'User'
     } catch (error) {
@@ -425,74 +393,21 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     }
   }, [leadId, conversationId])
 
-  // Load attachments for messages
-  useEffect(() => {
-    async function loadAttachments() {
-      const messageIds = messages
-        .filter((msg) => msg.message_type === 'image')
-        .map((msg) => msg.id)
-
-      if (messageIds.length === 0) return
-
-      try {
-        const { data, error } = await supabase
-          .from('message_attachments')
-          .select('*')
-          .in('message_id', messageIds)
-
-        if (error) throw error
-
-        if (data) {
-          const attachmentsByMessage: Record<string, any[]> = {}
-          data.forEach((attachment) => {
-            if (!attachmentsByMessage[attachment.message_id]) {
-              attachmentsByMessage[attachment.message_id] = []
-            }
-            attachmentsByMessage[attachment.message_id].push(attachment)
-          })
-          setMessageAttachments(attachmentsByMessage)
-        }
-      } catch (error) {
-        console.error('Error loading attachments:', error)
-      }
-    }
-
-    loadAttachments()
-  }, [messages])
-
-  // Load tray images din conversație pentru picker
+  // Load tray images din tray curent (selectedQuoteId)
   useEffect(() => {
     async function loadTrayImages() {
-      if (!conversationId) return
+      if (!selectedQuoteId) return
 
       try {
-        // Cauta tray-ul asociat conversației
-        const { data: convData } = await supabase
-          .from('conversations')
-          .select('related_id')
-          .eq('id', conversationId)
-          .single()
-
-        if (!convData?.related_id) return
-
-        // Cauta tray-ul din fișa de serviciu
-        const { data: trayData } = await supabase
-          .from('quotes')
-          .select('id')
-          .eq('service_file_id', convData.related_id)
-          .limit(1)
-          .single()
-
-        if (!trayData?.id) return
-
-        // Cauta imaginile din tray
+        // Cauta imaginile din tray-ul curent
         const { data: imagesData } = await supabase
           .from('tray_images')
           .select('id, file_path')
-          .eq('quote_id', trayData.id)
+          .eq('quote_id', selectedQuoteId)
 
         if (imagesData) {
           setTrayImages(imagesData)
+          console.log('Loaded tray images:', imagesData.length)
         }
       } catch (error) {
         console.error('Error loading tray images:', error)
@@ -500,7 +415,100 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     }
 
     loadTrayImages()
-  }, [conversationId])
+  }, [selectedQuoteId])
+  useEffect(() => {
+    async function loadImages() {
+      const messageIds = messages
+        .filter((msg) => msg.message_type === 'image')
+        .map((msg) => msg.id)
+
+      if (messageIds.length === 0) return
+
+      try {
+        // Load messages cu tray_id
+        const { data: messagesWithImages } = await supabase
+          .from('messages')
+          .select('id, tray_id')
+          .in('id', messageIds)
+          .not('tray_id', 'is', null)
+
+        if (!messagesWithImages || messagesWithImages.length === 0) return
+
+        // Cauta imagini din traiele specificate
+        const trayIds = messagesWithImages.map(m => m.tray_id).filter(Boolean) as string[]
+        const { data: imagesData } = await supabase
+          .from('tray_images')
+          .select('id, file_path, quote_id')
+          .in('quote_id', trayIds)
+
+        if (imagesData) {
+          // Creează map de tray_id -> imagini (luăm prima imagine din tray)
+          const trayImageMap: Record<string, string> = {}
+          imagesData.forEach(img => {
+            if (!trayImageMap[img.quote_id]) {
+              trayImageMap[img.quote_id] = img.file_path
+            }
+          })
+          
+          // Salvează în state
+          const messageImages: Record<string, string> = {}
+          messagesWithImages.forEach(msg => {
+            if (msg.tray_id && trayImageMap[msg.tray_id]) {
+              messageImages[msg.id] = trayImageMap[msg.tray_id]
+            }
+          })
+          setMessageAttachments(messageImages as any)
+        }
+      } catch (error) {
+        console.error('Error loading images:', error)
+      }
+    }
+
+    loadImages()
+  }, [messages])
+
+  // Load tray images din conversație pentru picker
+  useEffect(() => {
+    async function loadTrayImages() {
+      if (!leadId) return
+
+      try {
+        // Cauta service files pentru lead
+        const { data: sfData } = await supabase
+          .from('service_files')
+          .select('id')
+          .eq('lead_id', leadId)
+          .limit(5)
+
+        if (!sfData || sfData.length === 0) return
+
+        // Cauta quotes din aceste service files
+        const sfIds = sfData.map(sf => sf.id)
+        const { data: quotesData } = await supabase
+          .from('quotes')
+          .select('id')
+          .in('service_file_id', sfIds)
+
+        if (!quotesData || quotesData.length === 0) return
+
+        // Cauta imaginile din aceste quotes
+        const quoteIds = quotesData.map(q => q.id)
+        const { data: imagesData } = await supabase
+          .from('tray_images')
+          .select('id, file_path')
+          .in('quote_id', quoteIds)
+
+        if (imagesData && imagesData.length > 0) {
+          setTrayImages(imagesData)
+          console.log('Loaded tray images:', imagesData.length)
+        }
+      } catch (error) {
+        console.error('Error loading tray images:', error)
+      }
+    }
+
+    loadTrayImages()
+  }, [leadId])
 
   // scroll la ultimul mesaj cu debounce pentru performanta
   useEffect(() => {
@@ -522,7 +530,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   const handleSendMessage = useCallback(async () => {
     const messageText = newMessage.trim()
     // Expect conversationId sa existe - daca nu, nu trimite mesaj
-    if ((!messageText && attachedImages.length === 0) || !user || !userRole || sending || !conversationId) {
+    if (!messageText || !user || !userRole || sending || !conversationId) {
       if (!conversationId) {
         toast.error('Conversația se inițializează. Așteptați câteva secunde și reîncercați.')
       }
@@ -531,34 +539,6 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
 
     try {
       setSending(true)
-      let uploadedImageUrls: string[] = []
-
-      // Upload imagini atasate
-      if (attachedImages.length > 0) {
-        for (const { file } of attachedImages) {
-          // Daca e imagine din tray (reference), nu mai upload, e deja in storage
-          if (file.type === 'image/reference') {
-            uploadedImageUrls.push(file.name) // file.name conține file_path-ul
-            continue
-          }
-
-          const fileExt = file.name.split('.').pop()
-          const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${fileExt}`
-          const filePath = `messages/${conversationId}/${fileName}`
-
-          const { data, error } = await supabase.storage
-            .from('tray_images')
-            .upload(filePath, file)
-
-          if (error) {
-            console.error('Upload error:', error)
-            toast.error('Eroare la upload imagine')
-            continue
-          }
-
-          uploadedImageUrls.push(data?.path || '')
-        }
-      }
 
       // optimistic update - adauga mesajul local imediat
       const tempId = `temp-${Date.now()}`
@@ -567,7 +547,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         conversation_id: conversationId,
         sender_id: user.id,
         content: messageText,
-        message_type: attachedImages.length > 0 ? 'image' : 'text',
+        message_type: 'text',
         created_at: new Date().toISOString(),
       }
 
@@ -583,32 +563,12 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
           conversation_id: conversationId,
           sender_id: user.id,
           content: messageText,
-          message_type: attachedImages.length > 0 ? 'image' : 'text',
-          has_attachments: uploadedImageUrls.length > 0,
+          message_type: 'text',
         })
         .select()
         .single()
 
       if (error) throw error
-
-      // Salvează attachment-urile
-      if (uploadedImageUrls.length > 0 && data) {
-        const attachments = uploadedImageUrls.map((url) => ({
-          message_id: data.id,
-          url: url, // Trebuie url, nu file_url
-          attachment_type: 'image',
-          display_name: 'Imagine',
-          mime_type: 'image/*',
-        }))
-
-        const { error: attachError } = await supabase
-          .from('message_attachments')
-          .insert(attachments)
-
-        if (attachError) {
-          console.error('Error saving attachments:', attachError)
-        }
-      }
 
       // Înlocuiește mesajul optimist (temp) cu mesajul real din DB
       setMessages((prev) => {
@@ -630,7 +590,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     } finally {
       setSending(false)
     }
-  }, [newMessage, attachedImages, user, userRole, sending, conversationId])
+  }, [newMessage, user, userRole, sending, conversationId])
 
   // verifica daca utilizatorul este receptie sau tehnician
   const isReception = userRole === 'admin' || userRole === 'owner' || userRole === 'member'
@@ -786,29 +746,26 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                                 isPending && 'opacity-60'
                               )}
                             >
-                              {/* Imagine atasata */}
+                              {/* Imagine atasata - din tray_images */}
                               {msg.message_type === 'image' && messageAttachments[msg.id] && (
                                 <div className="mb-2 max-w-xs">
-                                  <div className="flex gap-2 flex-wrap">
-                                    {messageAttachments[msg.id].map((attachment) => (
-                                      <div
-                                        key={attachment.id}
-                                        className="relative group cursor-pointer"
-                                        onClick={() => {
-                                          window.open(attachment.url, '_blank')
-                                        }}
-                                      >
-                                        <img
-                                          src={attachment.url}
-                                          alt="message attachment"
-                                          className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
-                                        />
-                                        <div className="absolute inset-0 bg-black/50 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                          <span className="text-white text-xs">Click pentru a deschide</span>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const publicUrl = supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id]).data.publicUrl
+                                      window.open(publicUrl, '_blank')
+                                    }}
+                                    className="group relative block"
+                                  >
+                                    <img
+                                      src={supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id]).data.publicUrl}
+                                      alt="message image"
+                                      className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
+                                    />
+                                    <div className="absolute inset-0 bg-black/50 rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      <span className="text-white text-xs">Click pentru a deschide</span>
+                                    </div>
+                                  </button>
                                 </div>
                               )}
 
@@ -990,7 +947,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
               )}
             </div>
 
-            {/* Attach Image Button - cu picker pentru imagini din tăviță */}
+            {/* Attach Image Button - cu picker pentru imagini din tray curent */}
             <div className="relative">
               <button
                 type="button"
@@ -1002,50 +959,43 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                 <Paperclip className="h-4 w-4" />
               </button>
 
-              {/* Picker pentru imagini din tăviță */}
-              {showTrayImagePicker && trayImages.length > 0 && (
+              {/* Picker pentru imagini din tray curent */}
+              {showTrayImagePicker && (
                 <div className="absolute bottom-full right-0 mb-2 bg-popover border rounded-lg shadow-lg p-2 z-50 max-w-sm">
-                  <div className="text-xs font-semibold text-muted-foreground mb-2">
-                    Imagini din tăviță ({trayImages.length}):
-                  </div>
-                  <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto">
-                    {trayImages.map((img) => (
-                      <button
-                        key={img.id}
-                        type="button"
-                        onClick={() => handleAttachTrayImage(img.file_path)}
-                        className="group relative"
-                      >
-                        <img
-                          src={supabase.storage.from('tray_images').getPublicUrl(img.file_path).data.publicUrl}
-                          alt="tray image"
-                          className="h-16 w-16 object-cover rounded border border-muted hover:border-primary transition-colors"
-                        />
-                        <div className="absolute inset-0 bg-black/40 rounded opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <span className="text-white text-xs">+</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full mt-2 text-xs py-1 px-2 bg-muted hover:bg-muted/80 rounded transition-colors"
-                  >
-                    Sau upload...
-                  </button>
+                  {trayImages.length > 0 ? (
+                    <>
+                      <div className="text-xs font-semibold text-muted-foreground mb-2">
+                        Imagini din tăviță ({trayImages.length}):
+                      </div>
+                      <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto mb-2">
+                        {trayImages.map((img) => (
+                          <button
+                            key={img.id}
+                            type="button"
+                            onClick={() => handleAttachTrayImage(img.file_path)}
+                            className="group relative"
+                          >
+                            <img
+                              src={supabase.storage.from('tray_images').getPublicUrl(img.file_path).data.publicUrl}
+                              alt="tray image"
+                              className="h-16 w-16 object-cover rounded border border-muted hover:border-primary transition-colors"
+                            />
+                            <div className="absolute inset-0 bg-black/40 rounded opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <span className="text-white text-xs">+</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground mb-2">
+                      Nu sunt imagini în tăviță
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* File input pentru upload */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleAttachImage}
-                className="hidden"
-              />
             </div>
 
             <Button
