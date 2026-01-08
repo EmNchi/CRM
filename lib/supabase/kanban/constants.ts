@@ -43,9 +43,15 @@ export function isPipelineType(pipelineName: string, type: 'receptie' | 'curier'
     case 'curier':
       return nameLower.includes(CURIER_PIPELINE_NAME)
     case 'department':
-      return DEPARTMENT_PIPELINES.some(dept => 
-        nameLower === dept.toLowerCase() || nameLower.includes(dept.toLowerCase())
-      )
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      const deptPipelinesArray = Array.isArray(DEPARTMENT_PIPELINES) ? DEPARTMENT_PIPELINES : []
+      for (let i = 0; i < deptPipelinesArray.length; i++) {
+        const dept = deptPipelinesArray[i]
+        if (dept && (nameLower === dept.toLowerCase() || nameLower.includes(dept.toLowerCase()))) {
+          return true
+        }
+      }
+      return false
     default:
       return false
   }
@@ -59,7 +65,15 @@ export function matchesStagePattern(
   pattern: keyof typeof STAGE_PATTERNS
 ): boolean {
   const nameLower = stageName.toLowerCase()
-  return STAGE_PATTERNS[pattern].some(p => nameLower.includes(p))
+  // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+  const patternsArray = Array.isArray(STAGE_PATTERNS[pattern]) ? STAGE_PATTERNS[pattern] : []
+  for (let i = 0; i < patternsArray.length; i++) {
+    const p = patternsArray[i]
+    if (p && nameLower.includes(p)) {
+      return true
+    }
+  }
+  return false
 }
 
 /**

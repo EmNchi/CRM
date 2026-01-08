@@ -14,3 +14,5 @@ CREATE INDEX IF NOT EXISTS idx_leads_nu_raspunde ON leads(nu_raspunde) WHERE nu_
 
 
 
+
+

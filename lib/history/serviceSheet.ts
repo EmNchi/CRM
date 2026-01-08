@@ -56,7 +56,9 @@ type Totals = {
   total: number
 }
 
-const isLocalId = (id: string | number) => String(id).startsWith("local_")
+// ELIMINAT: isLocalId - items-urile se salvează direct în DB, nu mai există local IDs
+// Toate items-urile au ID-uri reale din DB
+const isLocalId = (_id: string | number) => false // Nu mai există local IDs
 
 const toSnap = (i: any): SnapshotItem => ({
   id: String(i.id ?? `${i.name_snapshot}:${i.item_type}`),
@@ -143,16 +145,6 @@ export async function persistAndLogServiceSheet(params: {
 }) {
   const { leadId, quoteId, items, services, instruments = [], totals, prevSnapshot, pipelinesWithIds = [] } = params
   
-  console.log('🔧 persistAndLogServiceSheet - START:', {
-    leadId,
-    quoteId,
-    itemsCount: items.length,
-    servicesCount: services.length,
-    instrumentsCount: instruments.length,
-    prevSnapshotCount: prevSnapshot.length,
-    items: items.map(it => ({ id: it.id, type: it.item_type, name: it.name_snapshot }))
-  })
-  
   // Obține ID-ul pipeline-ului "Reparatii" pentru piese
   const reparatiiPipeline = pipelinesWithIds.find(p => p.name === 'Reparatii')
   const reparatiiPipelineId = reparatiiPipeline?.id || null
@@ -162,12 +154,21 @@ export async function persistAndLogServiceSheet(params: {
   // Verifică dacă suntem într-un pipeline departament (Saloane, Frizerii, Horeca, Reparatii)
   // Pentru aceste pipeline-uri, NU se face atribuire automată a tehnicianului
   const departmentPipelineNames = ['Saloane', 'Frizerii', 'Horeca', 'Reparatii']
-  const isDepartmentPipeline = pipelinesWithIds.some(p => departmentPipelineNames.includes(p.name))
+  // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+  let isDepartmentPipeline = false
+  if (Array.isArray(pipelinesWithIds)) {
+    for (let i = 0; i < pipelinesWithIds.length; i++) {
+      const p = pipelinesWithIds[i]
+      if (p && p.name && departmentPipelineNames.includes(p.name)) {
+        isDepartmentPipeline = true
+        break
+      }
+    }
+  }
   
   // Obține technician_id pentru utilizatorul curent
   // NOTĂ: Pentru pipeline-urile departament, NU se va folosi pentru atribuire automată
   const currentUserTechnicianId = await getCurrentUserTechnicianId()
-  console.log('🔧 Current user technician_id:', currentUserTechnicianId, '| isDepartmentPipeline:', isDepartmentPipeline)
 
   // Deletes: anything that existed before (real DB id) but not anymore in current items
   const currentDbIds = new Set(items.filter(it => !isLocalId(it.id)).map(it => String(it.id)))
@@ -183,10 +184,15 @@ export async function persistAndLogServiceSheet(params: {
   }
 
   // Updates: rows that still exist and changed
+  // IMPORTANT: Items-urile noi create direct în DB (cu ID real, nu local) trebuie să fie păstrate
+  // Dacă un item nu este în prevSnapshot dar are ID real din DB, înseamnă că a fost creat direct în DB
+  // și trebuie păstrat (nu trebuie să fie procesat aici, va fi returnat în fresh)
   const beforeMap = new Map(prevSnapshot.map(b => [String(b.id), b]))
   for (const it of items) {
     if (isLocalId(it.id)) continue
     const prev = beforeMap.get(String(it.id))
+    // Dacă nu este în prevSnapshot, înseamnă că este un item nou creat direct în DB
+    // Aceste items vor fi returnate în fresh și nu trebuie procesate aici
     if (!prev) continue
 
     const patch: any = {}
@@ -403,7 +409,6 @@ export async function persistAndLogServiceSheet(params: {
         serial_number: it.serial_number && String(it.serial_number).trim() ? String(it.serial_number).trim() : null,
         garantie: !!it.garantie,
       }
-      console.log('Adding service item with opts:', serviceItemOpts, 'from item:', it);
       // Creează TrayItem pentru serviciu
       // Obține instrument_id și department_id - prioritate: din item -> serviciu -> instrument
       let departmentId: string | null = null
@@ -434,16 +439,6 @@ export async function persistAndLogServiceSheet(params: {
           departmentId = instrument.department_id
         }
       }
-      
-      console.log('Service department lookup:', {
-        serviceName: svcDef.name,
-        itemInstrumentId: (it as any).instrument_id,
-        itemDeptId: (it as any).department_id,
-        serviceDeptId: svcDef.department_id,
-        finalInstrumentId: instrumentId,
-        finalDeptId: departmentId,
-        instrumentsCount: instruments.length
-      })
       
       // Salvează informații suplimentare în notes ca JSON (fără pipeline_id)
       const notesData = {
@@ -693,17 +688,8 @@ export async function persistAndLogServiceSheet(params: {
         
         if (reparatiiDept?.id) {
           departmentId = reparatiiDept.id
-          console.log('Part fallback to Reparatii department:', departmentId)
         }
       }
-      
-      console.log('Part department lookup:', {
-        partName,
-        itemDeptId: (it as any).department_id,
-        itemInstrumentId: (it as any).instrument_id,
-        finalDeptId: departmentId,
-        finalInstrumentId: instrumentId
-      })
       
       if (!departmentId || !instrumentId) {
         throw new Error(`Department_id sau instrument_id lipsă pentru piesa "${partName}". Te rog selectează un instrument înainte de a adăuga piese.`)

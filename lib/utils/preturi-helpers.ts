@@ -216,29 +216,50 @@ export const listQuoteItems = async (
     const brands = (item as any).tray_item_brands || []
     
     // Transformă în formatul pentru UI: Array<{ brand, serialNumbers[], garantie }>
-    const brandGroups = brands.map((b: any) => ({
-      id: b.id,
-      brand: b.brand || '',
-      garantie: b.garantie || false,
-      serialNumbers: (b.tray_item_brand_serials || []).map((s: any) => s.serial_number || '')
-    }))
+    const safeBrands = Array.isArray(brands) ? brands : []
+    const brandGroups = safeBrands.map((b: any) => {
+      if (!b || typeof b !== 'object') {
+        return { id: '', brand: '', garantie: false, serialNumbers: [] }
+      }
+      const safeSerials = Array.isArray(b.tray_item_brand_serials) ? b.tray_item_brand_serials : []
+      return {
+        id: b.id || '',
+        brand: b.brand || '',
+        garantie: b.garantie || false,
+        serialNumbers: safeSerials.map((s: any) => s?.serial_number || '').filter((sn: string) => sn)
+      }
+    })
     
     // Pentru compatibilitate, primul brand
     const firstBrand = brands.length > 0 ? brands[0] : null
     const firstSerial = firstBrand?.tray_item_brand_serials?.[0]?.serial_number || null
     
+    // IMPORTANT: Nu folosim ...item pentru a evita copierea proprietăților care pot conține referințe circulare
+    // (ex: tray_item_brands cu obiecte complexe, sau proprietăți adăugate de React/Supabase)
+    // Extragem explicit doar proprietățile primitive necesare
     return {
-      ...item,
+      // Proprietăți din TrayItem - doar cele primitive
+      id: item.id,
+      tray_id: item.tray_id,
+      department_id: item.department_id || null,
+      instrument_id: instrumentId || item.instrument_id || null,
+      service_id: item.service_id || null,
+      part_id: item.part_id || null,
+      technician_id: item.technician_id || null,
+      notes: item.notes || null,
+      pipeline: item.pipeline || null,
+      // Câmpuri calculate/derivate
       item_type,
       price: price || 0,
       discount_pct: notesData.discount_pct || 0,
       urgent: notesData.urgent || false,
       name_snapshot: notesData.name_snapshot || notesData.name || '',
       // Compatibilitate cu câmpurile vechi
-      brand: firstBrand?.brand || item.brand || notesData.brand || null,
-      serial_number: firstSerial || item.serial_number || notesData.serial_number || null,
+      brand: firstBrand?.brand || (item as any).brand || notesData.brand || null,
+      serial_number: firstSerial || (item as any).serial_number || notesData.serial_number || null,
       garantie: firstBrand?.garantie || notesData.garantie || false,
       // Include toate brand-urile cu serial numbers pentru popularea formularului
+      // IMPORTANT: brandGroups este deja procesat și conține doar date primitive
       brand_groups: brandGroups,
       pipeline_id: notesData.pipeline_id || null,
       department,
@@ -291,4 +312,6 @@ export const addInstrumentItem = async (quoteId: string, instrumentName: string,
   })
   if (error) throw error
 }
+
+
 

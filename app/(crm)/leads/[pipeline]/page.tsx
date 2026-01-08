@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { debounce, normalizePhoneNumber, matchesPhoneNumber } from "@/lib/utils"
-import { KanbanBoard } from "@/components/kanban-board"
+import { KanbanBoard } from "@/components/kanban"
 import { MobileBoardLayout } from "@/components/mobile/mobile-board-layout"
 import dynamic from "next/dynamic"
 import { useToast } from "@/hooks/use-toast"
@@ -14,9 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Plus, Settings2, Filter, X, Search, GripVertical, ArrowUp, ArrowDown } from "lucide-react"
 import { useRole, useAuthContext } from '@/lib/contexts/AuthContext'
-import { Sidebar } from '@/components/sidebar'
+import { AppSidebar as Sidebar } from '@/components/layout'
 import { moveLeadToPipelineByName, getPipelineOptions, getPipelinesWithStages, updatePipelineAndStages, logLeadEvent } from "@/lib/supabase/leadOperations"
-import PipelineEditor from "@/components/pipeline-editor"
+import { PipelineEditor } from "@/components/settings"
 import { Tag } from "@/lib/supabase/tagOperations"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge"
 type Technician = {
   id: string // user_id din app_members
   name: string
+  email?: string // Email opțional
 }
 
 const supabase = supabaseBrowser()
@@ -45,7 +46,7 @@ const supabase = supabaseBrowser()
 const toSlug = (s: string) => String(s).toLowerCase().replace(/\s+/g, "-")
 
 const LeadDetailsPanel = dynamic(
-  () => import("@/components/lead-details-panel").then(m => m.LeadDetailsPanel),
+  () => import("@/components/leads/lead-details-panel").then(m => m.LeadDetailsPanel),
   { ssr: false }
 )
 
@@ -98,13 +99,14 @@ export default function CRMPage() {
     email: '',
     phone_number: '',
     city: '',
+    judet: '',
+    strada: '',
     company_name: '',
     company_address: '',
     address: '',
     address2: '',
     zip: '',
     country: ''
-  
   })
   const [creatingLead, setCreatingLead] = useState(false)
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
@@ -138,7 +140,7 @@ export default function CRMPage() {
     if (!techniciansData) return []
     return techniciansData.map(member => ({
       id: member.user_id,
-      name: member.name || member.email?.split('@')[0] || `User ${member.user_id.slice(0, 8)}`
+      name: member.name || `User ${member.user_id.slice(0, 8)}`
     })).sort((a, b) => a.name.localeCompare(b.name))
   }, [techniciansData])
 
@@ -240,8 +242,16 @@ export default function CRMPage() {
         if (lead.adName?.toLowerCase().includes(query)) return true
         if (lead.formName?.toLowerCase().includes(query)) return true
         
-        // Caută în tag-uri
-        if (lead.tags && lead.tags.some((tag: any) => tag.name?.toLowerCase().includes(query))) return true
+        // Caută în tag-uri - FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+        const leadTags = Array.isArray(lead?.tags) ? lead.tags : []
+        if (Array.isArray(leadTags)) {
+          for (let i = 0; i < leadTags.length; i++) {
+            const tag = leadTags[i]
+            if (tag && tag.name && tag.name.toLowerCase().includes(query)) {
+              return true
+            }
+          }
+        }
         
         // Caută în tehnician
         if (lead.technician?.toLowerCase().includes(query)) return true
@@ -291,11 +301,24 @@ export default function CRMPage() {
       
       if (pipelineSlug !== 'saloane') return
       
-      const saloaneExists = pipelines.some(p => toSlug(p) === 'saloane')
+      const pipelinesArray = Array.isArray(pipelines) ? pipelines : []
+      
+      if (!Array.isArray(pipelinesArray)) {
+        console.error('❌ [page.tsx] ERROR: pipelinesArray is NOT an array!', pipelinesArray)
+        return
+      }
+      
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      let saloaneExists = false
+      for (let i = 0; i < pipelinesArray.length; i++) {
+        const p = pipelinesArray[i]
+        if (p && toSlug(p) === 'saloane') {
+          saloaneExists = true
+          break
+        }
+      }
       
       if (!saloaneExists && isOwner) {
-        console.log('Creez pipeline-ul Saloane...')
-        
         try {
           const pipelineRes = await fetch('/api/pipelines', {
             method: 'POST',
@@ -307,8 +330,6 @@ export default function CRMPage() {
             const error = await pipelineRes.json()
             throw new Error(error.error || 'Failed to create pipeline')
           }
-          
-          console.log('Pipeline Saloane creat cu succes')
           
           const saloaneStages = [
             'Noua', 
@@ -328,8 +349,6 @@ export default function CRMPage() {
             
             if (!stageRes.ok) {
               console.error(`Eroare la crearea stage-ului ${stageName}`)
-            } else {
-              console.log(`Stage "${stageName}" creat cu succes`)
             }
           }
           
@@ -494,7 +513,15 @@ export default function CRMPage() {
     if (isReceptiePipeline) {
       const newStageLower = newStage.toLowerCase()
       const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
-      const isRestricted = restrictedStages.some(restricted => newStageLower.includes(restricted))
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      let isRestricted = false
+      for (let i = 0; i < restrictedStages.length; i++) {
+        const restricted = restrictedStages[i]
+        if (newStageLower.includes(restricted)) {
+          isRestricted = true
+          break
+        }
+      }
       if (isRestricted) {
         toast({
           title: "Mutare blocată",
@@ -749,7 +776,7 @@ export default function CRMPage() {
           )}
 
           <div className="mt-2 flex items-center gap-2">
-            {/* Buton Adauga Vanzari - doar pentru pipeline-ul Vanzari */}
+            {/* Buton Add New Lead - doar pentru pipeline-ul Vanzari */}
             {pipelineSlug?.toLowerCase() === 'vanzari' && (
               <Button
                 variant="default"
@@ -758,7 +785,7 @@ export default function CRMPage() {
                 className="h-8 gap-2"
               >
                 <Plus className="h-4 w-4" />
-                Adauga Vanzari
+                Add New Lead
               </Button>
             )}
 
@@ -827,8 +854,6 @@ export default function CRMPage() {
               }}
               onFilterClick={() => {
                 // Implementare filtre mobil - poate deschide un bottom sheet
-                // Pentru moment, doar logăm
-                console.log('Filtre mobil')
               }}
               onCustomizeClick={() => setCustomizeOpen(true)}
               sidebarContent={
@@ -983,9 +1008,11 @@ export default function CRMPage() {
       <Dialog open={createLeadOpen} onOpenChange={setCreateLeadOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Adauga Comanda Noua</DialogTitle>
+            <DialogTitle>Adauga Lead Nou</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+          
+          <h1>Informatii de contact</h1>
             <div>
               <Label htmlFor="lead-name">Nume complet *</Label>
               <Input
@@ -996,17 +1023,7 @@ export default function CRMPage() {
               />
             </div>
             <div>
-              <Label htmlFor="lead-email">Email</Label>
-              <Input
-                id="lead-email"
-                type="email"
-                value={newLeadData.email}
-                onChange={(e) => setNewLeadData(prev => ({ ...prev, email: e.target.value }))}
-                placeholder="email@example.com"
-              />
-            </div>
-            <div>
-              <Label htmlFor="lead-phone">Telefon</Label>
+              <Label htmlFor="lead-phone">Telefon *</Label>
               <Input
                 id="lead-phone"
                 type="tel"
@@ -1015,15 +1032,14 @@ export default function CRMPage() {
                 placeholder="+40 123 456 789"
               />
             </div>
-            <div>
-              <Label htmlFor="lead-city">Oraș</Label>
+             <div>
+              <Label htmlFor="lead-email">Email</Label>
               <Input
-                id="lead-city"
-                value={newLeadData.city}
-                onChange={(e) =>
-                  setNewLeadData(prev => ({ ...prev, city: e.target.value }))
-                }
-                placeholder="București"
+                id="lead-email"
+                type="email"
+                value={newLeadData.email}
+                onChange={(e) => setNewLeadData(prev => ({ ...prev, email: e.target.value }))}
+                placeholder="email@example.com"
               />
             </div>
               
@@ -1038,40 +1054,41 @@ export default function CRMPage() {
                 placeholder="Companie 1"
               />
             </div>
-              
+              <br></br>
+              <h1>Date de livrare</h1>
             <div>
-              <Label htmlFor="lead-company-address">Compania și adresa</Label>
+              <Label htmlFor="lead-city">Oraș</Label>
               <Input
-                id="lead-company-address"
-                value={newLeadData.company_address}
+                id="lead-city"
+                value={newLeadData.city}
                 onChange={(e) =>
-                  setNewLeadData(prev => ({ ...prev, company_address: e.target.value }))
+                  setNewLeadData(prev => ({ ...prev, city: e.target.value }))
                 }
-                placeholder="Compania și adresa"
+                placeholder="București"
               />
             </div>
-              
+
             <div>
-              <Label htmlFor="lead-address">Adresă</Label>
+              <Label htmlFor="lead-judet">Judet</Label>
               <Input
-                id="lead-address"
-                value={newLeadData.address}
+                id="lead-judet"
+                value={newLeadData.judet}
                 onChange={(e) =>
-                  setNewLeadData(prev => ({ ...prev, address: e.target.value }))
+                  setNewLeadData(prev => ({ ...prev, judet: e.target.value }))
                 }
-                placeholder="Obor"
+                placeholder="Bistrita"
               />
             </div>
-              
+
             <div>
-              <Label htmlFor="lead-address2">Adresă 2</Label>
+              <Label htmlFor="lead-strada">Strada</Label>
               <Input
-                id="lead-address2"
-                value={newLeadData.address2}
+                id="lead-strada"
+                value={newLeadData.strada}
                 onChange={(e) =>
-                  setNewLeadData(prev => ({ ...prev, address2: e.target.value }))
+                  setNewLeadData(prev => ({ ...prev, strada: e.target.value }))
                 }
-                placeholder="ap., etaj etc."
+                placeholder="Strada, număr"
               />
             </div>
               
@@ -1096,6 +1113,8 @@ export default function CRMPage() {
                     email: '', 
                     phone_number: '',
                     city: '',
+                    judet: '',
+                    strada: '',
                     company_name: '',
                     company_address: '',
                     address: '',
@@ -1113,6 +1132,15 @@ export default function CRMPage() {
                     toast({
                       title: "Eroare",
                       description: "Numele este obligatoriu",
+                      variant: "destructive"
+                    })
+                    return
+                  }
+
+                  if (!newLeadData.phone_number.trim()) {
+                    toast({
+                      title: "Eroare",
+                      description: "Telefonul este obligatoriu",
                       variant: "destructive"
                     })
                     return
@@ -1145,6 +1173,8 @@ export default function CRMPage() {
                         email: newLeadData.email.trim() || null,
                         phone_number: newLeadData.phone_number.trim() || null,
                         city: newLeadData.city.trim() || null,
+                        judet: newLeadData.judet.trim() || null,
+                        strada: newLeadData.strada.trim() || null,
                         company_name: newLeadData.company_name.trim() || null,
                         company_address: newLeadData.company_address.trim() || null,
                         address: newLeadData.address.trim() || null,
@@ -1172,6 +1202,8 @@ export default function CRMPage() {
                       email: '', 
                       phone_number: '',
                       city: '',
+                      judet: '',
+                      strada: '',
                       company_name: '',
                       company_address: '',
                       address: '',
@@ -1192,7 +1224,7 @@ export default function CRMPage() {
                     setCreatingLead(false)
                   }
                 }}
-                disabled={creatingLead || !newLeadData.full_name.trim()}
+                disabled={creatingLead || !newLeadData.full_name.trim() || !newLeadData.phone_number.trim()}
               >
                 {creatingLead ? 'Se creeaza...' : 'Creeaza'}
               </Button>
@@ -1247,6 +1279,7 @@ export default function CRMPage() {
                           }
                         }}
                         disabled={index === 0}
+                        aria-label={`Mută stage-ul "${stage}" în sus`}
                       >
                         <ArrowUp className="h-4 w-4" />
                       </Button>
@@ -1266,6 +1299,7 @@ export default function CRMPage() {
                           }
                         }}
                         disabled={index === orderedStages.length - 1}
+                        aria-label={`Mută stage-ul "${stage}" în jos`}
                       >
                         <ArrowDown className="h-4 w-4" />
                       </Button>

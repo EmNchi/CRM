@@ -136,7 +136,16 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     // Fetch service files (excluding those already in virtualItems and directServiceFiles)
     const sfIdsToFetch = serviceFiles.filter(
       id => !virtualItems.serviceFileData.has(id) && 
-            !(directServiceFiles?.some((sf: any) => sf.id === id))
+            !(directServiceFiles && Array.isArray(directServiceFiles) && (() => {
+        // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+        for (let i = 0; i < directServiceFiles.length; i++) {
+          const sf = directServiceFiles[i]
+          if (sf && sf.id === id) {
+            return true
+          }
+        }
+        return false
+      })())
     )
     
     const { data: fetchedServiceFiles } = await fetchServiceFilesByIds(sfIdsToFetch)
@@ -148,23 +157,59 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       ...(directServiceFiles || [])
     ]
     
+    // Get all lead IDs for tags BEFORE filtering
+    const allLeadIds = allServiceFiles
+      .map(sf => sf.lead?.id)
+      .filter(Boolean) as string[]
+    
+    // Fetch tags for all service files to check for department tags
+    const { data: tagMap } = await fetchTagsForLeads(allLeadIds)
+    
+    // Tag-uri de departament care trebuie să apară în Recepție
+    const departmentTags = ['Horeca', 'Saloane', 'Frizerii', 'Reparatii']
+    
+    // Identifică fișele care au tag-uri de departament
+    const serviceFilesWithDepartmentTags = new Set<string>()
+    allServiceFiles.forEach(sf => {
+      if (sf.lead?.id) {
+        const leadTags = tagMap.get(sf.lead.id) || []
+        // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+        let hasDepartmentTag = false
+        if (Array.isArray(leadTags)) {
+          for (let i = 0; i < leadTags.length; i++) {
+            const tag = leadTags[i]
+            if (tag && tag.name && departmentTags.includes(tag.name)) {
+              hasDepartmentTag = true
+              break
+            }
+          }
+        }
+        if (hasDepartmentTag) {
+          serviceFilesWithDepartmentTags.add(sf.id)
+        }
+      }
+    })
+    
     // Filter service files: Receptie should show those with office_direct = true OR curier_trimis = true
-    // OR those that have trays in work (from virtual items)
+    // OR those that have trays in work (from virtual items) OR those with department tags
     const virtualServiceFileIds = new Set(virtualItems.serviceFileData.keys())
     const filteredServiceFiles = allServiceFiles.filter(sf => {
       // For Receptie, show service files with office_direct = true or curier_trimis = true
       // OR service files that have trays in work (from virtual items)
-      return sf.office_direct === true || sf.curier_trimis === true || virtualServiceFileIds.has(sf.id)
+      // OR service files with department tags (Horeca, Saloane, Frizerii, Reparatii)
+      return sf.office_direct === true || 
+             sf.curier_trimis === true || 
+             virtualServiceFileIds.has(sf.id) ||
+             serviceFilesWithDepartmentTags.has(sf.id)
     })
     
-    // Get all lead IDs for tags
+    // Get lead IDs for filtered service files
     const leadIds = filteredServiceFiles
       .map(sf => sf.lead?.id)
       .filter(Boolean) as string[]
     
-    // Fetch tags, calculate totals, and get technician names
-    const [{ data: tagMap }, totalsData, technicianMap] = await Promise.all([
-      fetchTagsForLeads(leadIds),
+    // Calculate totals and get technician names
+    const [totalsData, technicianMap] = await Promise.all([
       this.calculateServiceFileTotals(filteredServiceFiles.map(sf => sf.id)),
       this.getTechnicianMapForServiceFiles(filteredServiceFiles.map(sf => sf.id))
     ])
@@ -177,6 +222,20 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const inAsteptareStage = findStageByPattern(receptieStages, 'IN_ASTEPTARE')
     const deFacturatStage = findStageByPattern(receptieStages, 'DE_FACTURAT')
     const coletAjunsStage = findStageByPattern(receptieStages, 'COLET_AJUNS')
+    
+    // Găsește stage-urile pentru tag-urile de departament
+    const horecaStage = findStageByPattern(receptieStages, 'HORECA')
+    const saloaneStage = findStageByPattern(receptieStages, 'SALOANE')
+    const frizeriiStage = findStageByPattern(receptieStages, 'FRIZERII')
+    const reparatiiStage = findStageByPattern(receptieStages, 'REPARATII')
+    
+    // Map pentru tag-uri de departament -> stage
+    const departmentTagToStage = new Map<string, { id: string; name: string } | undefined>([
+      ['Horeca', horecaStage],
+      ['Saloane', saloaneStage],
+      ['Frizerii', frizeriiStage],
+      ['Reparatii', reparatiiStage],
+    ])
     
     // Check which service files have trays in department pipelines
     const serviceFilesWithTraysInDepartments = await this.getServiceFilesWithTraysInDepartments(
@@ -194,12 +253,28 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       const serviceFileTraysInfo = traysInfo.get(serviceFile.id)
       const hasTraysInDepartments = serviceFilesWithTraysInDepartments.has(serviceFile.id)
       
-      // Determine target stage based on priority: In Asteptare > In Lucru > De Facturat > Colet Ajuns
-      // IMPORTANT: "In Asteptare" are prioritate mai mare decât "In Lucru" și "De Facturat"
+      // Verifică dacă fișa are tag-uri de departament
+      let departmentTagStage: { id: string; name: string } | undefined
+      if (serviceFile.lead?.id) {
+        const leadTags = tagMap.get(serviceFile.lead.id) || []
+        for (const tag of leadTags) {
+          if (departmentTags.includes(tag.name)) {
+            departmentTagStage = departmentTagToStage.get(tag.name)
+            break // Folosește primul tag de departament găsit
+          }
+        }
+      }
+      
+      // Determine target stage based on priority: Department Tag Stage > In Asteptare > In Lucru > De Facturat > Colet Ajuns
+      // IMPORTANT: Stage-ul bazat pe tag-ul de departament are prioritate maximă
       let targetStage: { id: string; name: string } | undefined
       
-      // Verifică dacă există tăvițe cu status specific
-      if (serviceFileTraysInfo && serviceFileTraysInfo.trays.length > 0) {
+      // Prioritatea 1: Stage-ul bazat pe tag-ul de departament
+      if (departmentTagStage) {
+        targetStage = departmentTagStage
+      }
+      // Prioritatea 2: Verifică dacă există tăvițe cu status specific
+      else if (serviceFileTraysInfo && serviceFileTraysInfo.trays.length > 0) {
         // Prioritatea: In Asteptare > In Lucru > De Facturat
         if (serviceFileTraysInfo.hasInAsteptare && inAsteptareStage) {
           // Dacă există tăvițe în "In Asteptare" sau "Astept Piese", mută în "In Asteptare"
@@ -249,17 +324,18 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       if (!pipelineItem || !serviceFile.lead) return
       
       const leadId = serviceFile.lead.id
-      const leadTags = tagMap.get(leadId) || []
+      const leadTagsRaw = tagMap.get(leadId) || []
+      const leadTags = Array.isArray(leadTagsRaw) ? leadTagsRaw : []
       
       // IMPORTANT: Pentru fișele de serviciu, tag-ul "urgent" vine din câmpul urgent al fișei, nu din tag-urile lead-ului
       // Filtrează tag-ul "urgent" din tag-urile lead-ului și adaugă-l doar dacă fișa are urgent = true
-      const tagsWithoutUrgent = leadTags.filter(tag => tag.name.toLowerCase() !== 'urgent')
+      const tagsWithoutUrgent = leadTags.filter(tag => tag?.name?.toLowerCase() !== 'urgent')
       const serviceFileTags = [...tagsWithoutUrgent]
       
       // Adaugă tag-ul "urgent" doar dacă fișa de serviciu are urgent = true
-      if (serviceFile.urgent === true) {
+      if (serviceFile?.urgent === true) {
         // Caută tag-ul "urgent" în lista de tag-uri existente sau creează unul nou
-        const urgentTag = leadTags.find(tag => tag.name.toLowerCase() === 'urgent')
+        const urgentTag = leadTags.find(tag => tag?.name?.toLowerCase() === 'urgent')
         if (urgentTag) {
           serviceFileTags.push(urgentTag)
         } else {
@@ -334,11 +410,18 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const supabase = supabaseBrowser()
     
     // Find department pipelines
-    const deptPipelines = context.allPipelines.filter(p => 
-      DEPARTMENT_PIPELINES.some(dept => 
-        p.name.toLowerCase() === dept.toLowerCase()
-      )
-    )
+    // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+    const deptPipelines = context.allPipelines.filter(p => {
+      if (!p || !p.name) return false
+      const pNameLower = p.name.toLowerCase()
+      for (let i = 0; i < DEPARTMENT_PIPELINES.length; i++) {
+        const dept = DEPARTMENT_PIPELINES[i]
+        if (pNameLower === dept.toLowerCase()) {
+          return true
+        }
+      }
+      return false
+    })
     
     if (deptPipelines.length === 0) {
       return result
@@ -589,11 +672,18 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const supabase = supabaseBrowser()
     
     // Find department pipelines
-    const deptPipelines = context.allPipelines.filter(p => 
-      DEPARTMENT_PIPELINES.some(dept => 
-        p.name.toLowerCase() === dept.toLowerCase()
-      )
-    )
+    // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+    const deptPipelines = context.allPipelines.filter(p => {
+      if (!p || !p.name) return false
+      const pNameLower = p.name.toLowerCase()
+      for (let i = 0; i < DEPARTMENT_PIPELINES.length; i++) {
+        const dept = DEPARTMENT_PIPELINES[i]
+        if (pNameLower === dept.toLowerCase()) {
+          return true
+        }
+      }
+      return false
+    })
     
     if (deptPipelines.length === 0) {
       return result
@@ -730,11 +820,18 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const supabase = supabaseBrowser()
     
     // Find department pipelines
-    const deptPipelines = context.allPipelines.filter(p => 
-      DEPARTMENT_PIPELINES.some(dept => 
-        p.name.toLowerCase() === dept.toLowerCase()
-      )
-    )
+    // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+    const deptPipelines = context.allPipelines.filter(p => {
+      if (!p || !p.name) return false
+      const pNameLower = p.name.toLowerCase()
+      for (let i = 0; i < DEPARTMENT_PIPELINES.length; i++) {
+        const dept = DEPARTMENT_PIPELINES[i]
+        if (pNameLower === dept.toLowerCase()) {
+          return true
+        }
+      }
+      return false
+    })
     
     if (deptPipelines.length === 0) {
       return result

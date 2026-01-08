@@ -68,6 +68,7 @@ export function MobileBoardHeader({
             className="h-9 w-9 p-0"
             onClick={onSearchClick}
             title="Căutare"
+            aria-label="Căutare"
           >
             <Search className="h-4 w-4" />
           </Button>
@@ -77,6 +78,7 @@ export function MobileBoardHeader({
             className="h-9 w-9 p-0"
             onClick={onFilterClick}
             title="Filtre"
+            aria-label="Filtre"
           >
             <Filter className="h-4 w-4" />
           </Button>
@@ -87,6 +89,7 @@ export function MobileBoardHeader({
               className="h-9 w-9 p-0"
               onClick={onCustomizeClick}
               title="Customizare"
+              aria-label="Customizare"
             >
               <Settings className="h-4 w-4" />
             </Button>
@@ -97,6 +100,7 @@ export function MobileBoardHeader({
             className="h-9 w-9 p-0"
             onClick={() => router.push('/profile')}
             title="Profil"
+            aria-label="Profil"
           >
             <UserCircle className="h-4 w-4" />
           </Button>

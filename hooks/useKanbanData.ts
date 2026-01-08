@@ -52,22 +52,33 @@ export function useKanbanData(pipelineSlug?: string) {
   useEffect(() => {
     if (user?.id) {
       setCurrentUserId(user.id)
-      console.log('👤 Current user ID set:', user.id)
     } else {
       setCurrentUserId(null)
-      console.log('⚠️ No current user ID available')
     }
   }, [user])
   
-  // Debounce helper pentru refresh-uri
+  // Debounce helper pentru refresh-uri - OPTIMIZAT
+  // Reduce timeout-ul și adaugă protecție împotriva refresh-urilor simultane
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
+  const isRefreshingRef = useRef(false)
   const debouncedRefresh = useCallback(() => {
+    // Previne refresh-uri simultane - dacă un refresh este deja în curs, ignoră
+    if (isRefreshingRef.current) {
+      return
+    }
+    
+    // Curăță timeout-ul anterior dacă există
     if (debounceRef.current) {
       clearTimeout(debounceRef.current)
     }
+    
+    // Setează noul timeout cu timp redus pentru răspuns mai rapid
     debounceRef.current = setTimeout(() => {
-      loadDataRef.current()
-    }, 1000) // 1 secundă în loc de 200ms
+      isRefreshingRef.current = true
+      loadDataRef.current().finally(() => {
+        isRefreshingRef.current = false
+      })
+    }, 300) // Redus de la 1000ms la 300ms pentru răspuns mai rapid
   }, [])
 
   const patchLeadTags = useCallback((leadId: string, tags: Tag[]) => {
@@ -80,8 +91,22 @@ export function useKanbanData(pipelineSlug?: string) {
       if (l.id !== leadId) return l
       
       // actualizeaza tag-urile: adauga sau elimina tag-ul PINNED
-      const currentTags = l.tags || []
-      const hasPinnedTag = currentTags.some(tag => tag.name === 'PINNED')
+      const currentTags = Array.isArray(l?.tags) ? l.tags : []
+      
+      if (!Array.isArray(currentTags)) {
+        console.error('❌ [useKanbanData] ERROR: currentTags is NOT an array!', currentTags)
+        return l
+      }
+      
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      let hasPinnedTag = false
+      for (let i = 0; i < currentTags.length; i++) {
+        const tag = currentTags[i]
+        if (tag && tag.name === 'PINNED') {
+          hasPinnedTag = true
+          break
+        }
+      }
       
       if (isPinned && !hasPinnedTag) {
         // adauga tag-ul PINNED (va fi adaugat de server, dar actualizam local pentru UI instant)
@@ -105,28 +130,44 @@ export function useKanbanData(pipelineSlug?: string) {
       // Folosește cache pentru pipelines
       const pipelinesData = await getPipelines()
       if (!pipelinesData) throw new Error('Failed to load pipelines')
+      
+      if (!Array.isArray(pipelinesData)) {
+        console.error('❌ [useKanbanData] ERROR: pipelinesData is NOT an array!', pipelinesData)
+        throw new Error('pipelinesData is not an array')
+      }
 
-      setPipelines(pipelinesData.map((p: any) => p.name))
+      setPipelines(pipelinesData.map((p: any) => p?.name || ''))
 
       const currentPipeline = pipelineSlug
         ? pipelinesData.find((p: any) => toSlug(p.name) === pipelineSlug)
         : pipelinesData?.[0]
       
-      console.log('🔍 useKanbanData - Pipeline loading:', {
-        pipelineSlug,
-        allPipelines: pipelinesData.map((p: any) => ({ name: p.name, slug: toSlug(p.name), id: p.id })),
-        currentPipeline: currentPipeline ? { name: currentPipeline.name, id: currentPipeline.id } : null
-      })
-      
         if (currentPipeline) {
           setCurrentPipelineId(currentPipeline.id)
-          setStages(currentPipeline.stages.map((s: any) => s.name))
+          
+          // Protecție: verifică dacă stages este un array înainte de a apela .map()
+          const stagesArray = Array.isArray(currentPipeline.stages) ? currentPipeline.stages : []
+          setStages(stagesArray.map((s: any) => s?.name || ''))
           
           const isReceptie = toSlug(currentPipeline.name) === 'receptie'
           const departmentPipelines = ['Saloane', 'Horeca', 'Frizerii', 'Reparatii']
-          const isDepartmentPipeline = departmentPipelines.some(dept => 
-            toSlug(currentPipeline.name) === toSlug(dept)
-          )
+          
+          if (!Array.isArray(departmentPipelines)) {
+            console.error('❌ [useKanbanData] ERROR: departmentPipelines is NOT an array!', departmentPipelines)
+            setIsDepartmentPipelineState(false)
+            return
+          }
+          
+          // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+          let isDepartmentPipeline = false
+          const currentPipelineNameSlug = toSlug(currentPipeline.name)
+          for (let i = 0; i < departmentPipelines.length; i++) {
+            const dept = departmentPipelines[i]
+            if (currentPipelineNameSlug === toSlug(dept)) {
+              isDepartmentPipeline = true
+              break
+            }
+          }
           const isAdminOrOwner = role === 'admin' || role === 'owner'
           setIsDepartmentPipelineState(isDepartmentPipeline)
           let allLeads: KanbanLead[] = []
@@ -145,17 +186,6 @@ export function useKanbanData(pipelineSlug?: string) {
           )
           if (itemsError) throw itemsError
           allLeads = (itemsData || []) as any[]
-        
-          if (isDepartmentPipeline) {
-            console.log('📦 Department pipeline - loaded trays:', allLeads.length, '(filtered for user:', currentUserId, ')')
-          } else if (isReceptie) {
-            console.log('📋 Receptie pipeline - loaded items:', allLeads.length)
-          }
-        
-        console.log('🔍 useKanbanData - Items încărcate:', {
-          count: allLeads.length,
-          items: allLeads.map((l: any) => ({ id: l.id, type: l.type, name: l.name, stage: l.stage }))
-        })
         
         setLeads(allLeads)
       } else {
@@ -390,9 +420,12 @@ export function useKanbanData(pipelineSlug?: string) {
 
     ch.subscribe()
     return () => { 
+      // Cleanup: curăță timeout-ul și resetează flag-ul de refresh
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
+        debounceRef.current = null
       }
+      isRefreshingRef.current = false
       supabase.removeChannel(ch) 
     }
   }, [currentPipelineId, debouncedRefresh, invalidateCache, isDepartmentPipelineState])
@@ -416,9 +449,22 @@ export function useKanbanData(pipelineSlug?: string) {
     // Blochează mutarea în stage-urile restricționate în Receptie
     if (isInReceptie) {
       const restrictedStages = ['facturat', 'facturată', 'in asteptare', 'în așteptare', 'in lucru', 'în lucru']
-      const isRestricted = restrictedStages.some(restricted => newStageNameLower.includes(restricted))
+      
+      if (!Array.isArray(restrictedStages)) {
+        console.error('❌ [useKanbanData] ERROR: restrictedStages is NOT an array!', restrictedStages)
+        return
+      }
+      
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      let isRestricted = false
+      for (let i = 0; i < restrictedStages.length; i++) {
+        const restricted = restrictedStages[i]
+        if (newStageNameLower.includes(restricted)) {
+          isRestricted = true
+          break
+        }
+      }
       if (isRestricted) {
-        console.log('🚫 Mutare blocată în stage restricționat:', newStageName)
         return // Nu permite mutarea în stage-uri restricționate
       }
     }
@@ -442,19 +488,6 @@ export function useKanbanData(pipelineSlug?: string) {
       const isMovingToInLucru = newStageNameLower.includes('lucru') || newStageNameLower.includes('work') || newStageNameLower.includes('progress')
       const shouldAssignTechnician = isTrayInDeptPipeline && isMovingFromNoua && isMovingToInLucru
       
-      console.log('🔍 Verificare atribuire tehnician (ÎNAINTE de optimistic update):', {
-        isTrayInDeptPipeline,
-        previousStageName,
-        previousLeadStage: previousLead.stage,
-        currentLeadStage: lead.stage,
-        isMovingFromNoua,
-        newStageNameLower,
-        isMovingToInLucru,
-        shouldAssignTechnician,
-        currentUserId,
-        currentPipelineName: currentPipeline.name
-      })
-      
       // Dacă este tăviță în pipeline-urile departamentelor, permite mutarea efectivă
       if (isTrayInDeptPipeline) {
         // OPTIMISTIC UPDATE: Actualizează UI-ul imediat pentru feedback vizual
@@ -465,28 +498,15 @@ export function useKanbanData(pipelineSlug?: string) {
           const itemType = getItemType(lead)
           const itemId = getItemId(lead)
           
-          console.log('🔄 Mutare tăviță în pipeline departament:', {
-            leadId,
-            newStageName,
-            itemType,
-            itemId,
-            pipelineId: lead.pipelineId,
-            newStageId: newStage.id,
-            shouldAssignTechnician,
-            currentUserId
-          })
-          
           // Verifică dacă există deja un pipeline_item în pipeline-ul curent
           const { data: existingPipelineItem } = await getPipelineItemForItem(itemType, itemId, lead.pipelineId)
           
           if (!existingPipelineItem) {
             // Dacă nu există, creează un pipeline_item nou în pipeline-ul curent
-            console.log('📝 Creare pipeline_item pentru tăviță în pipeline-ul curent')
             const { data: newPipelineItem, error: addError } = await addTrayToPipeline(itemId, lead.pipelineId, newStage.id)
             if (addError) {
               throw addError
             }
-            console.log('✅ Pipeline_item creat:', newPipelineItem)
           } else {
             // Dacă există, actualizează stage-ul
             const { error } = await moveItemToStage(itemType, itemId, lead.pipelineId, newStage.id)
@@ -500,27 +520,15 @@ export function useKanbanData(pipelineSlug?: string) {
             // Obține user ID (folosește currentUserId sau încearcă din auth)
             let userIdToAssign = currentUserId
             if (!userIdToAssign) {
-              console.warn('⚠️ currentUserId este null, încercare obținere din auth...')
               const { data: { user: authUser } } = await supabase.auth.getUser()
               if (authUser?.id) {
                 userIdToAssign = authUser.id
-                console.log('✅ User ID obținut din auth:', userIdToAssign)
                 setCurrentUserId(userIdToAssign)
-              } else {
-                console.error('❌ Nu s-a putut obține user ID pentru atribuirea tehnicianului')
-                // Nu returnăm aici - mutarea cardului trebuie să continue chiar dacă nu putem atribui tehnicianul
               }
             }
             
             // Continuă doar dacă avem user ID
             if (userIdToAssign) {
-            
-            console.log('👤 Atribuire automată tehnician pentru tăviță:', {
-              trayId: itemId,
-              technicianId: userIdToAssign,
-              previousStage: previousStageName,
-              newStage: newStageNameLower
-            })
             
             // Verifică mai întâi dacă există tray_items pentru această tăviță
             const { data: existingItems, error: checkError } = await supabase
@@ -543,22 +551,9 @@ export function useKanbanData(pipelineSlug?: string) {
               
               if (updateError) {
                 console.error('⚠️ Eroare la atribuirea automată a tehnicianului:', updateError)
-              } else {
-                console.log('✅ Tehnician atribuit automat pentru tăviță. Items actualizate:', updateData?.length || 0)
               }
             }
-            } else {
-              console.warn('⚠️ Nu se poate atribui tehnician: user ID indisponibil')
             }
-          } else {
-            console.log('ℹ️ Nu se atribuie tehnician:', {
-              shouldAssignTechnician,
-              isTrayInDeptPipeline,
-              isMovingFromNoua,
-              isMovingToInLucru,
-              previousStageName,
-              newStageNameLower
-            })
           }
           
           // Real-time subscription va actualiza automat când se salvează în baza de date
@@ -576,7 +571,6 @@ export function useKanbanData(pipelineSlug?: string) {
       setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, stage: newStageName, stageId: newStage.id } : l)))
       
       // Pentru tăvițe/service_files în alte pipeline-uri, mutarea este doar vizuală
-      console.log('Quote/Fisa card moved locally (no DB update):', leadId, newStageName)
       return
     }
     
@@ -628,16 +622,6 @@ export function useKanbanData(pipelineSlug?: string) {
     try {
       const itemType = getItemType(lead)
       const itemId = getItemId(lead)
-      
-      console.log('🔄 handleLeadMove:', {
-        leadId,
-        newStageName,
-        itemType,
-        itemId,
-        targetPipelineId,
-        newStageId: newStage.id,
-        leadData: { id: lead.id, type: leadAny.type, pipelineId: lead.pipelineId }
-      })
       
       const { error } = await moveItemToStage(itemType, itemId, targetPipelineId, newStage.id)
       if (error) {

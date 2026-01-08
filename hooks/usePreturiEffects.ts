@@ -1,4 +1,8 @@
-import { useEffect } from 'react'
+/**
+ * Hook pentru gestionarea efectelor (useEffect) în componenta Preturi
+ */
+
+import { useEffect, useRef } from 'react'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { getServiceFile } from '@/lib/supabase/serviceFileOperations'
 import { getPipelineItemForItem } from '@/lib/supabase/pipelineOperations'
@@ -7,39 +11,7 @@ import type { LeadQuoteItem } from '@/lib/types/preturi'
 
 const supabase = supabaseBrowser()
 
-/**
- * Hook pentru gestionarea efectelor (useEffect) în componenta Preturi
- */
-export function usePreturiEffects({
-  // Dependencies
-  leadId,
-  fisaId,
-  selectedQuoteId,
-  isVanzariPipeline,
-  isReceptiePipeline,
-  pipelinesWithIds,
-  isCommercialPipeline,
-  
-  // State setters
-  setUrgentTagId,
-  setInstrumentForm,
-  setInstrumentSettings,
-  setUrgentAllServices,
-  setSubscriptionType,
-  setCurrentServiceFileStage,
-  setTrayDetails,
-  setLoadingTrayDetails,
-  setItems,
-  setIsDirty,
-  
-  // State values
-  svc,
-  instrumentForm,
-  instrumentSettings,
-  urgentAllServices,
-  items,
-  urgentTagId,
-}: {
+interface UsePreturiEffectsProps {
   leadId: string
   fisaId?: string | null
   selectedQuoteId: string | null
@@ -58,6 +30,8 @@ export function usePreturiEffects({
   setLoadingTrayDetails: (loading: boolean) => void
   setItems: React.Dispatch<React.SetStateAction<LeadQuoteItem[]>>
   setIsDirty: (dirty: boolean) => void
+  setOfficeDirect: (value: boolean) => void
+  setCurierTrimis: (value: boolean) => void
   
   svc: any
   instrumentForm: any
@@ -65,7 +39,35 @@ export function usePreturiEffects({
   urgentAllServices: boolean
   items: LeadQuoteItem[]
   urgentTagId: string | null
-}) {
+}
+
+export function usePreturiEffects({
+  leadId,
+  fisaId,
+  selectedQuoteId,
+  isVanzariPipeline,
+  isReceptiePipeline,
+  pipelinesWithIds,
+  isCommercialPipeline,
+  setUrgentTagId,
+  setInstrumentForm,
+  setInstrumentSettings,
+  setUrgentAllServices,
+  setSubscriptionType,
+  setCurrentServiceFileStage,
+  setTrayDetails,
+  setLoadingTrayDetails,
+  setItems,
+  setIsDirty,
+  setOfficeDirect,
+  setCurierTrimis,
+  svc,
+  instrumentForm,
+  instrumentSettings,
+  urgentAllServices,
+  items,
+  urgentTagId,
+}: UsePreturiEffectsProps) {
   // Găsește tag-ul urgent la încărcare
   useEffect(() => {
     (async () => {
@@ -81,7 +83,7 @@ export function usePreturiEffects({
   useEffect(() => {
     if (svc.instrumentId !== instrumentForm.instrument || svc.qty !== instrumentForm.qty) {
       const savedSettings = instrumentSettings[svc.instrumentId]
-      setInstrumentForm(prev => ({ 
+      setInstrumentForm((prev: any) => ({ 
         ...prev, 
         instrument: svc.instrumentId,
         qty: savedSettings?.qty || svc.qty || '1'
@@ -93,9 +95,7 @@ export function usePreturiEffects({
   useEffect(() => {
     if (!instrumentForm.instrument) return
     
-    // Calculează numărul total de serial number-uri din toate grupurile
     const totalSerialNumbers = instrumentForm.brandSerialGroups.reduce((total: number, group: any) => {
-      // Numără doar serial number-urile care nu sunt goale
       const validSerials = group.serialNumbers.filter((sn: any) => {
         const serial = typeof sn === 'string' ? sn : sn.serial || ''
         return serial && serial.trim()
@@ -103,15 +103,12 @@ export function usePreturiEffects({
       return total + validSerials.length
     }, 0)
     
-    // Dacă există serial number-uri, actualizează cantitatea
     if (totalSerialNumbers > 0) {
       const newQty = String(totalSerialNumbers)
-      // Actualizează doar dacă cantitatea s-a schimbat
       if (instrumentForm.qty !== newQty) {
-        setInstrumentForm(prev => ({ ...prev, qty: newQty }))
-        // Actualizează și în instrumentSettings pentru a păstra setările
+        setInstrumentForm((prev: any) => ({ ...prev, qty: newQty }))
         if (instrumentForm.instrument) {
-          setInstrumentSettings(prev => ({
+          setInstrumentSettings((prev: any) => ({
             ...prev,
             [instrumentForm.instrument]: {
               ...prev[instrumentForm.instrument],
@@ -127,22 +124,50 @@ export function usePreturiEffects({
 
   // Aplică urgent tuturor serviciilor și pieselor când urgentAllServices e bifat
   useEffect(() => {
-    setItems(prev => prev.map(it => 
-      (it.item_type === 'service' || it.item_type === 'part') ? { ...it, urgent: urgentAllServices } : it
-    ))
-    if (urgentAllServices || items.some(it => (it.item_type === 'service' || it.item_type === 'part') && it.urgent !== urgentAllServices)) {
+    setItems(prev => {
+      // Verifică dacă există iteme care trebuie actualizate
+      const itemsArray = Array.isArray(prev) ? prev : []
+      
+      // Dacă prev nu este un array, returnează un array gol
+      if (!Array.isArray(prev)) {
+        return []
+      }
+      
+      if (!Array.isArray(itemsArray)) {
+        console.error('❌ [usePreturiEffects] ERROR: itemsArray is NOT an array!', itemsArray)
+        return []
+      }
+      
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      let needsUpdate = false
+      for (let i = 0; i < itemsArray.length; i++) {
+        const it = itemsArray[i]
+        if (it && (it.item_type === 'service' || it.item_type === 'part') && it.urgent !== urgentAllServices) {
+          needsUpdate = true
+          break // Oprim loop-ul când găsim primul item care necesită update
+        }
+      }
+      
+      if (!needsUpdate) {
+        return prev // Nu face update dacă nu e necesar
+      }
+      
+      // Actualizează itemele și marchează ca dirty
+      const updated = prev.map(it => {
+        if (!it) return it
+        return (it.item_type === 'service' || it.item_type === 'part') ? { ...it, urgent: urgentAllServices } : it
+      })
       setIsDirty(true)
-    }
-  }, [urgentAllServices, setItems, setIsDirty, items])
+      return updated
+    })
+  }, [urgentAllServices, setItems, setIsDirty])
 
   // Verifică și atribuie/elimină tag-ul urgent când se schimbă items-urile
-  // Tag-ul urgent NU trebuie să existe în pipeline-ul Vanzari, dar trebuie să fie vizibil în Receptie și Curier
   useEffect(() => {
-    if (!urgentTagId || !items.length) return
+    const itemsArray = Array.isArray(items) ? items : []
+    if (!urgentTagId || !itemsArray.length) return
 
-    // Nu atribui tag-ul urgent în pipeline-ul Vanzari
     if (isVanzariPipeline) {
-      // Elimină tag-ul urgent dacă există în Vanzari
       const removeUrgentTagFromVanzari = async () => {
         try {
           const { data: existing } = await supabase
@@ -153,9 +178,7 @@ export function usePreturiEffects({
             .maybeSingle()
 
           if (existing) {
-            // Tag-ul există dar suntem în Vanzari - elimină-l
             await toggleLeadTag(leadId, urgentTagId)
-            console.log('Tag urgent eliminat din Vanzari')
           }
         } catch (error) {
           console.error('Eroare la eliminarea tag-ului urgent din Vanzari:', error)
@@ -164,14 +187,24 @@ export function usePreturiEffects({
       removeUrgentTagFromVanzari()
       return
     }
-
-    // Pentru Receptie și Curier, gestionează tag-ul normal
-    const hasUrgentItems = items.some(item => item.urgent === true)
     
-    // Verifică dacă tag-ul urgent este deja atribuit
+    if (!Array.isArray(itemsArray)) {
+      console.error('❌ [usePreturiEffects] ERROR: itemsArray is NOT an array for urgent check!', itemsArray)
+      return
+    }
+    
+    // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+    let hasUrgentItems = false
+    for (let i = 0; i < itemsArray.length; i++) {
+      const item = itemsArray[i]
+      if (item && item.urgent === true) {
+        hasUrgentItems = true
+        break // Oprim loop-ul când găsim primul item urgent
+      }
+    }
+    
     const checkAndToggleUrgentTag = async () => {
       try {
-        // Verifică dacă tag-ul este atribuit
         const { data: existing } = await supabase
           .from('lead_tags')
           .select('lead_id')
@@ -180,10 +213,8 @@ export function usePreturiEffects({
           .maybeSingle()
 
         if (hasUrgentItems && !existing) {
-          // Există items urgente dar tag-ul nu este atribuit - atribuie-l
           await toggleLeadTag(leadId, urgentTagId)
         } else if (!hasUrgentItems && existing) {
-          // Nu există items urgente dar tag-ul este atribuit - elimină-l
           await toggleLeadTag(leadId, urgentTagId)
         }
       } catch (error) {
@@ -194,7 +225,7 @@ export function usePreturiEffects({
     checkAndToggleUrgentTag()
   }, [items, urgentTagId, leadId, isVanzariPipeline])
 
-  // IMPORTANT: Reîncarcă urgent și subscription_type din service_file când se schimbă tăvița selectată
+  // Reîncarcă urgent și subscription_type din service_file când se schimbă tăvița selectată
   useEffect(() => {
     if (!fisaId || !selectedQuoteId) return
     
@@ -204,12 +235,6 @@ export function usePreturiEffects({
         if (serviceFileData) {
           setUrgentAllServices(serviceFileData.urgent || false)
           setSubscriptionType(serviceFileData.subscription_type || '')
-          console.log('Reîncărcare urgent și subscription din service_file la schimbarea tăviței:', {
-            fisaId,
-            selectedQuoteId,
-            urgent: serviceFileData.urgent,
-            subscription_type: serviceFileData.subscription_type
-          })
         }
       } catch (error) {
         console.error('Eroare la reîncărcarea urgent și subscription:', error)
@@ -219,7 +244,7 @@ export function usePreturiEffects({
     reloadUrgentAndSubscription()
   }, [fisaId, selectedQuoteId, setUrgentAllServices, setSubscriptionType])
 
-  // Încarcă stage-ul curent al fișei în pipeline-ul Receptie pentru a verifica dacă butonul de facturare trebuie afișat
+  // Încarcă stage-ul curent al fișei în pipeline-ul Receptie
   useEffect(() => {
     if (!fisaId || !isReceptiePipeline || pipelinesWithIds.length === 0) {
       setCurrentServiceFileStage(null)
@@ -228,7 +253,6 @@ export function usePreturiEffects({
 
     const loadCurrentStage = async () => {
       try {
-        // Găsește pipeline-ul Receptie
         const receptiePipeline = pipelinesWithIds.find(p => 
           p.name.toLowerCase().includes('receptie') || p.name.toLowerCase().includes('reception')
         )
@@ -238,7 +262,6 @@ export function usePreturiEffects({
           return
         }
 
-        // Obține pipeline_item-ul pentru service_file în pipeline-ul Receptie
         const { data: pipelineItem, error } = await getPipelineItemForItem(
           'service_file',
           fisaId,
@@ -246,12 +269,10 @@ export function usePreturiEffects({
         )
 
         if (error || !pipelineItem) {
-          console.log('Fișa nu este în pipeline-ul Receptie sau eroare:', error)
           setCurrentServiceFileStage(null)
           return
         }
 
-        // Obține numele stage-ului
         if (pipelineItem.stage_id) {
           const { data: stageData, error: stageError } = await supabase
             .from('stages')
@@ -260,8 +281,7 @@ export function usePreturiEffects({
             .single()
 
           if (!stageError && stageData) {
-            setCurrentServiceFileStage(stageData.name)
-            console.log('Stage curent al fișei în Receptie:', stageData.name)
+            setCurrentServiceFileStage((stageData as any).name)
           } else {
             setCurrentServiceFileStage(null)
           }
@@ -277,12 +297,50 @@ export function usePreturiEffects({
     loadCurrentStage()
   }, [fisaId, isReceptiePipeline, pipelinesWithIds, setCurrentServiceFileStage])
 
-  // Încarcă detaliile pentru fișa de serviciu (nu mai per tăviță)
+  // Încarcă office_direct și curier_trimis din service file pentru Receptie
   useEffect(() => {
-    // Doar în pipeline-urile comerciale folosim această secțiune în Fișa de serviciu
+    if (!fisaId || !isReceptiePipeline) {
+      setOfficeDirect(false)
+      setCurierTrimis(false)
+      return
+    }
+
+    const loadDeliveryFlags = async () => {
+      try {
+        const { data: serviceFileData } = await getServiceFile(fisaId)
+        if (serviceFileData) {
+          setOfficeDirect(serviceFileData.office_direct || false)
+          setCurierTrimis(serviceFileData.curier_trimis || false)
+        }
+      } catch (error) {
+        console.error('Eroare la încărcarea flag-urilor de delivery:', error)
+        setOfficeDirect(false)
+        setCurierTrimis(false)
+      }
+    }
+
+    loadDeliveryFlags()
+  }, [fisaId, isReceptiePipeline, setOfficeDirect, setCurierTrimis])
+
+  // Încarcă detaliile pentru fișa de serviciu
+  // IMPORTANT: Folosim useRef pentru a urmări fisaId-ul pentru care am încărcat deja detaliile
+  // pentru a evita reîncărcarea și suprascrierea datelor când utilizatorul editează
+  const lastLoadedFisaIdRef = useRef<string | null | undefined>(null)
+  
+  useEffect(() => {
     const loadServiceFileDetails = async () => {
       if (!isCommercialPipeline || !fisaId) {
-        setTrayDetails('')
+        // Doar resetează dacă fisaId s-a schimbat sau a devenit null
+        if (lastLoadedFisaIdRef.current !== fisaId) {
+          setTrayDetails('')
+          lastLoadedFisaIdRef.current = fisaId
+        }
+        return
+      }
+
+      // IMPORTANT: Nu reîncarcă dacă fisaId este același și avem deja date încărcate
+      // Acest lucru previne pierderea datelor când utilizatorul editează și se reîncarcă items-urile
+      if (lastLoadedFisaIdRef.current === fisaId) {
         return
       }
 
@@ -294,17 +352,29 @@ export function usePreturiEffects({
             const detailsObj = typeof serviceFileData.details === 'string' 
               ? JSON.parse(serviceFileData.details) 
               : serviceFileData.details
-            setTrayDetails(detailsObj.comments || detailsObj.trayDetails || '')
+            // Caută text, comments sau trayDetails în obiectul JSON
+            const detailsText = detailsObj.text || detailsObj.comments || detailsObj.trayDetails || ''
+            setTrayDetails(detailsText)
+            lastLoadedFisaIdRef.current = fisaId
           } catch {
             // Dacă nu este JSON valid, folosește direct valoarea
-            setTrayDetails(serviceFileData.details || '')
+            const detailsValue = typeof serviceFileData.details === 'string' 
+              ? serviceFileData.details 
+              : ''
+            setTrayDetails(detailsValue)
+            lastLoadedFisaIdRef.current = fisaId
           }
         } else {
           setTrayDetails('')
+          lastLoadedFisaIdRef.current = fisaId
         }
       } catch (error) {
         console.error('Eroare la încărcarea detaliilor fișei:', error)
-        setTrayDetails('')
+        // Nu reseta la '' dacă există deja date în state și fisaId nu s-a schimbat
+        if (lastLoadedFisaIdRef.current !== fisaId) {
+          setTrayDetails('')
+          lastLoadedFisaIdRef.current = fisaId
+        }
       } finally {
         setLoadingTrayDetails(false)
       }
@@ -313,4 +383,3 @@ export function usePreturiEffects({
     loadServiceFileDetails()
   }, [fisaId, isCommercialPipeline, setTrayDetails, setLoadingTrayDetails])
 }
-

@@ -1,0 +1,100 @@
+/**
+ * Hook pentru gestionarea tray details-urilor în componenta LeadDetailsPanel
+ */
+
+import { useCallback, useMemo } from 'react'
+import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+import { toast } from 'sonner'
+import { debounce } from '@/lib/utils'
+
+interface UseLeadDetailsTrayDetailsProps {
+  fisaId: string | null
+  isVanzariPipeline: boolean
+  trayDetails: string
+  setTrayDetails: React.Dispatch<React.SetStateAction<string>>
+  setSavingTrayDetails: React.Dispatch<React.SetStateAction<boolean>>
+  setLoadingTrayDetails: React.Dispatch<React.SetStateAction<boolean>>
+  getServiceFileId: () => Promise<string | null>
+}
+
+export function useLeadDetailsTrayDetails({
+  fisaId,
+  isVanzariPipeline,
+  trayDetails,
+  setTrayDetails,
+  setSavingTrayDetails,
+  setLoadingTrayDetails,
+  getServiceFileId,
+}: UseLeadDetailsTrayDetailsProps) {
+  const supabase = supabaseBrowser()
+
+  // Funcție pentru salvarea detaliilor
+  const saveServiceFileDetails = useCallback(async (details: string) => {
+    // IMPORTANT: Detaliile pot fi modificate doar din pipeline-ul Vanzari
+    if (!isVanzariPipeline) {
+      console.warn('Cannot save details: modifications are only allowed in Vanzari pipeline')
+      toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+      return
+    }
+    
+    try {
+      const serviceFileId = await getServiceFileId()
+      if (!serviceFileId) {
+        console.warn('Cannot save details: service file not found')
+        return
+      }
+      
+      // Verifică dacă există deja payment info în details și păstrează-l
+      const { data: existingData } = await supabase
+        .from('service_files')
+        .select('details')
+        .eq('id', serviceFileId)
+        .single()
+      
+      let detailsToSave = details
+      if (existingData?.details) {
+        try {
+          const parsedDetails = JSON.parse(existingData.details)
+          if (typeof parsedDetails === 'object' && parsedDetails !== null && (parsedDetails.paymentCash !== undefined || parsedDetails.paymentCard !== undefined)) {
+            // Păstrează payment info existent
+            detailsToSave = JSON.stringify({
+              text: details,
+              paymentCash: parsedDetails.paymentCash || false,
+              paymentCard: parsedDetails.paymentCard || false
+            })
+          }
+        } catch {
+          // Dacă nu este JSON valid, folosește doar textul nou
+          detailsToSave = details
+        }
+      }
+      
+      const { error } = await supabase
+        .from('service_files')
+        .update({ details: detailsToSave } as any)
+        .eq('id', serviceFileId)
+      
+      if (error) {
+        console.error('[useLeadDetailsTrayDetails] Error saving service file details:', error?.message || 'Unknown error')
+        toast.error('Eroare la salvarea automată: ' + error.message)
+      }
+    } catch (err: any) {
+      console.error('Error saving details:', err)
+    }
+  }, [getServiceFileId, isVanzariPipeline, supabase])
+
+  // Funcție debounced pentru auto-save
+  const debouncedSaveDetails = useMemo(
+    () => debounce((details: string) => {
+      saveServiceFileDetails(details)
+    }, 1000), // 1 secundă delay
+    [saveServiceFileDetails]
+  )
+
+  return {
+    saveServiceFileDetails,
+    debouncedSaveDetails,
+  }
+}
+
+

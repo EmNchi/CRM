@@ -43,9 +43,17 @@ export function buildContext(
       name: pipelineName,
       isReceptie: nameLower.includes('receptie'),
       isCurier: nameLower.includes('curier'),
-      isDepartment: ['saloane', 'horeca', 'frizerii', 'reparatii'].some(
-        dept => nameLower === dept || nameLower.includes(dept)
-      ),
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      isDepartment: (() => {
+        const deptNames = ['saloane', 'horeca', 'frizerii', 'reparatii']
+        for (let i = 0; i < deptNames.length; i++) {
+          const dept = deptNames[i]
+          if (nameLower === dept || nameLower.includes(dept)) {
+            return true
+          }
+        }
+        return false
+      })(),
     },
     currentUserId,
     isAdminOrOwner,

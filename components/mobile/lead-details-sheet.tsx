@@ -42,7 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import LeadMessenger from '@/components/lead-messenger'
+import LeadMessenger from '@/components/leads/lead-messenger'
 
 const supabase = supabaseBrowser()
 
@@ -731,9 +731,18 @@ export function LeadDetailsSheet({
       }
 
       // Găsește primul instrument din tăviță pentru a seta instrument_id
-      const firstInstrument = instruments.find(inst => 
-        trayItems.some(item => item.instrument_id === inst.id)
-      )
+      const trayItemsArray = Array.isArray(trayItems) ? trayItems : []
+      const firstInstrument = instruments.find(inst => {
+        // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+        if (!inst || !inst.id) return false
+        for (let i = 0; i < trayItemsArray.length; i++) {
+          const item = trayItemsArray[i]
+          if (item && item.instrument_id === inst.id) {
+            return true
+          }
+        }
+        return false
+      })
 
       const { error } = await supabase
         .from('tray_items')
@@ -1554,14 +1563,40 @@ export function LeadDetailsSheet({
                       )}
 
                       {/* Tăvițe fără fișă (dacă există) */}
-                      {trays.filter(t => !serviceFiles.some(f => f.id === t.service_file_id)).length > 0 && (
+                      {(() => {
+                        const serviceFilesArray = Array.isArray(serviceFiles) ? serviceFiles : []
+                        const traysWithoutFile = trays.filter(t => {
+                          // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+                          if (!t || !t.service_file_id) return true
+                          for (let i = 0; i < serviceFilesArray.length; i++) {
+                            const f = serviceFilesArray[i]
+                            if (f && f.id === t.service_file_id) {
+                              return false
+                            }
+                          }
+                          return true
+                        })
+                        return traysWithoutFile.length > 0
+                      })() && (
                         <div className="space-y-2">
                           <h4 className="text-xs font-semibold text-muted-foreground uppercase">
                             Tăvițe
                           </h4>
-                          {trays
-                            .filter(t => !serviceFiles.some(f => f.id === t.service_file_id))
-                            .map((tray) => (
+                          {(() => {
+                            const serviceFilesArray = Array.isArray(serviceFiles) ? serviceFiles : []
+                            return trays
+                              .filter(t => {
+                                // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+                                if (!t || !t.service_file_id) return true
+                                for (let i = 0; i < serviceFilesArray.length; i++) {
+                                  const f = serviceFilesArray[i]
+                                  if (f && f.id === t.service_file_id) {
+                                    return false
+                                  }
+                                }
+                                return true
+                              })
+                              .map((tray) => (
                               <div 
                                 key={tray.id} 
                                 className="flex items-center justify-between gap-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50 active:bg-muted transition-colors"
@@ -1589,7 +1624,8 @@ export function LeadDetailsSheet({
                                   Deschide
                                 </Button>
                               </div>
-                            ))}
+                            ))
+                          })()}
                         </div>
                       )}
 

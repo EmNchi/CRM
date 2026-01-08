@@ -82,7 +82,15 @@ async function calculateTotalInLucru(): Promise<number> {
     // Filtrează stage-urile care corespund pattern-ului "In Lucru"
     const inLucruStages = stages.filter(s => {
       const stageName = s.name.toLowerCase().trim()
-      return STAGE_PATTERNS.IN_LUCRU.some(pattern => stageName.includes(pattern.toLowerCase()))
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      const patternsArray = Array.isArray(STAGE_PATTERNS.IN_LUCRU) ? STAGE_PATTERNS.IN_LUCRU : []
+      for (let i = 0; i < patternsArray.length; i++) {
+        const pattern = patternsArray[i]
+        if (pattern && stageName.includes(pattern.toLowerCase())) {
+          return true
+        }
+      }
+      return false
     })
 
     if (inLucruStages.length === 0) return 0

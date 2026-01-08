@@ -1,6 +1,6 @@
 'use client'
 
-import { Sidebar } from '@/components/sidebar'
+import { AppSidebar as Sidebar } from '@/components/layout'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'

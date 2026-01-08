@@ -22,24 +22,22 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
     return pipelineSlug.toLowerCase().includes('receptie') || pipelineSlug.toLowerCase().includes('reception')
   }, [pipelineSlug])
 
-  // Verifică dacă suntem în pipeline-ul Curier
-  const isCurierPipeline = useMemo(() => {
-    if (!pipelineSlug) return false
-    return pipelineSlug.toLowerCase().includes('curier')
-  }, [pipelineSlug])
+  // Pipeline-ul Curier a fost eliminat - folosim doar Receptie
+  const isCurierPipeline = false
 
-  // Verifică dacă pipeline-ul permite adăugarea de imagini (Saloane, Frizerii, Horeca, Reparatii)
-  // Receptie poate doar VIZUALIZA imagini, nu le poate adăuga
+  // Verifică dacă pipeline-ul permite adăugarea de imagini (Saloane, Frizerii, Horeca, Reparatii, Receptie)
   const canAddTrayImages = useMemo(() => {
     if (!pipelineSlug) return false
     const slug = pipelineSlug.toLowerCase()
     return slug.includes('saloane') || 
            slug.includes('frizerii') || 
            slug.includes('horeca') || 
-           slug.includes('reparatii')
+           slug.includes('reparatii') ||
+           slug.includes('receptie') ||
+           slug.includes('reception')
   }, [pipelineSlug])
   
-  // Verifică dacă pipeline-ul permite VIZUALIZAREA imaginilor (Receptie poate vedea, dar nu adăuga)
+  // Verifică dacă pipeline-ul permite VIZUALIZAREA imaginilor
   const canViewTrayImages = useMemo(() => {
     if (!pipelineSlug) return false
     const slug = pipelineSlug.toLowerCase()
@@ -48,15 +46,15 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
 
   // Pipeline-uri comerciale unde vrem să afișăm detalii de tăviță în Fișa de serviciu
   const isCommercialPipeline = useMemo(() => {
-    return isVanzariPipeline || isReceptiePipeline || isCurierPipeline
-  }, [isVanzariPipeline, isReceptiePipeline, isCurierPipeline])
+    return isVanzariPipeline || isReceptiePipeline
+  }, [isVanzariPipeline, isReceptiePipeline])
 
   // Restricții pentru tehnicieni în pipeline-urile departament
-  // Urgent și Abonament sunt disponibile doar în Recepție/Vânzări/Curier (NU pentru tehnicieni în departament)
+  // Urgent și Abonament sunt disponibile doar în Recepție/Vânzări (NU pentru tehnicieni în departament)
   const canEditUrgentAndSubscription = useMemo(() => {
     // În pipeline departament, tehnicianul nu poate modifica Urgent sau Abonament
     if (isDepartmentPipeline) return false
-    // În alte pipeline-uri (Recepție, Vânzări, Curier), toți pot modifica
+    // În alte pipeline-uri (Recepție, Vânzări), toți pot modifica
     return true
   }, [isDepartmentPipeline])
 
@@ -72,7 +70,6 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
     isVanzariPipeline,
     isReparatiiPipeline,
     isReceptiePipeline,
-    isCurierPipeline,
     canAddTrayImages,
     canViewTrayImages,
     isCommercialPipeline,
@@ -80,4 +77,6 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
     canAddParts,
   }
 }
+
+
 

@@ -9,6 +9,15 @@ import type { Lead } from '@/app/(crm)/dashboard/page'
 export interface PreturiRef {
   save: () => Promise<void>
   getSelectedTrayId: () => string | null
+  getQuotes: () => LeadQuote[]
+  getSelectedQuoteId: () => string | null
+  getIsVanzatorMode: () => boolean
+  getSendingTrays: () => boolean
+  getTraysAlreadyInDepartments: () => boolean
+  getOnTraySelect: () => ((trayId: string) => void) | undefined
+  getOnAddTray: () => (() => void) | undefined
+  getOnDeleteTray: () => ((trayId: string) => void) | undefined
+  getOnSendTrays: () => (() => void) | undefined
 }
 
 // Props pentru componenta Preturi
@@ -63,4 +72,6 @@ export type Technician = {
 
 // Constante
 export const URGENT_MARKUP_PCT = 30 // +30% per line if urgent
+
+
 

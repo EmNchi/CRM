@@ -17,7 +17,6 @@ export type ServiceFile = {
   curier_trimis: boolean // Checkbox pentru "Curier Trimis"
   no_deal: boolean       // Checkbox pentru "No Deal" în Vânzări
   urgent: boolean        // Flag urgent pentru toate tăvițele din fișă
-  subscription_type: 'services' | 'parts' | 'both' | null // Abonament pentru toate tăvițele din fișă
   created_at: string
   updated_at: string
 }
@@ -196,55 +195,39 @@ export async function listServiceFilesForLead(leadId: string): Promise<{ data: S
  */
 export async function updateServiceFile(
   serviceFileId: string,
-  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal' | 'urgent' | 'subscription_type'>>
+  updates: Partial<Pick<ServiceFile, 'number' | 'date' | 'status' | 'notes' | 'details' | 'office_direct' | 'curier_trimis' | 'no_deal' | 'urgent'>>
 ): Promise<{ data: ServiceFile | null; error: any }> {
   try {
-    // IMPORTANT: Dacă details nu este inclus în updates, păstrează valoarea existentă
-    // Citim mai întâi fișa existentă pentru a păstra details dacă nu este specificat
-    let finalUpdates: any = { ...updates }
-    
-    // Dacă details nu este în updates, citim valoarea existentă și o păstrăm
-    if (!('details' in updates)) {
-      const { data: existingFile } = await supabase
-        .from('service_files')
-        .select('details')
-        .eq('id', serviceFileId)
-        .single()
-      
-      if (existingFile) {
-        finalUpdates.details = existingFile.details
-      }
+    // IMPORTANT: Nu mai citim details dacă nu este în updates pentru a evita erorile 400
+    // Supabase va păstra automat valoarea existentă pentru câmpurile care nu sunt incluse în update
+    // Doar includem câmpurile care sunt explicit specificate în updates
+    // IMPORTANT: Eliminăm câmpurile cu valoare null/undefined pentru a evita erorile Supabase
+    const finalUpdates: any = {
+      updated_at: new Date().toISOString(),
     }
     
-    // Asigură-te că details este întotdeauna inclus în update (chiar dacă este null)
-    // pentru a preveni suprascrierea accidentală
-    if (!('details' in finalUpdates)) {
-      const { data: existingFile } = await supabase
-        .from('service_files')
-        .select('details')
-        .eq('id', serviceFileId)
-        .single()
-      
-      if (existingFile) {
-        finalUpdates.details = existingFile.details
-      } else {
-        finalUpdates.details = null
+    // Adaugă doar câmpurile care au valori definite (nu null/undefined)
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== null && value !== undefined) {
+        finalUpdates[key] = value
       }
     }
     
     const { data, error } = await supabase
       .from('service_files')
-      .update({
-        ...finalUpdates,
-        updated_at: new Date().toISOString(),
-      })
+      .update(finalUpdates)
       .eq('id', serviceFileId)
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      console.error('[updateServiceFile] Supabase error:', error?.message || 'Unknown error')
+      throw error
+    }
+    
     return { data: data as ServiceFile, error: null }
-  } catch (error) {
+  } catch (error: any) {
+    console.error('[updateServiceFile] Error:', error?.message || 'Unknown error')
     return { data: null, error }
   }
 }
@@ -463,12 +446,6 @@ export async function createTrayItem(data: {
   brandSerialGroups?: Array<{ brand: string | null; serialNumbers: string[]; garantie?: boolean }>
 }): Promise<{ data: TrayItem | null; error: any }> {
   try {
-    console.log('🚀 [createTrayItem] Starting with data:', {
-      tray_id: data.tray_id,
-      instrument_id: data.instrument_id,
-      brandSerialGroups: data.brandSerialGroups
-    })
-    
     // Creează tray_item-ul (brand/serial_number se salvează în tray_item_brands și tray_item_brand_serials)
     const { data: result, error } = await supabase
       .from('tray_items')
@@ -488,35 +465,31 @@ export async function createTrayItem(data: {
       .single()
 
     if (error) {
-      console.error('❌ [createTrayItem] Error creating tray_item:', error)
+      console.error('[createTrayItem] Error creating tray_item:', error?.message || 'Unknown error')
       throw error
     }
     
     if (!result) {
-      console.error('❌ [createTrayItem] No result returned from tray_items insert')
+      console.error('[createTrayItem] No result returned from tray_items insert')
       return { data: null, error: new Error('Failed to create tray item') }
     }
-    
-    console.log('✅ [createTrayItem] Tray item created with ID:', result.id)
 
-    // Încearcă să salveze în noile tabele, dacă nu există folosește câmpurile vechi
-    console.log('🔍 [createTrayItem] Received brandSerialGroups:', data.brandSerialGroups)
-    
     // Salvează brand-urile și serial numbers în noile tabele
     if (data.brandSerialGroups && data.brandSerialGroups.length > 0) {
-      console.log('📦 [createTrayItem] Processing', data.brandSerialGroups.length, 'brand groups')
-      
+      console.log('[createTrayItem] Saving brandSerialGroups:', JSON.stringify(data.brandSerialGroups, null, 2))
       for (const group of data.brandSerialGroups) {
         const brandName = group.brand?.trim()
         if (!brandName) {
-          console.warn('⚠️ [createTrayItem] Skipping group without brand name')
+          console.warn('[createTrayItem] Skipping group without brand name')
           continue
         }
         
         const garantie = group.garantie || false
-        const serialNumbers = group.serialNumbers.filter(sn => sn && sn.trim())
+        const safeSerialNumbers = Array.isArray(group.serialNumbers) ? group.serialNumbers : []
+        // IMPORTANT: Include toate serial numbers-urile, inclusiv cele goale (pentru a păstra pozițiile ocupate)
+        const serialNumbers = safeSerialNumbers.map(sn => sn && sn.trim() ? sn.trim() : '')
         
-        console.log('🔍 [createTrayItem] Processing brand:', { brandName, serialNumbers, garantie })
+        console.log(`[createTrayItem] Creating brand "${brandName}" with ${serialNumbers.length} serial numbers:`, serialNumbers)
         
         // Creează brand-ul în tray_item_brands
         const { data: brandResult, error: brandError } = await supabase
@@ -530,32 +503,30 @@ export async function createTrayItem(data: {
           .single()
         
         if (brandError) {
-          console.error('❌ [createTrayItem] Error creating brand:', brandError)
+          console.error('[createTrayItem] Error creating brand:', brandError?.message || 'Unknown error')
           continue
         }
         
-        console.log('✅ [createTrayItem] Brand created with ID:', brandResult.id)
-        
-        // Creează serial numbers pentru acest brand
+        // Creează serial numbers pentru acest brand (inclusiv cele goale)
         if (serialNumbers.length > 0) {
           const serialsToInsert = serialNumbers.map(sn => ({
             brand_id: brandResult.id,
-            serial_number: sn.trim(),
+            serial_number: sn || null, // Permite null pentru serial numbers goale
           }))
+          
+          console.log(`[createTrayItem] Inserting ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
           
           const { error: serialsError } = await supabase
             .from('tray_item_brand_serials')
             .insert(serialsToInsert)
           
           if (serialsError) {
-            console.error('❌ [createTrayItem] Error creating serials:', serialsError)
+            console.error('[createTrayItem] Error creating serials:', serialsError?.message || 'Unknown error')
           } else {
-            console.log('✅ [createTrayItem] Serial numbers created:', serialNumbers.length)
+            console.log(`[createTrayItem] Successfully created ${serialsToInsert.length} serial numbers for brand "${brandName}"`)
           }
         }
       }
-    } else {
-      console.log('ℹ️ [createTrayItem] No brandSerialGroups provided')
     }
 
     return { data: result as TrayItem, error: null }
@@ -664,31 +635,11 @@ export async function listTrayItemsForTray(trayId: string): Promise<{ data: Tray
         .order('id', { ascending: true })
       
       if (result.error) {
-        console.error('[listTrayItemsForTray] Error:', result.error)
+        console.error('[listTrayItemsForTray] Error:', result.error?.message || 'Unknown error')
         throw result.error
       }
       
       data = result.data
-      console.log('[listTrayItemsForTray] Using old structure, loaded items:', data?.length)
-    } else {
-      console.log('📦 [listTrayItemsForTray] Using NEW structure, loaded items:', data?.length)
-      
-      // Log brands și serials pentru debugging - ÎNTOTDEAUNA
-      data?.forEach((item: any, idx: number) => {
-        const brands = item.tray_item_brands || []
-        console.log(`📦 [listTrayItemsForTray] Item ${idx} (${item.id}):`, {
-          instrument_id: item.instrument_id,
-          has_tray_item_brands: !!item.tray_item_brands,
-          brands_count: brands.length,
-          brands: brands.map((b: any) => ({
-            id: b.id,
-            brand: b.brand,
-            garantie: b.garantie,
-            serials_count: b.tray_item_brand_serials?.length || 0,
-            serials: b.tray_item_brand_serials?.map((s: any) => s.serial_number) || []
-          }))
-        })
-      })
     }
     
     // Verifică dacă RLS blochează join-ul cu services
@@ -714,8 +665,8 @@ export async function listTrayItemsForTray(trayId: string): Promise<{ data: Tray
     }
     
     return { data: (data ?? []) as TrayItem[], error: null }
-  } catch (error) {
-    console.error('[listTrayItemsForTray] Exception:', error)
+  } catch (error: any) {
+    console.error('[listTrayItemsForTray] Exception:', error?.message || 'Unknown error')
     return { data: [], error }
   }
 }

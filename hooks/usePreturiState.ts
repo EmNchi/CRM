@@ -1,12 +1,13 @@
+/**
+ * Hook pentru gestionarea state-ului componentei Preturi
+ */
+
 import { useState, useMemo, useRef } from 'react'
 import type { Service } from '@/lib/supabase/serviceOperations'
 import type { Part } from '@/lib/supabase/partOperations'
 import type { TrayImage } from '@/lib/supabase/imageOperations'
-import type { LeadQuote, LeadQuoteItem, Technician } from '@/lib/types/preturi'
+import type { LeadQuote, LeadQuoteItem } from '@/lib/types/preturi'
 
-/**
- * Hook pentru gestionarea state-ului componentei Preturi
- */
 export function usePreturiState(initialQuoteId?: string | null) {
   // Loading state
   const [loading, setLoading] = useState(true)
@@ -23,7 +24,7 @@ export function usePreturiState(initialQuoteId?: string | null) {
     department_id: string | null
     pipeline?: string | null
   }>>([])
-  const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [technicians, setTechnicians] = useState<Array<{ id: string; name: string }>>([])
   const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([])
   const [pipelines, setPipelines] = useState<string[]>([])
   const [pipelinesWithIds, setPipelinesWithIds] = useState<Array<{ id: string; name: string }>>([])
@@ -115,6 +116,9 @@ export function usePreturiState(initialQuoteId?: string | null) {
   // Receptie stage state
   const [currentServiceFileStage, setCurrentServiceFileStage] = useState<string | null>(null)
 
+  // Technician state
+  const [isTechnician, setIsTechnician] = useState(false)
+
   // Instrument settings state (pentru brand-uri și serial numbers)
   const [instrumentSettings, setInstrumentSettings] = useState<Record<string, {
     qty: string
@@ -145,9 +149,9 @@ export function usePreturiState(initialQuoteId?: string | null) {
     discount: '0',
     urgent: false,
     technicianId: '',
-    pipelineId: '', // pipeline_id pentru servicii (folosit pentru departament)
-    serialNumberId: '', // ID-ul serial number-ului atribuit
-    selectedBrands: [] as string[], // Pentru Vanzari: brand-urile selectate
+    pipelineId: '',
+    serialNumberId: '',
+    selectedBrands: [] as string[],
   })
 
   // Form state - Part
@@ -157,7 +161,7 @@ export function usePreturiState(initialQuoteId?: string | null) {
     qty: '1',
     discount: '0',
     urgent: false,
-    serialNumberId: '' // format: "brand::serialNumber"
+    serialNumberId: ''
   })
 
   // Search state
@@ -169,8 +173,7 @@ export function usePreturiState(initialQuoteId?: string | null) {
   // Refs
   const lastSavedRef = useRef<any[]>([])
 
-  // Helper function pentru temp IDs
-  const tempId = () => `local_${Math.random().toString(36).slice(2, 10)}`
+  // tempId eliminat - items-urile se salvează direct în DB, nu mai folosim temp IDs
 
   return {
     // Loading
@@ -324,6 +327,10 @@ export function usePreturiState(initialQuoteId?: string | null) {
     currentServiceFileStage,
     setCurrentServiceFileStage,
 
+    // Technician
+    isTechnician,
+    setIsTechnician,
+
     // Instrument settings
     instrumentSettings,
     setInstrumentSettings,
@@ -350,7 +357,6 @@ export function usePreturiState(initialQuoteId?: string | null) {
     lastSavedRef,
 
     // Helpers
-    tempId,
+    // tempId eliminat - items-urile se salvează direct în DB
   }
 }
-

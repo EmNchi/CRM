@@ -242,7 +242,8 @@ export function calculateTrayTotal(
   servicePrices: Map<string, number>,
   subscriptionType: string = ''
 ): number {
-  const items = trayItems.filter(ti => ti.tray_id === trayId)
+  const trayItemsArray = Array.isArray(trayItems) ? trayItems : []
+  const items = trayItemsArray.filter(ti => ti?.tray_id === trayId)
   
   // Filter visible items (those with item_type in notes)
   const visibleItems = items.filter(ti => {
@@ -372,7 +373,9 @@ export function filterTraysForUser(
   // Build map of tray -> set of technician IDs
   const trayTechnicianMap = new Map<string, Set<string | null>>()
   
-  trayItems.forEach(ti => {
+  const trayItemsArray = Array.isArray(trayItems) ? trayItems : []
+  trayItemsArray.forEach(ti => {
+    if (!ti?.tray_id) return
     if (!trayTechnicianMap.has(ti.tray_id)) {
       trayTechnicianMap.set(ti.tray_id, new Set())
     }
@@ -381,13 +384,15 @@ export function filterTraysForUser(
   
   // Build map of tray -> stage name
   const trayStageMap = new Map<string, string>()
-  pipelineItems.forEach(pi => {
-    if (pi.type === 'tray' && pi.stage) {
+  const pipelineItemsArray = Array.isArray(pipelineItems) ? pipelineItems : []
+  pipelineItemsArray.forEach(pi => {
+    if (pi?.type === 'tray' && pi?.stage) {
       trayStageMap.set(pi.item_id, pi.stage.name?.toLowerCase() || '')
     }
   })
   
-  return trayIds.filter(trayId => {
+  const trayIdsArray = Array.isArray(trayIds) ? trayIds : []
+  return trayIdsArray.filter(trayId => {
     const techIds = trayTechnicianMap.get(trayId)
     const stageName = trayStageMap.get(trayId) || ''
     const isNouaStage = matchesStagePattern(stageName, 'NOUA')

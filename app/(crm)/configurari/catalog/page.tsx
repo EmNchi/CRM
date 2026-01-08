@@ -171,9 +171,7 @@ export default function CatalogConfiguratorPage() {
       setPipelines(pipelinesRes.data || [])
       
       // Debug: verifică dacă departments s-au încărcat
-      if (departmentsRes.data && departmentsRes.data.length > 0) {
-        console.log('Departments încărcate:', departmentsRes.data.length, departmentsRes.data.map(d => d.name))
-      } else {
+      if (!(departmentsRes.data && departmentsRes.data.length > 0)) {
         console.warn('ATENȚIE: Nu s-au încărcat departamente! Verifică RLS policies pentru tabelul departments.')
       }
     } catch (error: any) {
@@ -192,7 +190,18 @@ export default function CatalogConfiguratorPage() {
       // Filtru după serviciu - verifică dacă instrumentul are serviciul selectat asociat
       let matchesService = filterService === 'all'
       if (!matchesService) {
-        const hasService = services.some(svc => svc.instrument_id === inst.id && svc.id === filterService)
+        // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+        const servicesArray = Array.isArray(services) ? services : []
+        let hasService = false
+        if (inst && inst.id) {
+          for (let i = 0; i < servicesArray.length; i++) {
+            const svc = servicesArray[i]
+            if (svc && svc.instrument_id === inst.id && svc.id === filterService) {
+              hasService = true
+              break
+            }
+          }
+        }
         matchesService = hasService
       }
       return matchesSearch && matchesPipeline && matchesService
@@ -418,11 +427,6 @@ export default function CatalogConfiguratorPage() {
         created_by: userData.user.id
       }
 
-      console.log('Încerc să adaug serviciu:', serviceData)
-      console.log('selectedInstrumentId:', selectedInstrumentId)
-      console.log('newService.instrument_id:', newService.instrument_id)
-      console.log('User ID:', userData.user.id)
-      console.log('Can manage:', canManage)
 
       const { data, error } = await supabase.from('services').insert(serviceData).select().single()
 
@@ -447,7 +451,6 @@ export default function CatalogConfiguratorPage() {
         throw error
       }
 
-      console.log('Serviciu adăugat cu succes:', data)
       toast.success('Serviciu adăugat cu succes')
       setShowAddServiceModal(false)
       setNewService({ name: '', price: 0, time: '', active: true, department_id: null, instrument_id: null })

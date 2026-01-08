@@ -232,10 +232,32 @@ export function VanzariView({
   return (
     <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b">
-        <div className="px-4 pt-4 pb-3">
-          <h3 className="font-semibold text-base text-foreground">Comandă Nouă</h3>
-          <p className="text-sm text-muted-foreground mt-1">Adaugă instrumente și servicii pentru această comandă</p>
+      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-base text-foreground">Comandă Nouă</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">Adaugă instrumente și servicii pentru această comandă</p>
+          </div>
+          <Button 
+            size="sm"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onSave()
+            }} 
+            disabled={loading || saving || !isDirty}
+            className="shadow-sm flex-shrink-0"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                Se salvează…
+              </>
+            ) : (
+              "Salvează în Istoric"
+            )}
+          </Button>
         </div>
       </div>
 
@@ -284,46 +306,19 @@ export function VanzariView({
             </div>
             <label 
             className={`flex items-center gap-2 group select-none ${
-              !canSelectDelivery || curierTrimis || loading || saving 
-                ? 'cursor-not-allowed' 
-                : 'cursor-pointer'
+              !canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer'
             }`}
-            onMouseDown={(e) => {
-              if (!canSelectDelivery || curierTrimis || loading || saving) {
-                e.preventDefault()
-              }
-            }}
           >
             <Checkbox
               id="office-direct-vanzator"
               checked={officeDirect}
-              disabled={!canSelectDelivery || curierTrimis || loading || saving}
+              disabled={!canSelectDelivery || loading || saving}
               onCheckedChange={async (c: any) => {
                 if (!canSelectDelivery) {
-                  console.error('[VanzariView] Cannot select delivery - conditions not met', {
-                    fisaId,
-                    selectedQuoteId,
-                    itemsLength: items.length,
-                    canSelectDelivery
-                  })
                   toast.error('Nu se poate selecta: Te rog selectează o tăviță.')
                   return
                 }
-                const isChecked = !!c
-                try {
-                  if (isChecked) {
-                    if (!canSaveDelivery) {
-                      // Permitem selecția dar afișăm un mesaj informativ
-                      toast.info('Adaugă cel puțin un item în tăviță pentru a salva setările de livrare.')
-                    }
-                    await onOfficeDirectChange(true)
-                  } else if (!isChecked && onCurierTrimisChange) {
-                    await onCurierTrimisChange(false)
-                  }
-                } catch (error: any) {
-                  console.error('[VanzariView] Error changing office direct:', error)
-                  toast.error('Eroare la schimbarea checkbox-ului: ' + (error?.message || 'Eroare necunoscută'))
-                }
+                await onOfficeDirectChange(!!c)
               }}
               className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
             />
@@ -333,46 +328,19 @@ export function VanzariView({
           </label>
           <label 
             className={`flex items-center gap-2 group select-none ${
-              !canSelectDelivery || officeDirect || loading || saving 
-                ? 'cursor-not-allowed' 
-                : 'cursor-pointer'
+              !canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer'
             }`}
-            onMouseDown={(e) => {
-              if (!canSelectDelivery || officeDirect || loading || saving) {
-                e.preventDefault()
-              }
-            }}
           >
             <Checkbox
               id="curier-trimis-vanzator"
               checked={curierTrimis}
-              disabled={!canSelectDelivery || officeDirect || loading || saving}
+              disabled={!canSelectDelivery || loading || saving}
               onCheckedChange={async (c: any) => {
                 if (!canSelectDelivery) {
-                  console.error('[VanzariView] Cannot select delivery - conditions not met', {
-                    fisaId,
-                    selectedQuoteId,
-                    itemsLength: items.length,
-                    canSelectDelivery
-                  })
                   toast.error('Nu se poate selecta: Te rog selectează o tăviță.')
                   return
                 }
-                const isChecked = !!c
-                try {
-                  if (isChecked && onCurierTrimisChange) {
-                    if (!canSaveDelivery) {
-                      // Permitem selecția dar afișăm un mesaj informativ
-                      toast.info('Adaugă cel puțin un item în tăviță pentru a salva setările de livrare.')
-                    }
-                    await onCurierTrimisChange(true)
-                  } else if (!isChecked && onOfficeDirectChange) {
-                    await onOfficeDirectChange(false)
-                  }
-                } catch (error: any) {
-                  console.error('[VanzariView] Error changing curier trimis:', error)
-                  toast.error('Eroare la schimbarea checkbox-ului: ' + (error?.message || 'Eroare necunoscută'))
-                }
+                if (onCurierTrimisChange) await onCurierTrimisChange(!!c)
               }}
               className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
             />
@@ -384,29 +352,7 @@ export function VanzariView({
         </div>
       )}
 
-      {/* Buton Salvare */}
-      <div className="mx-4 px-3 py-2 flex justify-end">
-        <Button 
-          size="sm"
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onSave()
-          }} 
-          disabled={loading || saving || !isDirty}
-          className="shadow-sm"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-              Se salvează…
-            </>
-          ) : (
-            "Salvează în Istoric"
-          )}
-        </Button>
-      </div>
+     
       
       
       {/* Detalii comandă */}
@@ -415,6 +361,7 @@ export function VanzariView({
         loadingTrayDetails={loadingTrayDetails}
         isCommercialPipeline={true}
         onDetailsChange={onDetailsChange}
+        setIsDirty={setIsDirty}
       />
       
       {/* Add Instrument */}

@@ -2,9 +2,8 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useKanbanData } from "@/hooks/useKanbanData"
-import { DashboardStats } from "@/components/dashboard-stats"
+import { DashboardStats, DashboardInsights } from "@/components/dashboard"
 import { LazyDashboardCharts } from "@/components/lazy"
-import { DashboardInsights } from "@/components/dashboard-insights"
 import { calculateDashboardMetrics } from "@/lib/supabase/dashboardOperations"
 import { useEffect, useState } from "react"
 import type { KanbanLead } from "@/lib/types/database"

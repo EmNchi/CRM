@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic'
 
 // Componente Kanban - încărcate doar pe pagini CRM
 export const LazyKanbanBoard = dynamic(
-  () => import('@/components/kanban-board').then(mod => ({ default: mod.KanbanBoard })),
+  () => import('@/components/kanban/kanban-board').then(mod => ({ default: mod.KanbanBoard })),
   { 
     loading: () => <div className="animate-pulse h-96 bg-muted rounded-lg" />,
     ssr: false, // Nu e nevoie de SSR pentru board interactiv
@@ -17,7 +17,7 @@ export const LazyKanbanBoard = dynamic(
 
 // Lead Details Panel - încărcat la click pe lead
 export const LazyLeadDetailsPanel = dynamic(
-  () => import('@/components/lead-details-panel'),
+  () => import('@/components/leads/lead-details-panel').then(mod => ({ default: mod.LeadDetailsPanel })),
   { 
     loading: () => <div className="animate-pulse h-full bg-muted rounded-lg" />,
   }
@@ -25,7 +25,7 @@ export const LazyLeadDetailsPanel = dynamic(
 
 // Preturi component - foarte greu, lazy load obligatoriu
 export const LazyPreturi = dynamic(
-  () => import('@/components/preturi'),
+  () => import('@/components/preturi/core/PreturiMain').then(mod => ({ default: mod.default })),
   { 
     loading: () => (
       <div className="animate-pulse space-y-4 p-4">
@@ -40,13 +40,13 @@ export const LazyPreturi = dynamic(
 
 // Print View - încărcat doar la print
 export const LazyPrintView = dynamic(
-  () => import('@/components/print-view').then(mod => ({ default: mod.PrintView })),
+  () => import('@/components/print/print-view').then(mod => ({ default: mod.PrintView })),
   { ssr: false }
 )
 
 // Dashboard Charts - încărcat doar pe dashboard
 export const LazyDashboardCharts = dynamic(
-  () => import('@/components/dashboard-charts').then(mod => ({ default: mod.DashboardCharts })),
+  () => import('@/components/dashboard/dashboard-charts').then(mod => ({ default: mod.DashboardCharts })),
   { 
     loading: () => <div className="animate-pulse h-64 bg-muted rounded-lg" />,
     ssr: false,
@@ -63,4 +63,3 @@ export const LazyLeadDetailsSheet = dynamic(
   () => import('@/components/mobile/lead-details-sheet').then(mod => ({ default: mod.LeadDetailsSheet })),
   { ssr: false }
 )
-

@@ -201,7 +201,6 @@ export default function TehnicianTrayPage() {
       if (trayError) throw trayError
       if (!tray) throw new Error('Tăvița nu a fost găsită')
 
-      console.log('[TrayPage] Loaded tray:', tray)
       setTrayData(tray as any)
 
       // Găsește toate tray_items pentru această tăviță
@@ -211,12 +210,6 @@ export default function TehnicianTrayPage() {
         .eq('tray_id', trayId)
 
       if (itemError) {
-        console.log('[TrayPage] loadData - itemError when checking for instruments:', {
-          message: itemError.message,
-          code: itemError.code,
-          details: itemError.details,
-          hint: itemError.hint
-        })
         // Dacă eroarea nu este PGRST116 (tabel inexistent), aruncă eroarea
         if (itemError.code !== 'PGRST116') {
           throw itemError
@@ -259,7 +252,6 @@ export default function TehnicianTrayPage() {
         .order('name')
       
       if (!allInstError && allInst) {
-        console.log('[TrayPage] Loaded instruments:', allInst.length)
         setAllInstruments(allInst as Instrument[])
       }
       
@@ -271,7 +263,6 @@ export default function TehnicianTrayPage() {
         .order('name')
 
       if (!allSvcsError && allSvcs) {
-        console.log('[TrayPage] Loaded services:', allSvcs.length)
         setServices(allSvcs)
       }
 
@@ -305,7 +296,6 @@ export default function TehnicianTrayPage() {
       }
 
       // Încarcă toate tray_items pentru această tăviță
-      console.log('[TrayPage] loadData - calling loadTrayItems with instrumentId:', firstInstrumentId)
       try {
         await loadTrayItems(firstInstrumentId || null)
       } catch (trayItemsError: any) {
@@ -344,8 +334,6 @@ export default function TehnicianTrayPage() {
       return
     }
 
-    console.log('[TrayPage] loadTrayItems START - trayId:', trayId)
-
     try {
       // Încearcă mai întâi cu join-ul complet (inclusiv tray_item_brands)
       let data: any[] | null = null
@@ -353,7 +341,6 @@ export default function TehnicianTrayPage() {
       let useNewStructure = true
 
       try {
-        console.log('[TrayPage] Attempting query with tray_item_brands...')
         const result = await supabase
           .from('tray_items')
           .select(`
@@ -374,13 +361,6 @@ export default function TehnicianTrayPage() {
           `)
           .eq('tray_id', trayId)
           .order('created_at')
-
-        console.log('[TrayPage] Query result:', { 
-          hasData: !!result.data, 
-          dataLength: result.data?.length,
-          hasError: !!result.error,
-          error: result.error 
-        })
 
         if (result.error) {
           console.error('[TrayPage] Query error:', {
@@ -403,7 +383,6 @@ export default function TehnicianTrayPage() {
         } else {
           data = result.data
           error = null
-          console.log('[TrayPage] Query successful with tray_item_brands, loaded', data?.length, 'items')
         }
       } catch (e: any) {
         console.error('[TrayPage] Exception in first query attempt:', {
@@ -427,7 +406,6 @@ export default function TehnicianTrayPage() {
 
       // Fallback: încarcă fără tray_item_brands dacă prima încercare a eșuat
       if (!useNewStructure || !data) {
-        console.log('[TrayPage] Attempting query without tray_item_brands...')
         const result = await supabase
           .from('tray_items')
           .select(`
@@ -448,13 +426,6 @@ export default function TehnicianTrayPage() {
           .eq('tray_id', trayId)
           .order('created_at')
 
-        console.log('[TrayPage] Fallback query result:', { 
-          hasData: !!result.data, 
-          dataLength: result.data?.length,
-          hasError: !!result.error,
-          error: result.error 
-        })
-
         if (result.error) {
           console.error('[TrayPage] Fallback query error:', {
             message: result.error.message,
@@ -466,9 +437,6 @@ export default function TehnicianTrayPage() {
           throw result.error
         }
         data = result.data
-        console.log('[TrayPage] Loaded tray_items without tray_item_brands:', data?.length, 'items')
-      } else {
-        console.log('[TrayPage] Loaded tray_items with tray_item_brands:', data?.length, 'items')
       }
 
       if (error) {
@@ -476,13 +444,11 @@ export default function TehnicianTrayPage() {
         throw error
       }
       
-      console.log('[TrayPage] Loaded tray_items from DB:', data?.length, 'items')
       const servicesJoined = data?.map((i: any) => ({ 
         service_id: i.service_id, 
         service_name: i.service?.name,
         has_service: !!i.service 
       })).filter((i: any) => i.service_id)
-      console.log('[TrayPage] Services joined:', servicesJoined)
       
       // Verifică dacă join-ul cu services a funcționat (dacă RLS permite)
       // Dacă există service_id dar service este null, înseamnă că RLS blochează join-ul
@@ -506,7 +472,6 @@ export default function TehnicianTrayPage() {
                 item.service = servicesMap.get(item.service_id)
               }
             })
-            console.log('[TrayPage] Services loaded separately and added to items')
           }
         }
       }
@@ -581,19 +546,19 @@ export default function TehnicianTrayPage() {
         }
       })
 
-      console.log('[TrayPage] Processed items:', items.length, items)
       setTrayItems(items as TrayItem[])
-      console.log('[TrayPage] loadTrayItems SUCCESS - set', items.length, 'items')
       
       // Verifică dacă există item-uri atribuite utilizatorului curent
-      const hasAssignedItems = items.some(item => item.technician_id === currentUserId)
-      const assignedTechnicianIds = [...new Set(items.map(item => item.technician_id).filter(Boolean))]
-      console.log('[TrayPage] Tray assignment check:', {
-        currentUserId,
-        hasAssignedItems,
-        assignedTechnicianIds,
-        itemsCount: items.length
-      })
+      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
+      const itemsArray = Array.isArray(items) ? items : []
+      let hasAssignedItems = false
+      for (let i = 0; i < itemsArray.length; i++) {
+        const item = itemsArray[i]
+        if (item && item.technician_id === currentUserId) {
+          hasAssignedItems = true
+          break
+        }
+      }
     } catch (error: any) {
       // Log detaliat al erorii
       const errorDetails = {
@@ -645,7 +610,6 @@ export default function TehnicianTrayPage() {
     if (!trayId) return
     try {
       const images = await listTrayImages(trayId)
-      console.log('[TrayPage] Loaded images:', images.length)
       setTrayImages(images)
     } catch (error) {
       console.error('[TrayPage] Error loading images:', error)
@@ -1264,9 +1228,6 @@ export default function TehnicianTrayPage() {
         notes: JSON.stringify(notesData),
       }
 
-      console.log('[TrayPage] Adding service:', insertData)
-      console.log('[TrayPage] service_id value:', newService.service_id, 'type:', typeof newService.service_id)
-
       const { data, error } = await supabase
         .from('tray_items')
         .insert(insertData)
@@ -1277,9 +1238,6 @@ export default function TehnicianTrayPage() {
         console.error('[TrayPage] Insert data that failed:', insertData)
         throw error
       }
-
-      console.log('[TrayPage] Service added successfully:', data)
-      console.log('[TrayPage] Saved service_id:', data?.[0]?.service_id)
       
       // Reîncarcă lista de servicii IMEDIAT după inserare pentru a avea join-ul cu services
       await loadTrayItems(null)

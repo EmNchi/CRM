@@ -173,17 +173,18 @@ export async function getSingleKanbanItem(
         fetchTrayItems([itemId])
       ])
       
-      const leadTags = tagMap.get(leadId) || []
+      const leadTagsRaw = tagMap.get(leadId) || []
+      const leadTags = Array.isArray(leadTagsRaw) ? leadTagsRaw : []
       
       // IMPORTANT: Pentru tăvițe, tag-ul "urgent" vine din câmpul urgent al fișei de serviciu, nu din tag-urile lead-ului
       // Filtrează tag-ul "urgent" din tag-urile lead-ului și adaugă-l doar dacă fișa are urgent = true
-      const tagsWithoutUrgent = leadTags.filter(tag => tag.name.toLowerCase() !== 'urgent')
+      const tagsWithoutUrgent = leadTags.filter(tag => tag?.name?.toLowerCase() !== 'urgent')
       const trayTags = [...tagsWithoutUrgent]
       
       // Adaugă tag-ul "urgent" doar dacă fișa de serviciu are urgent = true
       if (tray.service_file?.urgent === true) {
         // Caută tag-ul "urgent" în lista de tag-uri existente sau creează unul nou
-        const urgentTag = leadTags.find(tag => tag.name.toLowerCase() === 'urgent')
+        const urgentTag = leadTags.find(tag => tag?.name?.toLowerCase() === 'urgent')
         if (urgentTag) {
           trayTags.push(urgentTag)
         } else {

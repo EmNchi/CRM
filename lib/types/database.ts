@@ -47,6 +47,23 @@ export interface Lead {
     no_deal: boolean | null // Checkbox pentru "No Deal" în Vânzări
     call_back: boolean | null // Checkbox pentru "Call Back" în Vânzări
     nu_raspunde: boolean | null // Checkbox pentru "Nu Raspunde" în Vânzări
+    city: string | null // Oraș
+    judet: string | null // Județ pentru livrare
+    strada: string | null // Stradă și număr pentru livrare
+    company_name: string | null // Nume companie
+    company_address: string | null // Adresa companiei
+    address: string | null // Adresă
+    address2: string | null // Adresă 2
+    zip: string | null // Cod poștal
+    country: string | null // Țară
+    // Câmpuri pentru facturare
+    billing_nume_prenume: string | null // Nume și prenume pentru facturare
+    billing_nume_companie: string | null // Nume companie pentru facturare
+    billing_cui: string | null // CUI pentru facturare
+    billing_strada: string | null // Stradă pentru facturare
+    billing_oras: string | null // Oraș pentru facturare
+    billing_judet: string | null // Județ pentru facturare
+    billing_cod_postal: string | null // Cod poștal pentru facturare
     created_at: string
     updated_at: string
 }
