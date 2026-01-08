@@ -12,6 +12,8 @@ interface TrayTabsProps {
   isVanzatorMode: boolean
   sendingTrays: boolean
   traysAlreadyInDepartments: boolean
+  officeDirect?: boolean
+  curierTrimis?: boolean
   onTraySelect: (trayId: string) => void
   onAddTray: () => void
   onDeleteTray: (trayId: string) => void
@@ -32,6 +34,8 @@ export function TrayTabs({
   isVanzatorMode,
   sendingTrays,
   traysAlreadyInDepartments,
+  officeDirect = false,
+  curierTrimis = false,
   onTraySelect,
   onAddTray,
   onDeleteTray,
@@ -96,7 +100,7 @@ export function TrayTabs({
         {isReceptiePipeline && (
           <button
             onClick={onSendTrays}
-            disabled={sendingTrays || quotes.length === 0 || traysAlreadyInDepartments}
+            disabled={sendingTrays || quotes.length === 0 || traysAlreadyInDepartments || !officeDirect || !curierTrimis}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/25 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             title={
               sendingTrays 
@@ -104,7 +108,9 @@ export function TrayTabs({
                 : quotes.length === 0 
                 ? "Nu există tăvițe de trimis" 
                 : traysAlreadyInDepartments 
-                ? "Tăvițele sunt deja trimise în departamente" 
+                ? "Tăvițele sunt deja trimise în departamente"
+                : !officeDirect || !curierTrimis
+                ? "Selectează 'Office Direct' și 'Curier Trimis' pentru a trimite"
                 : `Trimite ${quotes.length} tăviț${quotes.length === 1 ? 'ă' : 'e'} în departamente`
             }
           >

@@ -318,6 +318,8 @@ export function ReceptieView(props: ReceptieViewProps) {
           isVanzatorMode={false}
           sendingTrays={props.sendingTrays ?? false}
           traysAlreadyInDepartments={props.traysAlreadyInDepartments ?? false}
+          officeDirect={props.officeDirect ?? false}
+          curierTrimis={props.curierTrimis ?? false}
           onTraySelect={props.onTraySelect || (() => {})}
           onAddTray={props.onAddTray || (() => {})}
           onDeleteTray={props.onDeleteTray || (() => {})}
@@ -403,6 +405,8 @@ export function ReceptieView(props: ReceptieViewProps) {
         isVanzatorMode={false}
         sendingTrays={props.sendingTrays ?? false}
         traysAlreadyInDepartments={props.traysAlreadyInDepartments ?? false}
+        officeDirect={props.officeDirect ?? false}
+        curierTrimis={props.curierTrimis ?? false}
         onTraySelect={props.onTraySelect || (() => {})}
         onAddTray={props.onAddTray || (() => {})}
         onDeleteTray={props.onDeleteTray || (() => {})}
