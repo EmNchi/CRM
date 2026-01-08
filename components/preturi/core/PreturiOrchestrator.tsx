@@ -545,6 +545,7 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           // Lead
           leadId={leadId}
           fisaId={fisaId}
+          selectedQuoteId={selectedQuoteId}
           // Form state
           instrumentForm={props.instrumentForm}
           instrumentSettings={props.instrumentSettings}
