@@ -527,8 +527,10 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       if (uploadedImageUrls.length > 0 && data) {
         const attachments = uploadedImageUrls.map((url) => ({
           message_id: data.id,
-          file_url: url,
+          url: url, // Trebuie url, nu file_url
           attachment_type: 'image',
+          display_name: 'Imagine',
+          mime_type: 'image/*',
         }))
 
         const { error: attachError } = await supabase
@@ -725,13 +727,11 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
                                         key={attachment.id}
                                         className="relative group cursor-pointer"
                                         onClick={() => {
-                                          const url = attachment.file_url
-                                          const baseUrl = supabase.storage.from('tray_images').getPublicUrl(url).data.publicUrl
-                                          window.open(baseUrl, '_blank')
+                                          window.open(attachment.url, '_blank')
                                         }}
                                       >
                                         <img
-                                          src={supabase.storage.from('tray_images').getPublicUrl(attachment.file_url).data.publicUrl}
+                                          src={attachment.url}
                                           alt="message attachment"
                                           className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
                                         />
