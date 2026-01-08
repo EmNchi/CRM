@@ -96,7 +96,7 @@ export async function fetchLeadsByIds(
   
   const { data, error } = await supabase
     .from('leads')
-    .select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip')
+    .select('id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip, strada, judet')
     .in('id', leadIds)
   
   if (error) return { data: [], error }
@@ -125,7 +125,7 @@ export async function fetchServiceFilesByIds(
     .from('service_files')
     .select(`
       id, lead_id, number, status, created_at, office_direct, curier_trimis, urgent,
-      lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip)
+      lead:leads(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip, strada, judet)
     `)
     .in('id', serviceFileIds)
   
@@ -180,7 +180,7 @@ export async function fetchTraysByIds(
     .from('trays')
     .select(`
       id, number, size, status, created_at, service_file_id,
-      service_file:service_files!inner(lead_id, urgent, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details))
+      service_file:service_files!inner(lead_id, urgent, lead:leads!inner(id, full_name, email, phone_number, created_at, campaign_name, ad_name, form_name, tray_details, city, company_name, company_address, address, address2, zip, strada, judet))
     `)
     .in('id', trayIds)
   

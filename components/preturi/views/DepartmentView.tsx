@@ -72,6 +72,8 @@ interface DepartmentViewProps {
   onUpdateItem: (id: string, patch: Partial<LeadQuoteItem>) => void
   onDelete: (id: string) => void
   onRowClick?: (item: LeadQuoteItem) => void
+  onClearForm?: () => void
+  onBrandToggle?: (brandKey: string, checked: boolean) => void
   
   // Callbacks pentru brandSerialGroups (opționale)
   onAddBrandSerialGroup?: () => void
@@ -184,6 +186,8 @@ export function DepartmentView({
   onUpdateItem,
   onDelete,
   onRowClick,
+  onClearForm,
+  onBrandToggle,
   onAddBrandSerialGroup,
   onRemoveBrandSerialGroup,
   onUpdateBrand,
@@ -244,18 +248,40 @@ export function DepartmentView({
   onDetailsChange,
 }: DepartmentViewProps) {
   const selectedQuote = quotes.find(q => q.id === selectedQuoteId)
-  const [resolvedLeadId, setResolvedLeadId] = useState<string | null>(leadId || null)
+  const [resolvedLeadId, setResolvedLeadId] = useState<string | null>(null)
 
-  // Dacă nu avem leadId direct, obținem din fisaId
+  // ÎNTOTDEAUNA rezolvăm lead_id din lanțul tray → service_file → lead
+  // Nu ne bazăm pe leadId ca prop deoarece poate fi ID-ul fișei de serviciu!
   useEffect(() => {
-    if (leadId) {
-      setResolvedLeadId(leadId)
-      return
-    }
-
     // Dacă nu avem nici fisaId nici selectedQuoteId, nu putem rezolva lead_id
     if (!fisaId && !selectedQuoteId) {
-      setResolvedLeadId(null)
+      // Dacă avem leadId și nu avem altă metodă, verificăm dacă e un lead valid
+      if (leadId) {
+        // Verificăm dacă leadId este de fapt un ID de lead (nu de service_file)
+        async function verifyLeadId() {
+          try {
+            const { data: leadData, error: leadError } = await supabaseBrowser()
+              .from('leads')
+              .select('id')
+              .eq('id', leadId)
+              .single()
+            
+            if (!leadError && leadData?.id) {
+              console.log('✅ Verified lead_id from prop:', leadData.id)
+              setResolvedLeadId(leadData.id)
+            } else {
+              console.warn('⚠️ leadId prop is not a valid lead ID:', leadId)
+              setResolvedLeadId(null)
+            }
+          } catch (err) {
+            console.error('Error verifying lead_id:', err)
+            setResolvedLeadId(null)
+          }
+        }
+        verifyLeadId()
+      } else {
+        setResolvedLeadId(null)
+      }
       return
     }
 
@@ -278,6 +304,7 @@ export function DepartmentView({
 
         if (!serviceFileId) {
           console.error('No service_file_id found')
+          setResolvedLeadId(null)
           return
         }
 
@@ -289,11 +316,15 @@ export function DepartmentView({
           .single()
 
         if (!error && data?.lead_id) {
-          console.log('✅ Resolved lead_id:', data.lead_id)
+          console.log('✅ Resolved lead_id from service_file:', data.lead_id)
           setResolvedLeadId(data.lead_id)
+        } else {
+          console.warn('⚠️ Could not resolve lead_id from service_file:', serviceFileId)
+          setResolvedLeadId(null)
         }
       } catch (err) {
         console.error('Error fetching lead_id:', err)
+        setResolvedLeadId(null)
       }
     }
 
@@ -330,13 +361,8 @@ export function DepartmentView({
         </div>
       </div>
 
-      {/* Mesagerie - vizibilă pentru toți */}
-      {resolvedLeadId && (
-        <div className="px-4">
-          <LeadMessenger leadId={resolvedLeadId} />
-        </div>
-      )}
-
+     
+     
       {/* TrayTabs - butoanele pentru tăviță */}
       {quotes.length > 0 && (
         <div className="px-4">
@@ -477,6 +503,7 @@ export function DepartmentView({
           serviceSearchFocused={serviceSearchFocused}
           currentInstrumentId={currentInstrumentId}
           availableServices={availableServices}
+          instrumentForm={{ ...instrumentForm, brandSerialGroups: instrumentForm.brandSerialGroups || [] }}
           onServiceSearchChange={onServiceSearchChange}
           onServiceSearchFocus={onServiceSearchFocus}
           onServiceSearchBlur={onServiceSearchBlur}
@@ -485,6 +512,8 @@ export function DepartmentView({
           onQtyChange={onSvcQtyChange}
           onDiscountChange={onSvcDiscountChange}
           onAddService={onAddService}
+          onClearForm={onClearForm}
+          onBrandToggle={onBrandToggle}
         />
         
         {isReparatiiPipeline && canAddParts && (

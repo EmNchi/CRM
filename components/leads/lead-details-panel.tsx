@@ -438,6 +438,13 @@ export function LeadDetailsPanel({
     }
   }, [isDepartmentPipeline, business.getLeadId(), business.getTrayId(), business.dataLoader.loadServiceSheets])
 
+  // Minimizează secțiunea Contact în Department Pipeline by default
+  useEffect(() => {
+    if (isDepartmentPipeline) {
+      business.state.setIsContactOpen(false)
+    }
+  }, [isDepartmentPipeline])
+
   // Încarcă detaliile pentru fișa de serviciu (nu mai per tăviță)
   useEffect(() => {
     const loadServiceFileDetails = async () => {
@@ -672,6 +679,7 @@ export function LeadDetailsPanel({
               // Actualizează lead-ul local
               setLead(prev => prev ? { ...prev, ...updatedLead } : prev)
             }}
+            isVanzariPipeline={isVanzariPipeline}
           />
 
           {/* Informații Tavita - Refactorizat */}
@@ -955,12 +963,12 @@ export function LeadDetailsPanel({
                 </>
               }
               deConfirmatContent={
-                lead?.id ? (
+                business.getLeadId() ? (
                   <LeadMessengerSection
                     isMessengerOpen={business.state.isMessengerOpen}
                     setIsMessengerOpen={business.state.setIsMessengerOpen}
-                    leadId={lead.id}
-                    leadTechnician={lead.technician}
+                    leadId={business.getLeadId()!}
+                    leadTechnician={lead?.technician}
                     quotes={trayTabsData.quotes}
                     selectedQuoteId={trayTabsData.selectedQuoteId}
                     isDepartmentPipeline={isDepartmentPipeline}

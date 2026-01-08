@@ -201,6 +201,7 @@ interface PreturiOrchestratorProps {
   onConfirmSendTrays: () => Promise<void>
   onCancelSendTrays: () => void
   onRowClick?: (item: LeadQuoteItem) => void
+  onClearForm?: () => void
   onBrandToggle?: (brandName: string, checked: boolean) => void
 }
 
@@ -344,6 +345,15 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           onSendTrays={props.onSendTrays}
           instrumentsGrouped={props.instrumentsGrouped}
           onMoveInstrument={props.onMoveInstrument}
+          trayImages={props.trayImages}
+          uploadingImage={props.uploadingImage}
+          isImagesExpanded={props.isImagesExpanded}
+          canAddTrayImages={props.canAddTrayImages}
+          canViewTrayImages={props.canViewTrayImages}
+          onToggleImagesExpanded={props.onToggleImagesExpanded}
+          onImageUpload={props.onImageUpload}
+          onDownloadAllImages={props.onDownloadAllImages}
+          onImageDelete={props.onImageDelete}
         />
         <CreateTrayDialog
           open={props.showCreateTrayDialog}
@@ -434,6 +444,7 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           onInstrumentChange={props.onInstrumentChange}
           onQtyChange={props.onQtyChange}
           onRowClick={props.onRowClick}
+          onClearForm={props.onClearForm}
           onAddBrandSerialGroup={props.onAddBrandSerialGroup}
           onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
           onUpdateBrand={props.onUpdateBrand}
@@ -536,15 +547,15 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
 
   // View pentru Departamente
   if (isDepartmentPipeline && selectedQuote) {
-    // Get lead_id ONLY from lead object - fisaId is service_file_id, NOT lead_id!
-    // DepartmentView will resolve lead_id via tray → service_file chain
-    const leadId = lead?.id || props.leadId || null
+    // NU transmitem leadId pentru department view!
+    // lead?.id ar putea fi ID-ul tray-ului (nu al lead-ului)
+    // DepartmentView va rezolva lead_id din selectedQuoteId → service_file → lead
     
     return (
       <>
         <DepartmentView
-          // Lead
-          leadId={leadId}
+          // Lead - NU transmitem leadId, DepartmentView îl va rezolva din selectedQuoteId
+          leadId={null}
           fisaId={fisaId}
           selectedQuoteId={selectedQuoteId}
           // Form state
@@ -591,6 +602,8 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           onUpdateItem={props.onUpdateItem}
           onDelete={props.onDelete}
           onRowClick={props.onRowClick}
+          onClearForm={props.onClearForm}
+          onBrandToggle={props.onBrandToggle}
           onAddBrandSerialGroup={props.onAddBrandSerialGroup}
           onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
           onUpdateBrand={props.onUpdateBrand}

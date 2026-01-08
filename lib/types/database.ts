@@ -132,6 +132,8 @@ export interface KanbanLead {
     address?: string | null
     address2?: string | null
     zip?: string | null
+    strada?: string | null
+    judet?: string | null
 }
 
 export interface KanbanQuote {

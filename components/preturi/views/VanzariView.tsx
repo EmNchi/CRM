@@ -7,6 +7,7 @@ import { ItemsTable } from '../sections/ItemsTable'
 import { TotalsSection } from '../sections/TotalsSection'
 import { TrayDetailsSection } from '../sections/TrayDetailsSection'
 import { TrayTabs } from '../sections/TrayTabs'
+import { TrayImagesSection } from '../sections/TrayImagesSection'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -120,6 +121,17 @@ interface VanzariViewProps {
   // Instrument distribution
   instrumentsGrouped?: Array<{ instrument: { id: string; name: string }; items: LeadQuoteItem[] }>
   onMoveInstrument?: (instrumentGroup: { instrument: { id: string; name: string }; items: LeadQuoteItem[] }) => void
+  
+  // Tray images
+  trayImages?: Array<{ id: string; file_path: string; filename?: string }>
+  uploadingImage?: boolean
+  isImagesExpanded?: boolean
+  canAddTrayImages?: boolean
+  canViewTrayImages?: boolean
+  onToggleImagesExpanded?: () => void
+  onImageUpload?: (file: File) => void
+  onDownloadAllImages?: () => void
+  onImageDelete?: (imageId: string, filePath: string) => void
 }
 
 export function VanzariView({
@@ -198,10 +210,23 @@ export function VanzariView({
   onSendTrays,
   instrumentsGrouped = [],
   onMoveInstrument,
+  trayImages = [],
+  uploadingImage = false,
+  isImagesExpanded = false,
+  canAddTrayImages = false,
+  canViewTrayImages = false,
+  onToggleImagesExpanded,
+  onImageUpload,
+  onDownloadAllImages,
+  onImageDelete,
 }: VanzariViewProps) {
+  // VERIFICARE: Fișa este LOCKED dacă a fost deja trimisă (office_direct sau curier_trimis este true)
+  // Odată trimisă, fișa devine read-only și nu mai poate fi modificată
+  const isServiceFileLocked = officeDirect || curierTrimis
+  
   // Validări pentru checkbox-urile Office Direct și Curier Trimis
   // Permitem selecția chiar și fără items, dar salvăm doar când există items
-  const canSelectDelivery = !!(fisaId && selectedQuoteId)
+  const canSelectDelivery = !!(fisaId && selectedQuoteId) && !isServiceFileLocked
   const canSaveDelivery = !!(fisaId && selectedQuoteId && items.length > 0)
   
   // Debug logging pentru a identifica de ce checkbox-urile sunt disabled
@@ -232,48 +257,66 @@ export function VanzariView({
   return (
     <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30 border-b px-4 py-3">
+      <div className={`border-b px-4 py-3 ${isServiceFileLocked 
+        ? 'bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20' 
+        : 'bg-gradient-to-r from-slate-50 to-white dark:from-slate-900/50 dark:to-slate-800/30'}`}>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="font-semibold text-base text-foreground">Comandă Nouă</h3>
-            <p className="text-sm text-muted-foreground mt-0.5">Adaugă instrumente și servicii pentru această comandă</p>
-          </div>
-          <Button 
-            size="sm"
-            type="button"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onSave()
-            }} 
-            disabled={loading || saving || !isDirty}
-            className="shadow-sm flex-shrink-0"
-          >
-            {saving ? (
+            {isServiceFileLocked ? (
               <>
-                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                Se salvează…
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-base text-amber-700 dark:text-amber-400">Fișă Finalizată</h3>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+                    {officeDirect ? 'Office Direct' : 'Curier Trimis'}
+                  </span>
+                </div>
+                <p className="text-sm text-amber-600/80 dark:text-amber-400/70 mt-0.5">
+                  Această fișă a fost trimisă și nu mai poate fi modificată. Pentru date noi, creează o fișă nouă.
+                </p>
               </>
             ) : (
-              "Salvează în Istoric"
+              <>
+                <h3 className="font-semibold text-base text-foreground">Comandă Nouă</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">Adaugă instrumente și servicii pentru această comandă</p>
+              </>
             )}
-          </Button>
+          </div>
+          {!isServiceFileLocked && (
+            <Button 
+              size="sm"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onSave()
+              }} 
+              disabled={loading || saving || !isDirty}
+              className="shadow-sm flex-shrink-0"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  Se salvează…
+                </>
+              ) : (
+                "Salvează în Istoric"
+              )}
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Urgent și Abonament */}
+      {/* Urgent și Abonament - DOAR VIZUALIZARE dacă fișa este locked */}
       {canEditUrgentAndSubscription && (
-        <div className="mx-4 px-3 py-2 rounded-lg bg-muted/30 border">
-          <div className="flex items-center gap-4">
-          
-        </div>
+        <div className={`mx-4 px-3 py-2 rounded-lg border ${isServiceFileLocked ? 'bg-muted/50 opacity-75' : 'bg-muted/30'}`}>
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2.5 cursor-pointer group">
-              <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'}`}>
+            <label className={`flex items-center gap-2.5 group ${isServiceFileLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+              <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'} ${isServiceFileLocked ? 'opacity-60' : ''}`}>
                 <Checkbox
                   id="urgent-all-vanzator"
                   checked={urgentAllServices}
-                  onCheckedChange={onUrgentChange}
+                  onCheckedChange={isServiceFileLocked ? undefined : onUrgentChange}
+                  disabled={isServiceFileLocked}
                   className="sr-only"
                 />
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${urgentAllServices ? 'translate-x-4' : 'translate-x-0.5'}`} />
@@ -294,9 +337,10 @@ export function VanzariView({
               <Label htmlFor="subscription-vanzator" className="text-sm font-medium text-muted-foreground">Abonament</Label>
               <select
                 id="subscription-vanzator"
-                className="h-8 text-sm rounded-lg border border-border/60 px-3 bg-white dark:bg-background hover:border-primary/40 transition-colors cursor-pointer"
+                className={`h-8 text-sm rounded-lg border border-border/60 px-3 bg-white dark:bg-background transition-colors ${isServiceFileLocked ? 'cursor-not-allowed opacity-60' : 'hover:border-primary/40 cursor-pointer'}`}
                 value={subscriptionType}
-                onChange={e => onSubscriptionChange(e.target.value as 'services' | 'parts' | 'both' | '')}
+                onChange={e => !isServiceFileLocked && onSubscriptionChange(e.target.value as 'services' | 'parts' | 'both' | '')}
+                disabled={isServiceFileLocked}
               >
                 <option value="">Fără abonament</option>
                 <option value="services">Servicii</option>
@@ -304,50 +348,50 @@ export function VanzariView({
                 <option value="both">Ambele</option>
               </select>
             </div>
+            
+            {/* Checkbox-uri livrare - afișate ca read-only când fișa este locked */}
             <label 
-            className={`flex items-center gap-2 group select-none ${
-              !canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer'
-            }`}
-          >
-            <Checkbox
-              id="office-direct-vanzator"
-              checked={officeDirect}
-              disabled={!canSelectDelivery || loading || saving}
-              onCheckedChange={async (c: any) => {
-                if (!canSelectDelivery) {
-                  toast.error('Nu se poate selecta: Te rog selectează o tăviță.')
-                  return
-                }
-                await onOfficeDirectChange(!!c)
-              }}
-              className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
-            />
-            <span className={`text-sm font-medium transition-colors ${officeDirect ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-              Office direct
-            </span>
-          </label>
-          <label 
-            className={`flex items-center gap-2 group select-none ${
-              !canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer'
-            }`}
-          >
-            <Checkbox
-              id="curier-trimis-vanzator"
-              checked={curierTrimis}
-              disabled={!canSelectDelivery || loading || saving}
-              onCheckedChange={async (c: any) => {
-                if (!canSelectDelivery) {
-                  toast.error('Nu se poate selecta: Te rog selectează o tăviță.')
-                  return
-                }
-                if (onCurierTrimisChange) await onCurierTrimisChange(!!c)
-              }}
-              className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
-            />
-            <span className={`text-sm font-medium transition-colors ${curierTrimis ? 'text-purple-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
-              Curier Trimis
-            </span>
-          </label>
+              className={`flex items-center gap-2 group select-none ${
+                isServiceFileLocked ? 'cursor-not-allowed' : (!canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer')
+              }`}
+            >
+              <Checkbox
+                id="office-direct-vanzator"
+                checked={officeDirect}
+                disabled={isServiceFileLocked || !canSelectDelivery || loading || saving}
+                onCheckedChange={async (c: any) => {
+                  if (isServiceFileLocked || !canSelectDelivery) {
+                    return
+                  }
+                  await onOfficeDirectChange(!!c)
+                }}
+                className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+              />
+              <span className={`text-sm font-medium transition-colors ${officeDirect ? 'text-blue-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                Office direct
+              </span>
+            </label>
+            <label 
+              className={`flex items-center gap-2 group select-none ${
+                isServiceFileLocked ? 'cursor-not-allowed' : (!canSelectDelivery || loading || saving ? 'cursor-not-allowed' : 'cursor-pointer')
+              }`}
+            >
+              <Checkbox
+                id="curier-trimis-vanzator"
+                checked={curierTrimis}
+                disabled={isServiceFileLocked || !canSelectDelivery || loading || saving}
+                onCheckedChange={async (c: any) => {
+                  if (isServiceFileLocked || !canSelectDelivery) {
+                    return
+                  }
+                  if (onCurierTrimisChange) await onCurierTrimisChange(!!c)
+                }}
+                className="data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+              />
+              <span className={`text-sm font-medium transition-colors ${curierTrimis ? 'text-purple-600' : 'text-muted-foreground group-hover:text-foreground'}`}>
+                Curier Trimis
+              </span>
+            </label>
           </div>
         </div>
       )}
@@ -355,62 +399,67 @@ export function VanzariView({
      
       
       
-      {/* Detalii comandă */}
+      {/* Detalii comandă - read-only când fișa este locked */}
       <TrayDetailsSection
         trayDetails={trayDetails}
         loadingTrayDetails={loadingTrayDetails}
         isCommercialPipeline={true}
-        onDetailsChange={onDetailsChange}
-        setIsDirty={setIsDirty}
+        onDetailsChange={isServiceFileLocked ? undefined : onDetailsChange}
+        setIsDirty={isServiceFileLocked ? undefined : setIsDirty}
       />
       
-      {/* Add Instrument */}
-      {!(isDepartmentPipeline && isTechnician) && (
-        <AddInstrumentForm
-          instrumentForm={instrumentForm as any}
-          availableInstruments={availableInstruments}
-          instruments={instruments.map(i => ({ id: i.id, name: i.name, department_id: i.department_id ?? null, pipeline: (i as any).pipeline ?? null }))}
-          departments={departments}
-          instrumentSettings={instrumentSettings}
-          hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
-          isVanzariPipeline={true}
-          isDepartmentPipeline={isDepartmentPipeline}
-          isTechnician={isTechnician}
-          onInstrumentChange={onInstrumentChange}
-          onQtyChange={onQtyChange}
-          onAddBrandSerialGroup={onAddBrandSerialGroup}
-          onRemoveBrandSerialGroup={onRemoveBrandSerialGroup}
-          onUpdateBrand={onUpdateBrand}
-          onUpdateBrandQty={onUpdateBrandQty}
-          onUpdateSerialNumber={onUpdateSerialNumber}
-          onAddSerialNumber={onAddSerialNumber}
-          onRemoveSerialNumber={onRemoveSerialNumber}
-          onUpdateSerialGarantie={onUpdateSerialGarantie}
-          setIsDirty={setIsDirty}
-        />
+      {/* Formulare de editare - ASCUNSE când fișa este locked */}
+      {!isServiceFileLocked && (
+        <>
+          {/* Add Instrument */}
+          {!(isDepartmentPipeline && isTechnician) && (
+            <AddInstrumentForm
+              instrumentForm={instrumentForm as any}
+              availableInstruments={availableInstruments}
+              instruments={instruments.map(i => ({ id: i.id, name: i.name, department_id: i.department_id ?? null, pipeline: (i as any).pipeline ?? null }))}
+              departments={departments}
+              instrumentSettings={instrumentSettings}
+              hasServicesOrInstrumentInSheet={hasServicesOrInstrumentInSheet}
+              isVanzariPipeline={true}
+              isDepartmentPipeline={isDepartmentPipeline}
+              isTechnician={isTechnician}
+              onInstrumentChange={onInstrumentChange}
+              onQtyChange={onQtyChange}
+              onAddBrandSerialGroup={onAddBrandSerialGroup}
+              onRemoveBrandSerialGroup={onRemoveBrandSerialGroup}
+              onUpdateBrand={onUpdateBrand}
+              onUpdateBrandQty={onUpdateBrandQty}
+              onUpdateSerialNumber={onUpdateSerialNumber}
+              onAddSerialNumber={onAddSerialNumber}
+              onRemoveSerialNumber={onRemoveSerialNumber}
+              onUpdateSerialGarantie={onUpdateSerialGarantie}
+              setIsDirty={setIsDirty}
+            />
+          )}
+          
+          {/* Add Service */}
+          <AddServiceForm
+            svc={svc}
+            serviceSearchQuery={serviceSearchQuery}
+            serviceSearchFocused={serviceSearchFocused}
+            currentInstrumentId={currentInstrumentId}
+            availableServices={availableServices}
+            instrumentForm={instrumentForm as any}
+            isVanzariPipeline={true}
+            canEditUrgentAndSubscription={canEditUrgentAndSubscription !== false}
+            onServiceSearchChange={onServiceSearchChange}
+            onServiceSearchFocus={onServiceSearchFocus}
+            onServiceSearchBlur={onServiceSearchBlur}
+            onServiceSelect={onServiceSelect}
+            onServiceDoubleClick={onServiceDoubleClick}
+            onQtyChange={onSvcQtyChange}
+            onDiscountChange={onSvcDiscountChange}
+            onAddService={onAddService}
+            onBrandToggle={onBrandToggle}
+            onSerialNumberChange={onSerialNumberChange}
+          />
+        </>
       )}
-      
-      {/* Add Service */}
-      <AddServiceForm
-        svc={svc}
-        serviceSearchQuery={serviceSearchQuery}
-        serviceSearchFocused={serviceSearchFocused}
-        currentInstrumentId={currentInstrumentId}
-        availableServices={availableServices}
-        instrumentForm={instrumentForm as any}
-        isVanzariPipeline={true}
-        canEditUrgentAndSubscription={canEditUrgentAndSubscription !== false}
-        onServiceSearchChange={onServiceSearchChange}
-        onServiceSearchFocus={onServiceSearchFocus}
-        onServiceSearchBlur={onServiceSearchBlur}
-        onServiceSelect={onServiceSelect}
-        onServiceDoubleClick={onServiceDoubleClick}
-        onQtyChange={onSvcQtyChange}
-        onDiscountChange={onSvcDiscountChange}
-        onAddService={onAddService}
-        onBrandToggle={onBrandToggle}
-        onSerialNumberChange={onSerialNumberChange}
-      />
       
       {/* Items Table - simplificat */}
       <div className="p-0 mx-4 overflow-x-auto border rounded-lg bg-card">
@@ -483,43 +532,53 @@ export function VanzariView({
                     {it.name_snapshot}
                   </TableCell>
                   <TableCell className="py-2">
-                    <Input
-                      className="h-7 text-sm text-center w-14"
-                      inputMode="numeric"
-                      value={String(it.qty)}
-                      onChange={e => {
-                        const v = Math.max(1, Number(e.target.value || 1));
-                        onUpdateItem(it.id, { qty: v });
-                      }}
-                    />
+                    {isServiceFileLocked ? (
+                      <span className="text-sm text-center">{it.qty}</span>
+                    ) : (
+                      <Input
+                        className="h-7 text-sm text-center w-14"
+                        inputMode="numeric"
+                        value={String(it.qty)}
+                        onChange={e => {
+                          const v = Math.max(1, Number(e.target.value || 1));
+                          onUpdateItem(it.id, { qty: v });
+                        }}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="text-center text-sm py-2">
                     {it.price.toFixed(2)}
                   </TableCell>
                   <TableCell className="py-2">
-                    <Input
-                      className="h-7 text-sm text-center w-12"
-                      inputMode="decimal"
-                      value={String(it.discount_pct)}
-                      onChange={e => {
-                        const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
-                        onUpdateItem(it.id, { discount_pct: v });
-                      }}
-                    />
+                    {isServiceFileLocked ? (
+                      <span className="text-sm text-center">{it.discount_pct || 0}%</span>
+                    ) : (
+                      <Input
+                        className="h-7 text-sm text-center w-12"
+                        inputMode="decimal"
+                        value={String(it.discount_pct)}
+                        onChange={e => {
+                          const v = Math.min(100, Math.max(0, Number(e.target.value || 0)));
+                          onUpdateItem(it.id, { discount_pct: v });
+                        }}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="text-right font-medium text-sm py-2">{lineTotal?.toFixed(2) || '0.00'}</TableCell>
                   <TableCell className="py-2">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDelete(it.id)
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    {!isServiceFileLocked && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDelete(it.id)
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               );
@@ -535,24 +594,34 @@ export function VanzariView({
         </Table>
       </div>
       
-      {/* Totals */}
-      <div className="flex justify-end px-4">
-        <div className="w-full md:w-[280px] space-y-1 text-sm bg-muted/20 rounded-lg p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Subtotal</span>
-            <span>{subtotal.toFixed(2)} RON</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Discount</span>
-            <span className="text-red-500">-{totalDiscount.toFixed(2)} RON</span>
-          </div>
-          <div className="h-px bg-border my-2" />
-          <div className="flex items-center justify-between font-semibold text-base">
-            <span>Total</span>
-            <span>{total.toFixed(2)} RON</span>
-          </div>
-        </div>
-      </div>
+      {/* Galerie Imagini Tăviță - read-only când fișa este locked */}
+      {canViewTrayImages && selectedQuoteId && (
+        <TrayImagesSection
+          trayImages={trayImages}
+          uploadingImage={uploadingImage}
+          isImagesExpanded={isImagesExpanded}
+          canAddTrayImages={canAddTrayImages && !isServiceFileLocked}
+          canViewTrayImages={canViewTrayImages}
+          selectedQuoteId={selectedQuoteId}
+          onToggleExpanded={onToggleImagesExpanded || (() => {})}
+          onImageUpload={isServiceFileLocked ? (() => {}) : (event) => {
+            const file = event.target.files?.[0]
+            if (file && onImageUpload) {
+              onImageUpload(file)
+            }
+          }}
+          onDownloadAll={onDownloadAllImages || (() => {})}
+          onImageDelete={isServiceFileLocked ? (() => {}) : (onImageDelete || (() => {}))}
+        />
+      )}
+
+      {/* Totals - stilizat ca în Recepție și Department */}
+      <TotalsSection
+        items={items}
+        subscriptionType={subscriptionType}
+        services={services}
+        instruments={instruments.map(i => ({ id: i.id, weight: i.weight || 0 }))}
+      />
       
       
       

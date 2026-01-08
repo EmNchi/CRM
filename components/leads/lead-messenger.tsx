@@ -5,7 +5,7 @@ import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Send, MessageSquare, Loader2, User, Paperclip, X, AtSign, Wrench, Tag, Users } from 'lucide-react'
+import { Send, MessageSquare, Loader2, User, Paperclip, X, Wrench } from 'lucide-react'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns'
 import { ro } from 'date-fns/locale/ro'
@@ -43,9 +43,6 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [senderNamesCache, setSenderNamesCache] = useState<Record<string, string>>({})
   const [attachedImages, setAttachedImages] = useState<Array<{ file: File; preview: string }>>([])
-  const [mentionSuggestions, setMentionSuggestions] = useState<Array<{ id: string; name: string; type: string }>>([])
-  const [showMentions, setShowMentions] = useState(false)
-  const [mentionQuery, setMentionQuery] = useState('')
   const [messageAttachments, setMessageAttachments] = useState<Record<string, any[]>>({})
   const [showTrayImagePicker, setShowTrayImagePicker] = useState(false)
   const [trayImages, setTrayImages] = useState<Array<{ id: string; file_path: string }>>([])
@@ -79,182 +76,33 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     setAttachedImages((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
-  // Handle @mention suggestions
-  const handleMentionInput = useCallback(async (text: string) => {
-    const lastAtIndex = text.lastIndexOf('@')
-    
-    // Daca nu e @, ascunde dropdown
-    if (lastAtIndex === -1) {
-      setShowMentions(false)
-      setMentionQuery('')
-      return
-    }
-
-    // Extrage textul dupa @
-    const afterAt = text.substring(lastAtIndex + 1)
-    
-    // Daca am spatiu dupa @, inchidem dropdown
-    if (afterAt.includes(' ')) {
-      setShowMentions(false)
-      setMentionQuery('')
-      return
-    }
-
-    setMentionQuery(afterAt.toLowerCase())
-
-    try {
-      const suggestions: Array<{ id: string; name: string; type: string }> = []
-      const searchTerm = `%${afterAt}%`
-
-      // Cauta servicii din tray_items
-      const { data: servicesData } = await (supabase
-        .from('tray_items')
-        .select('id, item_name')
-        .ilike('item_name', searchTerm)
-        .limit(5) as any)
-
-      if (servicesData && Array.isArray(servicesData)) {
-        (servicesData as any[]).forEach((s: any) => {
-          if (s.item_name) {
-            suggestions.push({
-              id: s.id,
-              name: s.item_name,
-              type: 'serviciu',
-            })
-          }
-        })
-      }
-
-      // Cauta taguri din lead_tags
-      const { data: tagsData } = await (supabase
-        .from('lead_tags')
-        .select('id, tag_name')
-        .ilike('tag_name', searchTerm)
-        .limit(3) as any)
-
-      if (tagsData && Array.isArray(tagsData)) {
-        (tagsData as any[]).forEach((t: any) => {
-          if (t.tag_name) {
-            suggestions.push({
-              id: t.id,
-              name: t.tag_name,
-              type: 'tag',
-            })
-          }
-        })
-      }
-
-      // Cauta tehnicienii
-      const { data: techniciansData } = await (supabase
-        .from('technicians')
-        .select('id, name')
-        .ilike('name', searchTerm)
-        .limit(3) as any)
-
-      if (techniciansData && Array.isArray(techniciansData)) {
-        (techniciansData as any[]).forEach((t: any) => {
-          if (t.name) {
-            suggestions.push({
-              id: t.id,
-              name: t.name,
-              type: 'tehnician',
-            })
-          }
-        })
-      }
-
-      setMentionSuggestions(suggestions)
-      setShowMentions(true) // Arata dropdown chiar daca e gol, pentru a arata "No results"
-    } catch (error) {
-      console.error('Error fetching mention suggestions:', error)
-    }
-  }, [])
-
-  // Insert mention
-  const insertMention = useCallback((mention: { id: string; name: string; type: string }) => {
-    const lastAtIndex = newMessage.lastIndexOf('@')
-    const before = newMessage.substring(0, lastAtIndex)
-    const after = newMessage.substring(lastAtIndex + 1)
-    
-    // Gaseste pozitia spatiului dupa @mention
-    const spaceIndex = after.search(/\s/)
-    const afterMention = spaceIndex === -1 ? '' : after.substring(spaceIndex)
-
-    setNewMessage(`${before}@${mention.name} ${afterMention}`)
-    setShowMentions(false)
-    setMentionQuery('')
-    
-    // Focus back on textarea
-    setTimeout(() => {
-      textareaRef.current?.focus()
-    }, 0)
-  }, [newMessage])
-
-  // Obține display_name din auth.users (via app_members cu user_id = sender_id)
-  const getSenderName = useCallback(async (senderId: string) => {
-    // Dacă e user-ul curent, returnează userName
-    if (senderId === user?.id) {
-      return userName || user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'
-    }
-
-    try {
-      // Verifica cache-ul mai întâi
-      if (senderNamesCache[senderId]) {
-        return senderNamesCache[senderId]
-      }
-
-      // Cauta în app_members cu user_id = sender_id pentru display_name din auth.users
-      const { data: memberData } = await (supabase
-        .from('app_members')
-        .select('display_name')
-        .eq('user_id', senderId)
-        .single() as any)
-
-      if (memberData?.display_name) {
-        setSenderNamesCache((prev) => ({ ...prev, [senderId]: memberData.display_name }))
-        return memberData.display_name
-      }
-
-      // Fallback - nu gasim user-ul, returnez User
-      setSenderNamesCache((prev) => ({ ...prev, [senderId]: 'User' }))
-      return 'User'
-    } catch (error) {
-      console.error('Error fetching sender name:', error)
-      setSenderNamesCache((prev) => ({ ...prev, [senderId]: 'User' }))
-      return 'User'
-    }
-  }, [user?.id, user?.email, user?.user_metadata?.display_name, userName, senderNamesCache])
-
-  // Pre-load sender names for all messages
+  // Obține rolul și numele utilizatorului
   useEffect(() => {
-    const senderIds = new Set(messages.map((msg) => msg.sender_id))
+    if (!user) return
     
-    senderIds.forEach((senderId) => {
-      if (senderNamesCache[senderId]) return // Skip if already cached
-      
-      // Load sender name
-      getSenderName(senderId)
-    })
-  }, [messages, senderNamesCache, getSenderName])
+    // Setează imediat un rol implicit pentru a permite trimiterea mesajelor
+    // Folosește auth.display_name ca valoare implicită
+    setUserRole('member')
+    setUserName(user.user_metadata?.display_name || user.email?.split('@')[0] || 'Utilizator')
 
-  // obtine rolul si numele utilizatorului
-  useEffect(() => {
     async function fetchUserInfo() {
       if (!user) return
+      try {
+        // Încearcă să obțină rolul și name din app_members
+        const { data: memberData, error } = await (supabase
+          .from('app_members')
+          .select('role, name')
+          .eq('user_id', user.id)
+          .maybeSingle() as any)
 
-      // obtine rolul si display_name din app_members
-      const { data: memberData } = await (supabase
-        .from('app_members')
-        .select('role, display_name')
-        .eq('user_id', user.id)
-        .single() as any)
-
-      if (memberData) {
-        setUserRole(memberData.role)
-        setUserName(memberData.display_name || user.email?.split('@')[0] || 'User')
-      } else {
-        // daca nu e in app_members, foloseste email-ul sau display_name din metadata
-        setUserName(user.user_metadata?.display_name || user.email?.split('@')[0] || 'User')
+        if (!error && memberData) {
+          setUserRole(memberData.role)
+          // Prioritate: app_members.name > auth.display_name > email
+          setUserName(memberData.name || user.user_metadata?.display_name || user.email?.split('@')[0] || 'Utilizator')
+        }
+      } catch (err) {
+        console.error('Error fetching user info:', err)
+        // Păstrăm valorile implicite setate mai sus
       }
     }
 
@@ -268,7 +116,20 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
     async function loadConversation() {
       try {
-        console.log('Loading conversation for lead:', leadId)
+        // Verificăm că leadId este un ID valid de lead (nu de service_file)
+        const { data: leadCheck, error: leadCheckError } = await (supabase
+          .from('leads')
+          .select('id')
+          .eq('id', leadId)
+          .maybeSingle() as any)
+        
+        if (leadCheckError || !leadCheck) {
+          console.warn('⚠️ LeadMessenger: leadId nu este un ID valid de lead:', leadId)
+          if (isMounted.current) setLoading(false)
+          return
+        }
+        
+        console.log('Loading conversation for lead ID:', leadId)
 
         // Încearcă să găsești conversația existentă pentru LEAD
         const { data: convData, error: searchError } = await (supabase
@@ -290,7 +151,9 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
           if (isMounted.current) setConversationId(convData.id)
           conversationInitializedRef.current = true
         } else {
-          console.log('No conversation found for lead yet.')
+          // Nu există conversație pentru acest lead - va fi creată când se trimit tăvițele din Recepție
+          console.log('No conversation found for lead:', leadId)
+          if (isMounted.current) setConversationId(null)
           conversationInitializedRef.current = true
         }
 
@@ -374,21 +237,30 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     }
   }, [leadId, conversationId])
 
-  // Load tray images din tray curent (selectedQuoteId)
+  // Load tray images din tray curent (selectedQuoteId = tray_id)
   useEffect(() => {
     async function loadTrayImages() {
-      if (!selectedQuoteId) return
+      if (!selectedQuoteId) {
+        setTrayImages([])
+        return
+      }
 
       try {
-        // Cauta imaginile din tray-ul curent
-        const { data: imagesData } = await (supabase
+        // Caută imaginile din tray-ul curent folosind tray_id
+        const { data: imagesData, error } = await supabase
           .from('tray_images')
-          .select('id, file_path')
-          .eq('quote_id', selectedQuoteId) as any)
+          .select('id, file_path, filename, url')
+          .eq('tray_id', selectedQuoteId)
+          .order('created_at', { ascending: false })
+
+        if (error) {
+          console.error('Error loading tray images:', error)
+          return
+        }
 
         if (imagesData) {
           setTrayImages(imagesData)
-          console.log('Loaded tray images:', imagesData.length)
+          console.log('Loaded tray images for tray', selectedQuoteId, ':', imagesData.length)
         }
       } catch (error) {
         console.error('Error loading tray images:', error)
@@ -417,17 +289,17 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
         // Cauta imagini din traiele specificate
         const trayIds = messagesWithImages.map((m: any) => m.tray_id).filter(Boolean) as string[]
-        const { data: imagesData } = await (supabase
+        const { data: imagesData } = await supabase
           .from('tray_images')
-          .select('id, file_path, quote_id')
-          .in('quote_id', trayIds) as any)
+          .select('id, file_path, tray_id')
+          .in('tray_id', trayIds)
 
         if (imagesData) {
           // Creează map de tray_id -> imagini (luăm prima imagine din tray)
           const trayImageMap: Record<string, string> = {}
           imagesData.forEach((img: any) => {
-            if (!trayImageMap[img.quote_id]) {
-              trayImageMap[img.quote_id] = img.file_path
+            if (!trayImageMap[img.tray_id]) {
+              trayImageMap[img.tray_id] = img.file_path
             }
           })
           
@@ -448,6 +320,42 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     loadImages()
   }, [messages])
 
+  // Încarcă numele expeditorilor pentru mesajele din conversație
+  useEffect(() => {
+    if (messages.length === 0 || !user) return
+
+    const currentUserId = user.id // Capturăm user.id pentru a evita erori TypeScript
+
+    async function loadSenderNames() {
+      // Găsește expeditorii unici care nu sunt utilizatorul curent și nu sunt în cache
+      const uniqueSenderIds = [...new Set(messages.map(m => m.sender_id))]
+        .filter(id => id !== currentUserId && !senderNamesCache[id])
+
+      if (uniqueSenderIds.length === 0) return
+
+      try {
+        // Încarcă name din app_members
+        const { data: membersData } = await (supabase
+          .from('app_members')
+          .select('user_id, name')
+          .in('user_id', uniqueSenderIds) as any)
+
+        if (membersData && membersData.length > 0) {
+          const newCache: Record<string, string> = { ...senderNamesCache }
+          membersData.forEach((member: any) => {
+            if (member.name) {
+              newCache[member.user_id] = member.name
+            }
+          })
+          setSenderNamesCache(newCache)
+        }
+      } catch (error) {
+        console.error('Error loading sender names:', error)
+      }
+    }
+
+    loadSenderNames()
+  }, [messages, user, senderNamesCache])
 
   // scroll la ultimul mesaj cu debounce pentru performanta
   useEffect(() => {
@@ -468,64 +376,129 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
   // Trimite mesaj cu optimistic update
   const handleSendMessage = useCallback(async () => {
     const messageText = newMessage.trim()
-    // Expect conversationId sa existe - daca nu, nu trimite mesaj
-    if (!messageText || !user || !userRole || sending || !conversationId) {
-      if (!conversationId) {
-        toast.error('Conversația se inițializează. Așteptați câteva secunde și reîncercați.')
-      }
+    const hasImages = attachedImages.length > 0
+    
+    // Verificări pentru trimitere
+    if (!messageText && !hasImages) {
+      return // Nu trimite mesaje goale
+    }
+    if (!user) {
+      toast.error('Trebuie să fii autentificat pentru a trimite mesaje.')
+      return
+    }
+    if (!userRole) {
+      toast.error('Se încarcă informațiile utilizatorului. Așteptați câteva secunde.')
+      return
+    }
+    if (sending) {
+      return // Deja se trimite un mesaj
+    }
+    if (!conversationId) {
+      toast.error('Conversația se inițializează. Așteptați câteva secunde și reîncercați.')
       return
     }
 
     try {
       setSending(true)
+      
+      // Salvează imaginile și trimite mesajele pentru fiecare
+      const imagesToSend = [...attachedImages]
+      setAttachedImages([])
+      setNewMessage('')
 
-      // optimistic update - adauga mesajul local imediat
-      const tempId = `temp-${Date.now()}`
-      const optimisticMessage: LeadMessage = {
-        id: tempId,
-        conversation_id: conversationId,
-        sender_id: user.id,
-        content: messageText,
-        message_type: 'text',
-        created_at: new Date().toISOString(),
+      // Trimite mai întâi mesajele cu imagini (dacă există)
+      for (const img of imagesToSend) {
+        // Imaginea din tray_images - file_path este în img.file.name
+        const filePath = img.file.name
+        // Construim URL-ul complet pentru imagine
+        const imageUrl = supabase.storage.from('tray_images').getPublicUrl(filePath).data.publicUrl
+        
+        const tempImgId = `temp-img-${Date.now()}-${Math.random()}`
+        const optimisticImgMessage: LeadMessage = {
+          id: tempImgId,
+          conversation_id: conversationId,
+          sender_id: user.id,
+          content: imageUrl, // Salvăm URL-ul complet
+          message_type: 'image',
+          created_at: new Date().toISOString(),
+        }
+
+        setPendingMessage(tempImgId)
+        setMessages((prev) => [...prev, optimisticImgMessage])
+
+        // Inserează mesajul cu imagine în baza de date
+        const { data: imgData, error: imgError } = await supabase
+          .from('messages')
+          .insert({
+            conversation_id: conversationId as string,
+            sender_id: user.id,
+            content: imageUrl,
+            message_type: 'image',
+          } as any)
+          .select()
+          .single()
+
+        if (imgError) {
+          console.error('Insert image error:', imgError)
+          // Elimină mesajul optimist
+          setMessages((prev) => prev.filter((msg) => msg.id !== tempImgId))
+          toast.error('Eroare la trimiterea imaginii')
+        } else if (imgData) {
+          const imgDataAny = imgData as any
+          // Înlocuiește mesajul optimist cu cel real
+          setMessages((prev) => prev.map((msg) => 
+            msg.id === tempImgId ? (imgDataAny as LeadMessage) : msg
+          ))
+        }
       }
 
-      setPendingMessage(tempId)
-      setMessages((prev) => [...prev, optimisticMessage])
-      setNewMessage('')
-      setAttachedImages([])
-
-      // Inserează mesajul în baza de date
-      const { data, error } = await (supabase
-        .from('messages')
-        .insert({
-          conversation_id: conversationId as string,
+      // Apoi trimite mesajul text (dacă există)
+      if (messageText) {
+        const tempId = `temp-${Date.now()}`
+        const optimisticMessage: LeadMessage = {
+          id: tempId,
+          conversation_id: conversationId,
           sender_id: user.id,
           content: messageText,
           message_type: 'text',
+          created_at: new Date().toISOString(),
+        }
+
+        setPendingMessage(tempId)
+        setMessages((prev) => [...prev, optimisticMessage])
+
+        // Inserează mesajul în baza de date
+        const { data, error } = await (supabase
+          .from('messages')
+          .insert({
+            conversation_id: conversationId as string,
+            sender_id: user.id,
+            content: messageText,
+            message_type: 'text',
+          })
+          .select()
+          .single() as any)
+
+        if (error) {
+          console.error('Insert error details:', { error, message: error?.message, code: error?.code, details: error?.details })
+          throw error
+        }
+
+        if (!data) {
+          throw new Error('Nu s-au primit date după insert')
+        }
+
+        // Înlocuiește mesajul optimist (temp) cu mesajul real din DB
+        setMessages((prev) => {
+          const updatedMessages = prev.map((msg) => 
+            msg.id === tempId ? (data as LeadMessage) : msg
+          )
+          return updatedMessages
         })
-        .select()
-        .single() as any)
-
-      if (error) {
-        console.error('Insert error details:', { error, message: error?.message, code: error?.code, details: error?.details })
-        throw error
       }
-
-      if (!data) {
-        throw new Error('Nu s-au primit date după insert')
-      }
-
-      // Înlocuiește mesajul optimist (temp) cu mesajul real din DB
-      setMessages((prev) => {
-        // Găsește indexul mesajului optimist și înlocuiește-l
-        const updatedMessages = prev.map((msg) => 
-          msg.id === tempId ? (data as LeadMessage) : msg
-        )
-        return updatedMessages
-      })
+      
       setPendingMessage(null)
-      toast.success('Mesaj trimis cu succes')
+      toast.success(hasImages && messageText ? 'Mesaj și imagini trimise' : hasImages ? 'Imagine trimisă' : 'Mesaj trimis')
     } catch (error: any) {
       console.error('Error sending message:', error, error?.message)
       // Elimină mesajul optimist dacă a eșuat
@@ -643,7 +616,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
       {/* Zona de mesaje */}
       <div className="border rounded-lg bg-card shadow-sm overflow-hidden">
-        <ScrollArea className="h-[350px]">
+        <ScrollArea className="h-[700px]">
           <div className="p-4">
             {loading ? (
               <div className="flex flex-col items-center justify-center h-full min-h-[200px] gap-3">
@@ -683,8 +656,10 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                       const isPending = pendingMessage === msg.id
                       const isRecent = isToday(new Date(msg.created_at))
                       const messageKey = `${msg.id}-${idx}`
-                      // Get sender name from cache
-                      const senderName = senderNamesCache[msg.sender_id] || 'User'
+                      // Pentru mesajele proprii folosim userName, pentru altele din cache
+                      const senderName = isOwnMessage 
+                        ? userName 
+                        : (senderNamesCache[msg.sender_id] || 'Utilizator')
 
                       return (
                         <div
@@ -719,22 +694,16 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                                 isPending && 'opacity-60'
                               )}
                             >
-                              {/* Imagine atasata - din tray_images */}
-                              {msg.message_type === 'image' && messageAttachments[msg.id] && (
-                                <div className="mb-2 max-w-xs">
+                              {/* Imagine - afișare directă din content */}
+                              {msg.message_type === 'image' ? (
+                                <div className="max-w-xs">
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const attachment = messageAttachments[msg.id]
-                                      if (typeof attachment === 'string') {
-                                        const publicUrl = supabase.storage.from('tray_images').getPublicUrl(attachment).data.publicUrl
-                                        window.open(publicUrl, '_blank')
-                                      }
-                                    }}
+                                    onClick={() => window.open(msg.content, '_blank')}
                                     className="group relative block"
                                   >
                                     <img
-                                      src={typeof messageAttachments[msg.id] === 'string' ? supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id] as string).data.publicUrl : ''}
+                                      src={msg.content}
                                       alt="message image"
                                       className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
                                     />
@@ -743,27 +712,12 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                                     </div>
                                   </button>
                                 </div>
+                              ) : (
+                                /* Mesaj text */
+                                <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                                  {msg.content}
+                                </div>
                               )}
-
-                              {/* Mențiuni inline */}
-                              <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-                                {msg.content.split(/(@\w+)/g).map((part, i) => {
-                                  if (part.startsWith('@')) {
-                                    return (
-                                      <span
-                                        key={i}
-                                        className={cn(
-                                          'font-semibold',
-                                          isOwnMessage ? 'text-primary-foreground/90' : 'text-primary'
-                                        )}
-                                      >
-                                        {part}
-                                      </span>
-                                    )
-                                  }
-                                  return part
-                                })}
-                              </div>
 
                               <div
                                 className={cn(
@@ -823,67 +777,6 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
             </div>
           )}
 
-          {/* Mention suggestions - Discord style */}
-          {showMentions && (
-            <div className="bg-popover border border-popover-foreground/10 rounded-lg shadow-lg p-2 space-y-0.5">
-              {mentionSuggestions.length === 0 ? (
-                <div className="text-xs text-muted-foreground px-2 py-2 text-center">
-                  Nicio sugestie pentru "{mentionQuery}"
-                </div>
-              ) : (
-                <>
-                  <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
-                    Mențiuni ({mentionSuggestions.length}):
-                  </div>
-                  <div className="max-h-[240px] overflow-y-auto">
-                    {mentionSuggestions.map((suggestion, idx) => {
-                      const getIcon = () => {
-                        switch (suggestion.type) {
-                          case 'serviciu':
-                            return <Wrench className="h-4 w-4" />
-                          case 'tag':
-                            return <Tag className="h-4 w-4" />
-                          case 'tehnician':
-                            return <Users className="h-4 w-4" />
-                          default:
-                            return <AtSign className="h-4 w-4" />
-                        }
-                      }
-
-                      const getColor = () => {
-                        switch (suggestion.type) {
-                          case 'serviciu':
-                            return 'text-blue-500'
-                          case 'tag':
-                            return 'text-amber-500'
-                          case 'tehnician':
-                            return 'text-purple-500'
-                          default:
-                            return 'text-muted-foreground'
-                        }
-                      }
-
-                      return (
-                        <button
-                          key={`${suggestion.type}-${suggestion.id}`}
-                          type="button"
-                          onClick={() => insertMention(suggestion)}
-                          className="w-full text-left px-2 py-2 hover:bg-accent rounded text-sm flex items-center gap-2.5 transition-colors"
-                        >
-                          <span className={`${getColor()} flex-shrink-0`}>{getIcon()}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-foreground truncate">{suggestion.name}</div>
-                            <div className="text-xs text-muted-foreground">{suggestion.type}</div>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -895,10 +788,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
               <Textarea
                 ref={textareaRef}
                 value={newMessage}
-                onChange={(e) => {
-                  setNewMessage(e.target.value)
-                  handleMentionInput(e.target.value)
-                }}
+                onChange={(e) => setNewMessage(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
@@ -909,8 +799,8 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                   !conversationId
                     ? 'Conversația se va crea când se apasă "Trimite Tăvițe" din Recepție'
                     : isTechnician
-                    ? 'Scrie un mesaj pentru recepție... (@pentru mențiuni)'
-                    : 'Scrie un mesaj pentru tehnician... (@pentru mențiuni)'
+                    ? 'Scrie un mesaj pentru recepție...'
+                    : 'Scrie un mesaj pentru tehnician...'
                 }
                 disabled={sending || !conversationId || loading}
                 className="min-h-[40px] max-h-[120px] resize-none pr-10"
@@ -937,34 +827,34 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
               {/* Picker pentru imagini din tray curent */}
               {showTrayImagePicker && (
-                <div className="absolute bottom-full right-0 mb-2 bg-popover border rounded-lg shadow-lg p-2 z-50 max-w-sm">
+                <div className="absolute bottom-full right-0 mb-2 bg-popover border rounded-xl shadow-xl p-4 z-50 min-w-[320px] max-w-md">
                   {trayImages.length > 0 ? (
                     <>
-                      <div className="text-xs font-semibold text-muted-foreground mb-2">
+                      <div className="text-sm font-semibold text-foreground mb-3">
                         Imagini din tăviță ({trayImages.length}):
                       </div>
-                      <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto mb-2">
+                      <div className="grid grid-cols-3 gap-3 max-h-[300px] overflow-y-auto pr-1">
                         {trayImages.map((img) => (
                           <button
                             key={img.id}
                             type="button"
                             onClick={() => handleAttachTrayImage(img.file_path)}
-                            className="group relative"
+                            className="group relative aspect-square"
                           >
                             <img
                               src={supabase.storage.from('tray_images').getPublicUrl(img.file_path).data.publicUrl}
                               alt="tray image"
-                              className="h-16 w-16 object-cover rounded border border-muted hover:border-primary transition-colors"
+                              className="w-full h-full object-cover rounded-lg border-2 border-muted hover:border-primary transition-all hover:scale-105"
                             />
-                            <div className="absolute inset-0 bg-black/40 rounded opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <span className="text-white text-xs">+</span>
+                            <div className="absolute inset-0 bg-black/50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <span className="text-white text-sm font-medium">+ Atașează</span>
                             </div>
                           </button>
                         ))}
                       </div>
                     </>
                   ) : (
-                    <div className="text-xs text-muted-foreground mb-2">
+                    <div className="text-sm text-muted-foreground py-4 text-center">
                       Nu sunt imagini în tăviță
                     </div>
                   )}

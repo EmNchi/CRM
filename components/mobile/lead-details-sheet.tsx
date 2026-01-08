@@ -165,8 +165,16 @@ export function LeadDetailsSheet({
   }
 
   // Obține leadId - poate fi lead.id sau lead.leadId
+  // IMPORTANT: Pentru service_file și tray, NU returnăm lead.id ca fallback 
+  // deoarece ar fi ID-ul fișei de serviciu, nu al lead-ului
   const getLeadId = () => {
     if (!lead) return null
+    const leadAny = lead as any
+    // Pentru service_file sau tray, folosim doar leadId din relație
+    if (leadAny?.type === 'service_file' || leadAny?.type === 'tray') {
+      return leadAny.leadId || null
+    }
+    // Pentru lead-uri normale, lead.leadId sau lead.id
     return lead.leadId || lead.id
   }
 

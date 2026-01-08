@@ -147,6 +147,7 @@ interface ReceptieViewProps {
   
   // For ItemsTable row click
   onRowClick?: ((item: LeadQuoteItem) => void) | null | undefined
+  onClearForm?: (() => void) | null | undefined
 }
 
 // ============================================================================
@@ -511,6 +512,7 @@ export function ReceptieView(props: ReceptieViewProps) {
         onQtyChange={props.onSvcQtyChange || (() => {})}
         onDiscountChange={props.onSvcDiscountChange || (() => {})}
         onAddService={props.onAddService || (() => {})}
+        onClearForm={props.onClearForm}
         onSerialNumberChange={props.onSerialNumberChange || (() => {})}
       />
       

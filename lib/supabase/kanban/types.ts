@@ -68,6 +68,8 @@ export interface KanbanItem {
   address?: string | null
   address2?: string | null
   zip?: string | null
+  strada?: string | null
+  judet?: string | null
 }
 
 export interface KanbanTag {
@@ -94,6 +96,8 @@ export interface RawLead {
   address?: string | null
   address2?: string | null
   zip?: string | null
+  strada?: string | null
+  judet?: string | null
 }
 
 export interface RawServiceFile {

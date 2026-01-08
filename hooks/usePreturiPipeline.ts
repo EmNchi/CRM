@@ -25,11 +25,13 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
   // Pipeline-ul Curier a fost eliminat - folosim doar Receptie
   const isCurierPipeline = false
 
-  // Verifică dacă pipeline-ul permite adăugarea de imagini (Saloane, Frizerii, Horeca, Reparatii, Receptie)
+  // Verifică dacă pipeline-ul permite adăugarea de imagini (Vanzari, Saloane, Frizerii, Horeca, Reparatii, Receptie)
   const canAddTrayImages = useMemo(() => {
     if (!pipelineSlug) return false
     const slug = pipelineSlug.toLowerCase()
-    return slug.includes('saloane') || 
+    return slug.includes('vanzari') ||
+           slug.includes('sales') ||
+           slug.includes('saloane') || 
            slug.includes('frizerii') || 
            slug.includes('horeca') || 
            slug.includes('reparatii') ||
@@ -41,7 +43,7 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
   const canViewTrayImages = useMemo(() => {
     if (!pipelineSlug) return false
     const slug = pipelineSlug.toLowerCase()
-    return canAddTrayImages || slug.includes('receptie') || slug.includes('reception')
+    return canAddTrayImages || slug.includes('vanzari') || slug.includes('sales') || slug.includes('receptie') || slug.includes('reception')
   }, [pipelineSlug, canAddTrayImages])
 
   // Pipeline-uri comerciale unde vrem să afișăm detalii de tăviță în Fișa de serviciu

@@ -3,8 +3,8 @@
  */
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { FileText, History } from "lucide-react"
-import { ReactNode } from "react"
+import { FileText, History, MessageSquare } from "lucide-react"
+import { ReactNode, useEffect } from "react"
 
 interface LeadDetailsTabsProps {
   section: "fisa" | "de-confirmat" | "istoric"
@@ -21,6 +21,30 @@ export function LeadDetailsTabs({
   deConfirmatContent,
   istoricContent,
 }: LeadDetailsTabsProps) {
+  // Dezactivează scrollul pe body când suntem în secțiunea "De Confirmat"
+  useEffect(() => {
+    if (section === 'de-confirmat') {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    
+    // Cleanup la unmount
+    return () => {
+      document.body.style.overflow = 'hidden'
+    }
+  }, [section])
+
+  useEffect(() => {
+    if (section === 'fisa') {
+      document.body.style.overflow = 'hidden'
+    } 
+    // Cleanup la unmount
+    return () => {
+      document.body.style.overflow = 'hidden'
+    }
+  }, [section])
+
   return (
     <Tabs value={section} onValueChange={(v) => onSectionChange(v as "fisa" | "de-confirmat" | "istoric")} className="w-full">
       <TabsList className="grid w-full grid-cols-3 mb-4">
@@ -30,7 +54,7 @@ export function LeadDetailsTabs({
           <span className="sm:hidden">Fișă</span>
         </TabsTrigger>
         <TabsTrigger value="de-confirmat" className="flex items-center gap-2">
-          <History className="h-4 w-4" />
+          <MessageSquare className="h-4 w-4" />
           <span>De Confirmat</span>
         </TabsTrigger>
         <TabsTrigger value="istoric" className="flex items-center gap-2">
@@ -43,7 +67,7 @@ export function LeadDetailsTabs({
         {fisaContent}
       </TabsContent>
 
-      <TabsContent value="de-confirmat" className="mt-0">
+      <TabsContent value="de-confirmat" className="mt-0 overflow-hidden">
         {deConfirmatContent}
       </TabsContent>
 

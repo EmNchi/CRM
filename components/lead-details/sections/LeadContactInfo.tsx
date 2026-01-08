@@ -46,6 +46,7 @@ interface LeadContactInfoProps {
   onPhoneClick: (phone: string) => void
   onEmailClick: (email: string) => void
   onLeadUpdate?: (updatedLead: any) => void
+  isVanzariPipeline?: boolean
 }
 
 interface FieldConfig {
@@ -85,8 +86,12 @@ export function LeadContactInfo({
   onPhoneClick,
   onEmailClick,
   onLeadUpdate,
+  isVanzariPipeline = false,
 }: LeadContactInfoProps) {
-  const { isAdmin } = useRole()
+  const { isAdmin, isOwner } = useRole()
+  
+  // Permite editarea doar pentru owner în pipeline-ul Vânzări
+  const canEdit = isVanzariPipeline && isOwner
   const [isEditing, setIsEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editData, setEditData] = useState<Record<string, string>>({})
@@ -319,7 +324,7 @@ export function LeadContactInfo({
                   </Button>
                 </>
               ) : (
-                isAdmin && (
+                canEdit && (
                   <Button
                     variant="outline"
                     size="sm"

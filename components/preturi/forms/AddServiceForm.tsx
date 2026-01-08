@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Sparkles, Plus, X as XIcon, Search, Percent } from 'lucide-react'
+import { Sparkles, Plus, X as XIcon, Search, Percent, Undo2 } from 'lucide-react'
 import type { Service } from '@/lib/supabase/serviceOperations'
 import { cn } from '@/lib/utils'
 
@@ -34,6 +34,7 @@ interface AddServiceFormProps {
   onQtyChange: (qty: string) => void
   onDiscountChange: (discount: string) => void
   onAddService: () => void
+  onClearForm?: () => void
   onBrandToggle?: (brandName: string, checked: boolean) => void
   onSerialNumberChange?: (serialNumberId: string) => void
 }
@@ -55,6 +56,7 @@ export function AddServiceForm({
   onQtyChange,
   onDiscountChange,
   onAddService,
+  onClearForm,
   onBrandToggle,
   onSerialNumberChange,
 }: AddServiceFormProps) {
@@ -76,15 +78,28 @@ export function AddServiceForm({
               </p>
             </div>
           </div>
-          <Button 
-            size="sm" 
-            onClick={onAddService} 
-            disabled={!svc.id}
-            className="h-9 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white shadow-sm"
-          >
-            <Plus className="h-4 w-4 mr-1.5" />
-            Adaugă
-          </Button>
+          <div className="flex items-center gap-2">
+            {svc.id && onClearForm && (
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={onClearForm}
+                className="h-9 px-3 border-amber-300 text-amber-700 hover:bg-amber-50 hover:border-amber-400 dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-950/50"
+              >
+                <Undo2 className="h-4 w-4 mr-1.5" />
+                Anulează
+              </Button>
+            )}
+            <Button 
+              size="sm" 
+              onClick={onAddService} 
+              disabled={!svc.id}
+              className="h-9 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white shadow-sm"
+            >
+              <Plus className="h-4 w-4 mr-1.5" />
+              Adaugă
+            </Button>
+          </div>
         </div>
 
         {/* Content */}

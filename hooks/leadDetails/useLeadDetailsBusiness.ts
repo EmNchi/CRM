@@ -64,12 +64,20 @@ export function useLeadDetailsBusiness({
     const leadAny = lead as any
     // Verifică dacă este service_file sau tray (au leadId din relație)
     if (leadAny?.type === 'service_file' || leadAny?.type === 'tray') {
-      return leadAny.leadId || lead.id
+      // IMPORTANT: Returnăm DOAR leadId din relație, NU lead.id ca fallback!
+      // lead.id ar fi ID-ul fișei de serviciu/tray, nu al lead-ului
+      if (leadAny.leadId) {
+        return leadAny.leadId
+      }
+      // Dacă nu avem leadId în relație, returnăm null pentru a forța rezolvarea din DB
+      console.warn('⚠️ getLeadId: service_file/tray nu are leadId în relație, lead.id:', lead.id)
+      return null
     }
     // Pentru tray items (isQuote indică că este un tray)
     if (leadAny?.isQuote && leadAny?.leadId) {
       return leadAny.leadId
     }
+    // Pentru lead-uri normale, lead.id este ID-ul lead-ului
     return lead.id
   }, [lead])
   

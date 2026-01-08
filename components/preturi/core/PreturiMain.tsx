@@ -740,7 +740,8 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
       }}
       onConfirmSendTrays={business.sendAllTraysToPipeline}
       onCancelSendTrays={() => state.setShowSendConfirmation(false)}
-      onRowClick={(item: LeadQuoteItem) => business.onRowClick(item.id)}
+      onRowClick={business.onRowClick}
+      onClearForm={business.onClearForm}
       onBrandToggle={business.onBrandToggle}
       
       // Quick actions for department view

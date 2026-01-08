@@ -745,73 +745,19 @@ export function usePreturiBusiness({
     const serviceDef = services.find(s => s.id === item.service_id)
     const instrumentId = serviceDef?.instrument_id || item.instrument_id || ''
     
-    // Transformă brand_groups din format DB în format formular
-    let brandSerialGroups: Array<{ brand: string; serialNumbers: Array<{ serial: string; garantie: boolean }>; qty: string }> = []
-    
-    if (item.brand_groups && Array.isArray(item.brand_groups) && item.brand_groups.length > 0) {
-      brandSerialGroups = item.brand_groups.map((bg: any) => {
-        // Transformă serialNumbers din string[] în Array<{ serial: string, garantie: boolean }>
-        let serialNumbersArray: Array<{ serial: string; garantie: boolean }> = []
-        
-        if (Array.isArray(bg.serialNumbers)) {
-          serialNumbersArray = bg.serialNumbers.map((sn: any) => {
-            // Dacă este deja un obiect cu serial și garantie
-            if (typeof sn === 'object' && sn !== null && 'serial' in sn) {
-              return {
-                serial: sn.serial || '',
-                garantie: Boolean(sn.garantie)
-              }
-            }
-            // Dacă este doar un string
-            return {
-              serial: typeof sn === 'string' ? sn : String(sn || ''),
-              garantie: Boolean(bg.garantie || false)
-            }
-          })
-        } else if (bg.serialNumbers) {
-          // Fallback pentru cazul în care serialNumbers nu este array
-          serialNumbersArray = [{
-            serial: String(bg.serialNumbers || ''),
-            garantie: Boolean(bg.garantie || false)
-          }]
-        }
-        
-        // Dacă nu există serial numbers, creează unul gol
-        if (serialNumbersArray.length === 0) {
-          serialNumbersArray = [{ serial: '', garantie: Boolean(bg.garantie || false) }]
-        }
-        
-        return {
-          brand: bg.brand || '',
-          serialNumbers: serialNumbersArray,
-          qty: String(bg.qty || serialNumbersArray.length || 1)
-        }
-      })
-    } else if (item.brand || item.serial_number) {
-      // Fallback pentru cazul în care există brand/serial direct pe item (format vechi)
-      brandSerialGroups = [{
-        brand: item.brand || '',
-        serialNumbers: [{
-          serial: item.serial_number || '',
-          garantie: Boolean(item.garantie || false)
-        }],
-        qty: '1'
-      }]
-    }
-    
-    // Populează formularul de instrument
-    if (instrumentId) {
-      setInstrumentForm({
-        instrument: instrumentId,
-        qty: String(item.qty || 1),
-        garantie: item.garantie || false,
-        brandSerialGroups: brandSerialGroups.length > 0 ? brandSerialGroups : [{ brand: '', serialNumbers: [{ serial: '', garantie: false }], qty: '1' }]
-      })
+    // NU mai suprascriu instrumentForm.brandSerialGroups - păstrez toate serial numbers din tăviță
+    // Doar setez instrumentul dacă s-a schimbat
+    if (instrumentId && instrumentForm.instrument !== instrumentId) {
+      // Dacă instrumentul s-a schimbat, reîncarcă toate serial numbers pentru acest instrument
+      populateInstrumentFormFromItems(items, instrumentId, true)
     }
     
     // Populează formularul de serviciu
     if (item.item_type === 'service' && item.service_id) {
-      // Construiește selectedBrands din brand_groups pentru checkbox-uri
+      // Găsește definiția serviciului
+      const service = services.find(s => s.id === item.service_id)
+      
+      // Construiește selectedBrands din brand_groups ale ACESTUI ITEM pentru checkbox-uri
       const selectedBrands: string[] = []
       if (item.brand_groups && Array.isArray(item.brand_groups)) {
         item.brand_groups.forEach((bg: any, bgIdx: number) => {
@@ -825,19 +771,26 @@ export function usePreturiBusiness({
             selectedBrands.push(brandKey)
           })
         })
+      } else if (item.brand || item.serial_number) {
+        // Fallback pentru format vechi
+        const brandKey = `${item.brand || ''}::${item.serial_number || ''}`
+        selectedBrands.push(brandKey)
       }
       
-      // Selectează serviciul în dropdown
-      onServiceSelect(item.service_id, item.name_snapshot || '')
-      
-      // Actualizează svc cu datele complete
-      setSvc((prev: any) => ({
-        ...prev,
+      // Actualizează svc cu TOATE datele într-un singur apel (include și datele din service)
+      setSvc({
+        id: item.service_id,
+        name: service?.name || item.name_snapshot || '',
+        price: service?.price || item.price || 0,
         qty: String(item.qty || 1),
         discount: String(item.discount_pct || 0),
         instrumentId: instrumentId,
         selectedBrands: selectedBrands
-      }))
+      })
+      
+      // Actualizează și search query pentru afișare
+      setServiceSearchQuery(service?.name || item.name_snapshot || '')
+      setServiceSearchFocused(false)
     }
     
     // Populează formularul de piesă (dacă este piesă)
@@ -854,7 +807,36 @@ export function usePreturiBusiness({
     }
     
     toast.info('Datele au fost încărcate în formulare pentru editare')
-  }, [items, services, setInstrumentForm, setSvc, setServiceSearchQuery, setPart, setPartSearchQuery, onServiceSelect, onPartSelect])
+  }, [items, services, instrumentForm.instrument, setSvc, setServiceSearchQuery, setServiceSearchFocused, setPart, setPartSearchQuery, onPartSelect, populateInstrumentFormFromItems])
+  
+  // Resetează toate formularele la starea inițială
+  const onClearForm = useCallback(() => {
+    // Resetează formularul de serviciu
+    setSvc({
+      id: '',
+      name: '',
+      price: 0,
+      qty: '1',
+      discount: '0',
+      instrumentId: '',
+      selectedBrands: []
+    })
+    setServiceSearchQuery('')
+    setServiceSearchFocused(false)
+    
+    // Resetează formularul de piesă
+    setPart({
+      id: '',
+      name: '',
+      price: 0,
+      qty: '1',
+      serialNumberId: ''
+    })
+    setPartSearchQuery('')
+    setPartSearchFocused(false)
+    
+    toast.info('Formularele au fost resetate')
+  }, [setSvc, setServiceSearchQuery, setServiceSearchFocused, setPart, setPartSearchQuery, setPartSearchFocused])
   
   const onBrandToggle = useCallback((brandKey: string, checked: boolean) => {
     setSvc((prev: any) => {
@@ -944,6 +926,7 @@ export function usePreturiBusiness({
     onPartSelect,
     onPartDoubleClick,
     onRowClick,
+    onClearForm,
     onBrandToggle,
     
     // TrayTabs callbacks

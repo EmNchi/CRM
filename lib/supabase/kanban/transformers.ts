@@ -61,6 +61,8 @@ export function transformLeadToKanbanItem(
     address: lead.address || null,
     address2: lead.address2 || null,
     zip: lead.zip || null,
+    strada: lead.strada || null,
+    judet: lead.judet || null,
   }
 }
 
@@ -116,6 +118,8 @@ export function transformServiceFileToKanbanItem(
     address: lead?.address || null,
     address2: lead?.address2 || null,
     zip: lead?.zip || null,
+    strada: lead?.strada || null,
+    judet: lead?.judet || null,
   }
 }
 
@@ -182,6 +186,8 @@ export function transformTrayToKanbanItem(
     address: lead?.address || null,
     address2: lead?.address2 || null,
     zip: lead?.zip || null,
+    strada: lead?.strada || null,
+    judet: lead?.judet || null,
   }
 }
 

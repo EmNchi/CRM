@@ -490,46 +490,35 @@ export function usePreturiTrayOperations({
           setItems(qi ?? [])
         }
         
-        // console.log('[handleMoveInstrument] STEP 8: Verificare ștergere tăviță undefined')
-        if (isReceptiePipeline) {
-          const currentUndefinedTray = updatedQuotes.find((q: any) => !q.number || q.number === '')
-          // console.log('[handleMoveInstrument] STEP 9: Tăviță undefined găsită:', !!currentUndefinedTray)
+        // Verificare ștergere tăviță undefined (fără număr) - se aplică în toate pipeline-urile
+        const currentUndefinedTray = updatedQuotes.find((q: any) => !q.number || q.number === '')
+        
+        if (currentUndefinedTray) {
+          const [undefinedTrayItems, undefinedTrayImages] = await Promise.all([
+            listQuoteItems(currentUndefinedTray.id, services, instruments, pipelinesWithIds),
+            listTrayImages(currentUndefinedTray.id)
+          ])
           
-          if (currentUndefinedTray) {
-            const [undefinedTrayItems, undefinedTrayImages] = await Promise.all([
-              listQuoteItems(currentUndefinedTray.id, services, instruments, pipelinesWithIds),
-              listTrayImages(currentUndefinedTray.id)
-            ])
-            // console.log('[handleMoveInstrument] Items în tăviță undefined:', undefinedTrayItems?.length || 0)
-            // console.log('[handleMoveInstrument] Imagini în tăviță undefined:', undefinedTrayImages?.length || 0)
-            
-            // Ștergem tăvița undefined DOAR dacă este goală (nu are nici items, nici imagini)
-            if ((!undefinedTrayItems || undefinedTrayItems.length === 0) && (!undefinedTrayImages || undefinedTrayImages.length === 0)) {
-              // console.log('[handleMoveInstrument] STEP 11: Ștergere tăviță undefined')
-              try {
-                const { success, error } = await deleteTray(currentUndefinedTray.id)
-                if (success && !error) {
-                  const { data: refreshedQuotesData } = await listTraysForServiceFile(fisaId)
-                  const refreshedQuotes = refreshedQuotesData || []
-                  setQuotes(refreshedQuotes)
-                  
-                  if (selectedQuoteId === currentUndefinedTray.id) {
-                    if (refreshedQuotes.length > 0) {
-                      setSelectedQuoteId(refreshedQuotes[0].id)
-                    } else {
-                      setSelectedQuoteId(null)
-                    }
+          // Ștergem tăvița undefined DOAR dacă este goală (nu are nici items, nici imagini)
+          if ((!undefinedTrayItems || undefinedTrayItems.length === 0) && (!undefinedTrayImages || undefinedTrayImages.length === 0)) {
+            try {
+              const { success, error } = await deleteTray(currentUndefinedTray.id)
+              if (success && !error) {
+                const { data: refreshedQuotesData } = await listTraysForServiceFile(fisaId)
+                const refreshedQuotes = refreshedQuotesData || []
+                setQuotes(refreshedQuotes)
+                
+                if (selectedQuoteId === currentUndefinedTray.id) {
+                  if (refreshedQuotes.length > 0) {
+                    setSelectedQuoteId(refreshedQuotes[0].id)
+                  } else {
+                    setSelectedQuoteId(null)
                   }
-                } else {
-                  // IMPORTANT: Nu logăm error direct pentru a evita referințe circulare
-                  const errMsg = error?.message || error?.code || 'Eroare necunoscută'
-                  // console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
                 }
-              } catch (deleteError: any) {
-                // IMPORTANT: Nu logăm deleteError direct pentru a evita referințe circulare
-                const errMsg = deleteError?.message || deleteError?.code || 'Eroare necunoscută'
-                // console.log('[handleMoveInstrument] Eroare la ștergerea tăviței undefined:', errMsg)
+                toast.success('Tăvița nesemnată a fost ștearsă automat')
               }
+            } catch (deleteError: any) {
+              // Eroare la ștergerea tăviței - nu blocăm fluxul principal
             }
           }
         }

@@ -393,9 +393,11 @@ export function usePreturiItemOperations({
       }
     }
     
-    if (isVanzariPipeline && svc.selectedBrands && svc.selectedBrands.length > 0) {
-      // În Vanzari, creăm un SINGUR serviciu cu TOATE brand-urile selectate
-      const brandsToProcess = svc.selectedBrands
+    // În Vanzari pipeline, ÎNTOTDEAUNA folosim logica cu selectedBrands
+    // Chiar dacă selectedBrands este gol, salvăm serviciul fără seriale
+    if (isVanzariPipeline) {
+      // În Vanzari, creăm un serviciu cu DOAR brand-urile/serialele selectate
+      const brandsToProcess = Array.isArray(svc.selectedBrands) ? svc.selectedBrands : []
       
       // Calculează cantitatea totală bazat pe numărul de serial numbers care NU sunt goale
       // IMPORTANT: Nu folosim brandQty, ci numărăm doar serial numbers-urile care au valori

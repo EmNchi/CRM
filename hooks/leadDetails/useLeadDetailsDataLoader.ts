@@ -253,33 +253,63 @@ export function useLeadDetailsDataLoader({
   // Încarcă toate tăvițele pentru lead în pipeline-urile departament
   useEffect(() => {
     if (!isDepartmentPipeline) return
-    if (!leadIdMemo) return
+    // Dacă nu avem leadIdMemo dar avem trayIdMemo, încărcăm direct din tray
+    if (!leadIdMemo && !trayIdMemo) return
     
     let isMounted = true
     
     const loadTrays = async () => {
       setLoadingTrays(true)
       try {
-        const sheets = await loadServiceSheets(leadIdMemo)
-        if (!isMounted) return
+        let allTraysList: Array<{ id: string; number: string; size: string; service_file_id: string }> = []
         
-        // OPTIMIZARE: Încarcă toate tăvițele din toate service_files în paralel
-        // În loc de loop secvențial, folosim Promise.all pentru paralelizare
-        const allTraysList: Array<{ id: string; number: string; size: string; service_file_id: string }> = []
-        
-        if (sheets.length > 0) {
-          const traysPromises = sheets.map(sheet => listTraysForServiceSheet(sheet.id))
-          const traysResults = await Promise.all(traysPromises)
+        // Dacă avem leadIdMemo, încărcăm toate tăvițele din toate service_files
+        if (leadIdMemo) {
+          const sheets = await loadServiceSheets(leadIdMemo)
+          if (!isMounted) return
           
-          traysResults.forEach((trays, index) => {
-            const sheet = sheets[index]
-            allTraysList.push(...trays.map((t: any) => ({
-              id: t.id,
-              number: t.number,
-              size: t.size,
-              service_file_id: sheet.id
-            })))
-          })
+          // OPTIMIZARE: Încarcă toate tăvițele din toate service_files în paralel
+          // În loc de loop secvențial, folosim Promise.all pentru paralelizare
+          if (sheets.length > 0) {
+            const traysPromises = sheets.map(sheet => listTraysForServiceSheet(sheet.id))
+            const traysResults = await Promise.all(traysPromises)
+            
+            traysResults.forEach((trays, index) => {
+              const sheet = sheets[index]
+              allTraysList.push(...trays.map((t: any) => ({
+                id: t.id,
+                number: t.number,
+                size: t.size,
+                service_file_id: sheet.id
+              })))
+            })
+          }
+        } else if (trayIdMemo) {
+          // Dacă nu avem leadIdMemo dar avem trayIdMemo, încărcăm direct informațiile tray-ului
+          // Aceasta rezolvă cazul când cardul tray nu are leadId în relație
+          const { data: trayData, error: trayError } = await supabaseClient
+            .from('trays')
+            .select('id, number, size, service_file_id, service_file:service_files!inner(lead_id)')
+            .eq('id', trayIdMemo)
+            .single()
+          
+          if (!isMounted) return
+          
+          if (!trayError && trayData) {
+            allTraysList.push({
+              id: trayData.id,
+              number: trayData.number,
+              size: trayData.size,
+              service_file_id: trayData.service_file_id
+            })
+            
+            // Setăm direct selectedFisaId și selectedTrayId
+            setSelectedTrayId(trayIdMemo)
+            setSelectedFisaId(trayData.service_file_id)
+            setAllTrays(allTraysList)
+            setLoadingTrays(false)
+            return // Return devreme pentru că am setat tot ce trebuia
+          }
         }
         
         if (!isMounted) return
