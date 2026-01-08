@@ -253,20 +253,18 @@ export function DepartmentView({
       return
     }
 
-    if (!fisaId) {
+    // Dacă nu avem nici fisaId nici selectedQuoteId, nu putem rezolva lead_id
+    if (!fisaId && !selectedQuoteId) {
       setResolvedLeadId(null)
       return
     }
 
-    async function getLeadIdFromFisa() {
+    async function getLeadIdFromTrayOrFisa() {
       try {
-        // fisaId poate fi service_file_id (ReceptieView) sau trebuie obținut din tray (DepartmentView)
-        // În DepartmentView, selectedQuoteId = tray_id, deci trebuie să mergem tray -> service_file -> lead
-        
-        let serviceFileId = fisaId
-        
-        // Dacă suntem în DepartmentView și avem selectedQuoteId (tray_id), obținem service_file_id din tray
-        if (selectedQuoteId && selectedQuoteId !== fisaId) {
+        let serviceFileId: string | null = fisaId || null
+
+        // Dacă avem selectedQuoteId (tray_id), obținem service_file_id din tray
+        if (selectedQuoteId) {
           const { data: trayData, error: trayError } = await supabaseBrowser()
             .from('trays')
             .select('service_file_id')
@@ -278,7 +276,12 @@ export function DepartmentView({
           }
         }
 
-        // Acum obținem lead_id din service_file
+        if (!serviceFileId) {
+          console.error('No service_file_id found')
+          return
+        }
+
+        // Obținem lead_id din service_file
         const { data, error } = await supabaseBrowser()
           .from('service_files')
           .select('lead_id')
@@ -286,14 +289,15 @@ export function DepartmentView({
           .single()
 
         if (!error && data?.lead_id) {
+          console.log('✅ Resolved lead_id:', data.lead_id)
           setResolvedLeadId(data.lead_id)
         }
       } catch (err) {
-        console.error('Error fetching lead_id from service_file/tray:', err)
+        console.error('Error fetching lead_id:', err)
       }
     }
 
-    getLeadIdFromFisa()
+    getLeadIdFromTrayOrFisa()
   }, [leadId, fisaId, selectedQuoteId])
 
   return (
