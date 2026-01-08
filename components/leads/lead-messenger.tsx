@@ -213,16 +213,16 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
         return techData.name
       }
 
-      // 2. Caută în app_members pentru email (și eventual display_name dacă exista)
+      // 2. Caută în app_members pentru name (care e username-ul)
       const { data: memberData } = await supabase
         .from('app_members')
-        .select('email, display_name')
+        .select('name, email')
         .eq('user_id', senderId)
         .single()
 
       if (memberData) {
-        // Prioritate: display_name > email prefix
-        const displayName = memberData.display_name || memberData.email?.split('@')[0] || 'User'
+        // Prioritate: name (username) > email prefix
+        const displayName = memberData.name || memberData.email?.split('@')[0] || 'User'
         setSenderNamesCache((prev) => ({ ...prev, [senderId]: displayName }))
         return displayName
       }
