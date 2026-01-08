@@ -46,6 +46,8 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   const [showMentions, setShowMentions] = useState(false)
   const [mentionQuery, setMentionQuery] = useState('')
   const [messageAttachments, setMessageAttachments] = useState<Record<string, any[]>>({})
+  const [showTrayImagePicker, setShowTrayImagePicker] = useState(false)
+  const [trayImages, setTrayImages] = useState<Array<{ id: string; file_path: string }>>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -70,6 +72,24 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       }
       reader.readAsDataURL(file)
     })
+  }, [])
+
+  // Attach tray image
+  const handleAttachTrayImage = useCallback((imagePath: string) => {
+    // Obține public URL din storage
+    const publicUrl = supabase.storage.from('tray_images').getPublicUrl(imagePath).data.publicUrl
+    
+    // Creează un fake File object pentru a-l salva ca attachment
+    setAttachedImages((prev) => [
+      ...prev,
+      {
+        file: new File([publicUrl], imagePath, { type: 'image/reference' }),
+        preview: publicUrl,
+      },
+    ])
+    
+    setShowTrayImagePicker(false)
+    toast.success('Imagine adăugată din tăviță')
   }, [])
 
   // Remove attached image
@@ -440,6 +460,48 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     loadAttachments()
   }, [messages])
 
+  // Load tray images din conversație pentru picker
+  useEffect(() => {
+    async function loadTrayImages() {
+      if (!conversationId) return
+
+      try {
+        // Cauta tray-ul asociat conversației
+        const { data: convData } = await supabase
+          .from('conversations')
+          .select('related_id')
+          .eq('id', conversationId)
+          .single()
+
+        if (!convData?.related_id) return
+
+        // Cauta tray-ul din fișa de serviciu
+        const { data: trayData } = await supabase
+          .from('quotes')
+          .select('id')
+          .eq('service_file_id', convData.related_id)
+          .limit(1)
+          .single()
+
+        if (!trayData?.id) return
+
+        // Cauta imaginile din tray
+        const { data: imagesData } = await supabase
+          .from('tray_images')
+          .select('id, file_path')
+          .eq('quote_id', trayData.id)
+
+        if (imagesData) {
+          setTrayImages(imagesData)
+        }
+      } catch (error) {
+        console.error('Error loading tray images:', error)
+      }
+    }
+
+    loadTrayImages()
+  }, [conversationId])
+
   // scroll la ultimul mesaj cu debounce pentru performanta
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -474,6 +536,12 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       // Upload imagini atasate
       if (attachedImages.length > 0) {
         for (const { file } of attachedImages) {
+          // Daca e imagine din tray (reference), nu mai upload, e deja in storage
+          if (file.type === 'image/reference') {
+            uploadedImageUrls.push(file.name) // file.name conține file_path-ul
+            continue
+          }
+
           const fileExt = file.name.split('.').pop()
           const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${fileExt}`
           const filePath = `messages/${conversationId}/${fileName}`
@@ -922,26 +990,63 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
               )}
             </div>
 
-            {/* Attach Image Button */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={sending || !conversationId || loading}
-              size="icon"
-              className="shrink-0 relative"
-              title="Atașează imagini"
-            >
-              <Paperclip className="h-4 w-4" />
-            </button>
+            {/* Attach Image Button - cu picker pentru imagini din tăviță */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowTrayImagePicker(!showTrayImagePicker)}
+                disabled={sending || !conversationId || loading}
+                className="p-2 rounded hover:bg-muted/50 transition-colors shrink-0"
+                title="Atașează imagini din tăviță"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={handleAttachImage}
-              className="hidden"
-            />
+              {/* Picker pentru imagini din tăviță */}
+              {showTrayImagePicker && trayImages.length > 0 && (
+                <div className="absolute bottom-full right-0 mb-2 bg-popover border rounded-lg shadow-lg p-2 z-50 max-w-sm">
+                  <div className="text-xs font-semibold text-muted-foreground mb-2">
+                    Imagini din tăviță ({trayImages.length}):
+                  </div>
+                  <div className="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto">
+                    {trayImages.map((img) => (
+                      <button
+                        key={img.id}
+                        type="button"
+                        onClick={() => handleAttachTrayImage(img.file_path)}
+                        className="group relative"
+                      >
+                        <img
+                          src={supabase.storage.from('tray_images').getPublicUrl(img.file_path).data.publicUrl}
+                          alt="tray image"
+                          className="h-16 w-16 object-cover rounded border border-muted hover:border-primary transition-colors"
+                        />
+                        <div className="absolute inset-0 bg-black/40 rounded opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="text-white text-xs">+</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full mt-2 text-xs py-1 px-2 bg-muted hover:bg-muted/80 rounded transition-colors"
+                  >
+                    Sau upload...
+                  </button>
+                </div>
+              )}
+
+              {/* File input pentru upload */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleAttachImage}
+                className="hidden"
+              />
+            </div>
 
             <Button
               type="submit"
