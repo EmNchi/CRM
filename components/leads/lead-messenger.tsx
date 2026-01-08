@@ -278,17 +278,44 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
     async function ensureConversation() {
       try {
-        // Determină related_id și type pe baza selectedQuoteId
-        const relatedId = selectedQuoteId || leadId
-        const conversationType = selectedQuoteId ? 'tray' : 'lead'
+        // Pentru conversations, totdeauna folosim leadId ca related_id
+        // Pentru a diferenția între lead și tray conversations, folosim un prefix în metadata
+        const relatedId = leadId
+        const conversationType = 'lead'
+        
+        // Construim un identificator unic pentru tray conversation
+        // Dacă avem selectedQuoteId, adăugăm un prefix
+        const conversationKey = selectedQuoteId ? `tray_${selectedQuoteId}` : `lead_${leadId}`
+
+        console.log('Creating conversation:', { relatedId, conversationType, conversationKey, selectedQuoteId })
 
         // Încearcă să găsești conversația existentă
-        const { data: convData } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('related_id', relatedId)
-          .eq('type', conversationType)
-          .single()
+        // Căutăm prin metadata sau o combinație de filtre
+        let convData = null
+        
+        if (selectedQuoteId) {
+          // Pentru tray conversations, căutăm cu un query mai specific
+          const { data: allConvs } = await supabase
+            .from('conversations')
+            .select('id, metadata')
+            .eq('related_id', leadId)
+            .eq('type', 'lead')
+          
+          if (allConvs) {
+            convData = allConvs.find(c => c.metadata?.tray_id === selectedQuoteId)
+          }
+        } else {
+          // Pentru lead conversations, căutăm normal
+          const { data } = await supabase
+            .from('conversations')
+            .select('id')
+            .eq('related_id', leadId)
+            .eq('type', 'lead')
+            .is('metadata', null) // Fără tray_id
+            .single()
+          
+          convData = data
+        }
 
         if (convData) {
           setConversationId(convData.id)
@@ -303,6 +330,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
             related_id: relatedId,
             type: conversationType,
             created_by: user.id,
+            metadata: selectedQuoteId ? { tray_id: selectedQuoteId } : null,
           })
           .select('id')
           .single()
