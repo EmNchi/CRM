@@ -323,54 +323,6 @@ export async function moveLeadToPipeline(
     if (pipeline?.name) {
       await assignDepartmentTagToLead(leadId, pipeline.name)
     }
-
-    // ✅ TRIGGER: Crează conversație PUBLICĂ dacă nu există deja
-    try {
-      console.log('🔍 Creating conversation for moved lead:', leadId)
-      
-      // Obține current user ID
-      const { data: { session } } = await supabase.auth.getSession()
-      const currentUserId = session?.user?.id
-      
-      if (!currentUserId) {
-        console.warn('⚠️ No authenticated user found - cannot create conversation')
-      } else {
-        // Verifică dacă conversația deja există
-        const { data: existingConv, error: searchError } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('related_id', leadId)
-          .eq('type', 'lead')
-          .maybeSingle()
-
-        if (searchError && searchError.code !== 'PGRST116') {
-          console.warn('⚠️ Error searching for conversation:', searchError)
-        } else if (!existingConv) {
-          // Conversația nu există, crează-o
-          console.log('➕ Creating new conversation for lead:', leadId)
-          const { data: newConv, error: insertError } = await supabase
-            .from('conversations')
-            .insert({
-              related_id: leadId,
-              type: 'lead',
-              created_by: currentUserId,
-            })
-            .select('id')
-            .single()
-
-          if (insertError) {
-            console.error('❌ Error creating conversation:', insertError)
-          } else {
-            console.log('✅ Conversation created successfully for moved lead:', newConv?.id)
-          }
-        } else {
-          console.log('✅ Conversation already exists for lead:', existingConv.id)
-        }
-      }
-    } catch (convError) {
-      console.error('⚠️ Error in conversation creation process:', convError)
-      // Nu oprim procesul dacă crearea conversației eșuează
-    }
   }
 
   return result
