@@ -260,22 +260,41 @@ export function DepartmentView({
 
     async function getLeadIdFromFisa() {
       try {
+        // fisaId poate fi service_file_id (ReceptieView) sau trebuie obținut din tray (DepartmentView)
+        // În DepartmentView, selectedQuoteId = tray_id, deci trebuie să mergem tray -> service_file -> lead
+        
+        let serviceFileId = fisaId
+        
+        // Dacă suntem în DepartmentView și avem selectedQuoteId (tray_id), obținem service_file_id din tray
+        if (selectedQuoteId && selectedQuoteId !== fisaId) {
+          const { data: trayData, error: trayError } = await supabaseBrowser()
+            .from('trays')
+            .select('service_file_id')
+            .eq('id', selectedQuoteId)
+            .single()
+
+          if (!trayError && trayData?.service_file_id) {
+            serviceFileId = trayData.service_file_id
+          }
+        }
+
+        // Acum obținem lead_id din service_file
         const { data, error } = await supabaseBrowser()
           .from('service_files')
           .select('lead_id')
-          .eq('id', fisaId)
+          .eq('id', serviceFileId)
           .single()
 
         if (!error && data?.lead_id) {
           setResolvedLeadId(data.lead_id)
         }
       } catch (err) {
-        console.error('Error fetching lead_id from service_file:', err)
+        console.error('Error fetching lead_id from service_file/tray:', err)
       }
     }
 
     getLeadIdFromFisa()
-  }, [leadId, fisaId])
+  }, [leadId, fisaId, selectedQuoteId])
 
   return (
     <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden pb-4">
