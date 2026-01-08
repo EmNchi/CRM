@@ -21,6 +21,7 @@ interface LeadMessengerSectionProps {
   leadTechnician?: string | null
   quotes?: Quote[]
   selectedQuoteId?: string | null
+  isDepartmentPipeline?: boolean
 }
 
 export function LeadMessengerSection({
@@ -30,12 +31,38 @@ export function LeadMessengerSection({
   leadTechnician,
   quotes = [],
   selectedQuoteId,
+  isDepartmentPipeline = false,
 }: LeadMessengerSectionProps) {
   const [selectedTrayId, setSelectedTrayId] = useState<string | null>(selectedQuoteId || null)
 
   if (!leadId) return null
 
-  // Dacă nu sunt quotes, arată direct messengeru
+  // Pentru Departament Tehnic - arată direct messengeru pentru tăviță deschisă
+  if (isDepartmentPipeline) {
+    return (
+      <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
+        <div className="rounded-lg border bg-muted/30">
+          <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors rounded-t-lg">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-primary" />
+              <span className="font-medium text-sm">Mesagerie</span>
+            </div>
+            {isMessengerOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </CollapsibleTrigger>
+          
+          <CollapsibleContent className="px-3 pb-3">
+            {selectedQuoteId ? (
+              <LeadMessenger leadId={leadId} leadTechnician={leadTechnician} selectedQuoteId={selectedQuoteId} />
+            ) : (
+              <p className="text-xs text-muted-foreground">Selectează o tăviță din lista de mai sus</p>
+            )}
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+    )
+  }
+
+  // Dacă nu sunt quotes, arată direct messengeru (pentru alte contexte)
   if (!quotes || quotes.length === 0) {
     return (
       <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
@@ -56,7 +83,7 @@ export function LeadMessengerSection({
     )
   }
 
-  // Pentru receptie - arată meniu cu tăvițe
+  // Pentru Receptie - arată meniu cu tăvițe pentru selectare
   return (
     <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
       <div className="rounded-lg border bg-muted/30">
@@ -69,7 +96,7 @@ export function LeadMessengerSection({
         </CollapsibleTrigger>
         
         <CollapsibleContent className="px-3 pb-3 space-y-3">
-          {/* Meniu cu tăvițe */}
+          {/* Meniu cu tăvițe - doar pentru Receptie */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">Selectează Tăviță</label>
             <Select value={selectedTrayId || ''} onValueChange={setSelectedTrayId}>

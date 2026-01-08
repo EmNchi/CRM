@@ -963,6 +963,7 @@ export function LeadDetailsPanel({
                     leadTechnician={lead.technician}
                     quotes={trayTabsData.quotes}
                     selectedQuoteId={trayTabsData.selectedQuoteId}
+                    isDepartmentPipeline={isDepartmentPipeline}
                   />
                 ) : (
                   <div className="flex items-center justify-center py-12">
