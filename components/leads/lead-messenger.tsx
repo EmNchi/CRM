@@ -5,7 +5,7 @@ import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Send, MessageSquare, Loader2, User, Paperclip, X, AtSign } from 'lucide-react'
+import { Send, MessageSquare, Loader2, User, Paperclip, X, AtSign, Wrench, Tag, Users } from 'lucide-react'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns'
 import { ro } from 'date-fns/locale/ro'
@@ -84,30 +84,66 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
     }
 
     const mentionText = text.substring(lastAtIndex + 1).toLowerCase()
-    if (mentionText.length === 0) {
-      setShowMentions(false)
-      return
-    }
 
     // Cauta in DB pentru servicii, taguri, etc.
     async function fetchSuggestions() {
       try {
         const suggestions: Array<{ id: string; name: string; type: string }> = []
 
-        // Cauta servicii
+        // Cauta servicii din tray_items
         const { data: servicesData } = await supabase
           .from('tray_items')
           .select('id, item_name')
           .ilike('item_name', `%${mentionText}%`)
-          .limit(5)
+          .limit(8) as any
 
-        if (servicesData) {
-          servicesData.forEach((s: any) => {
-            suggestions.push({
-              id: s.id,
-              name: s.item_name || 'Serviciu',
-              type: 'serviciu',
-            })
+        if (servicesData && Array.isArray(servicesData)) {
+          (servicesData as any[]).forEach((s: any) => {
+            if (s.item_name) {
+              suggestions.push({
+                id: s.id,
+                name: s.item_name,
+                type: 'serviciu',
+              })
+            }
+          })
+        }
+
+        // Cauta taguri din lead_tags
+        const { data: tagsData } = await (supabase
+          .from('lead_tags')
+          .select('id, tag_name')
+          .ilike('tag_name', `%${mentionText}%`)
+          .limit(5) as any)
+
+        if (tagsData && Array.isArray(tagsData)) {
+          (tagsData as any[]).forEach((t: any) => {
+            if (t.tag_name) {
+              suggestions.push({
+                id: t.id,
+                name: t.tag_name,
+                type: 'tag',
+              })
+            }
+          })
+        }
+
+        // Cauta contacte/tehnicienii
+        const { data: techniciansData } = await (supabase
+          .from('technicians')
+          .select('id, name')
+          .ilike('name', `%${mentionText}%`)
+          .limit(5) as any)
+
+        if (techniciansData && Array.isArray(techniciansData)) {
+          (techniciansData as any[]).forEach((t: any) => {
+            if (t.name) {
+              suggestions.push({
+                id: t.id,
+                name: t.name,
+                type: 'tehnician',
+              })
+            }
           })
         }
 
@@ -118,9 +154,8 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       }
     }
 
-    if (mentionText.length >= 2) {
-      fetchSuggestions()
-    }
+    // Arata toate sugestiile odata cand apesi @, sau filtreaza daca scrii text
+    fetchSuggestions()
   }, [])
 
   // Insert mention
@@ -784,19 +819,50 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
 
           {/* Mention suggestions */}
           {showMentions && mentionSuggestions.length > 0 && (
-            <div className="bg-muted border rounded p-2 space-y-1">
-              {mentionSuggestions.map((suggestion) => (
-                <button
-                  key={`${suggestion.type}-${suggestion.id}`}
-                  type="button"
-                  onClick={() => insertMention(suggestion)}
-                  className="w-full text-left px-2 py-1 hover:bg-muted-foreground/20 rounded text-sm flex items-center gap-2"
-                >
-                  <AtSign className="h-3 w-3" />
-                  <span>{suggestion.name}</span>
-                  <span className="text-xs text-muted-foreground">{suggestion.type}</span>
-                </button>
-              ))}
+            <div className="bg-muted border border-muted-foreground/20 rounded-lg p-2 space-y-1 max-h-[200px] overflow-y-auto">
+              <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
+                Mențiuni disponibile:
+              </div>
+              {mentionSuggestions.map((suggestion) => {
+                const getIcon = () => {
+                  switch (suggestion.type) {
+                    case 'serviciu':
+                      return <Wrench className="h-3 w-3" />
+                    case 'tag':
+                      return <Tag className="h-3 w-3" />
+                    case 'tehnician':
+                      return <Users className="h-3 w-3" />
+                    default:
+                      return <AtSign className="h-3 w-3" />
+                  }
+                }
+
+                const getColor = () => {
+                  switch (suggestion.type) {
+                    case 'serviciu':
+                      return 'text-blue-500'
+                    case 'tag':
+                      return 'text-amber-500'
+                    case 'tehnician':
+                      return 'text-purple-500'
+                    default:
+                      return 'text-muted-foreground'
+                  }
+                }
+
+                return (
+                  <button
+                    key={`${suggestion.type}-${suggestion.id}`}
+                    type="button"
+                    onClick={() => insertMention(suggestion)}
+                    className="w-full text-left px-2 py-1.5 hover:bg-primary/10 rounded text-sm flex items-center gap-2 transition-colors"
+                  >
+                    <span className={getColor()}>{getIcon()}</span>
+                    <span className="font-medium truncate">{suggestion.name}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">{suggestion.type}</span>
+                  </button>
+                )
+              })}
             </div>
           )}
 
