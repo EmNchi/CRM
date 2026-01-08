@@ -37,8 +37,8 @@ export function LeadMessengerSection({
 
   if (!leadId) return null
 
-  // Pentru Departament Tehnic - arată direct messengeru pentru tăviță deschisă
-  if (isDepartmentPipeline) {
+  // Pentru departament tehnic - arată direct conversația din tăviță deschisă
+  if (isDepartmentPipeline && selectedQuoteId) {
     return (
       <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
         <div className="rounded-lg border bg-muted/30">
@@ -51,18 +51,18 @@ export function LeadMessengerSection({
           </CollapsibleTrigger>
           
           <CollapsibleContent className="px-3 pb-3">
-            {selectedQuoteId ? (
-              <LeadMessenger leadId={leadId} leadTechnician={leadTechnician} selectedQuoteId={selectedQuoteId} />
-            ) : (
-              <p className="text-xs text-muted-foreground">Selectează o tăviță din lista de mai sus</p>
-            )}
+            <LeadMessenger 
+              leadId={leadId} 
+              leadTechnician={leadTechnician} 
+              selectedQuoteId={selectedQuoteId}
+            />
           </CollapsibleContent>
         </div>
       </Collapsible>
     )
   }
 
-  // Dacă nu sunt quotes, arată direct messengeru (pentru alte contexte)
+  // Dacă nu sunt quotes, arată direct messengeru (compatibilitate backward)
   if (!quotes || quotes.length === 0) {
     return (
       <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
@@ -83,7 +83,7 @@ export function LeadMessengerSection({
     )
   }
 
-  // Pentru Receptie - arată meniu cu tăvițe pentru selectare
+  // Pentru receptie - arată meniu cu tăvițe pentru a selecta conversația
   return (
     <Collapsible open={isMessengerOpen} onOpenChange={setIsMessengerOpen}>
       <div className="rounded-lg border bg-muted/30">
@@ -96,7 +96,7 @@ export function LeadMessengerSection({
         </CollapsibleTrigger>
         
         <CollapsibleContent className="px-3 pb-3 space-y-3">
-          {/* Meniu cu tăvițe - doar pentru Receptie */}
+          {/* Meniu cu tăvițe - doar pentru receptie */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">Selectează Tăviță</label>
             <Select value={selectedTrayId || ''} onValueChange={setSelectedTrayId}>
