@@ -262,7 +262,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
   }, [user])
 
   // Inițializează conversația la primul load
-  // CAUTA conversația existentă (creată automat când se creează lead-ul)
+  // CAUTA conversația existentă (creată automat când se creează/mută lead-ul)
   useEffect(() => {
     if (!leadId || !user) return
 
@@ -290,7 +290,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
           if (isMounted.current) setConversationId(convData.id)
           conversationInitializedRef.current = true
         } else {
-          console.log('No conversation found for lead - it should have been created when lead was created.')
+          console.log('No conversation found for lead yet.')
           conversationInitializedRef.current = true
         }
 
@@ -304,6 +304,38 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     if (!conversationId) {
       loadConversation()
     }
+  }, [leadId, user, conversationId])
+
+  // Polling: Reîncarcă conversația la fiecare 2 secunde dacă nu o găsim
+  useEffect(() => {
+    if (conversationId || !leadId || !user) return
+
+    const interval = setInterval(async () => {
+      try {
+        console.log('🔄 Polling for conversation...', leadId)
+        const { data: convData, error } = await (supabase
+          .from('conversations')
+          .select('id')
+          .eq('related_id', leadId)
+          .eq('type', 'lead')
+          .maybeSingle() as any)
+
+        if (error) {
+          console.log('⚠️ Polling error (expected if not found):', error.code)
+          return
+        }
+
+        if (convData && isMounted.current) {
+          console.log('✅ Found conversation via polling:', convData.id)
+          setConversationId(convData.id)
+          conversationInitializedRef.current = true
+        }
+      } catch (error) {
+        console.error('Polling exception:', error)
+      }
+    }, 2000) // Check every 2 seconds
+
+    return () => clearInterval(interval)
   }, [leadId, user, conversationId])
 
   // incarca mesajele pentru acest lead
