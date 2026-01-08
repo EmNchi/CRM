@@ -510,6 +510,7 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
       isCommercialPipeline={pipeline.isCommercialPipeline}
       
       // Data
+      leadId={leadId}
       lead={leadProp || null}
       quotes={state.quotes}
       selectedQuoteId={state.selectedQuoteId}

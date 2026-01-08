@@ -10,6 +10,7 @@ import { TotalsSection } from '../sections/TotalsSection'
 import { TrayImagesSection } from '../sections/TrayImagesSection'
 import { TrayTabs } from '../sections/TrayTabs'
 import { TrayDetailsSection } from '../sections/TrayDetailsSection'
+import LeadMessenger from '@/components/leads/lead-messenger'
 import type { LeadQuoteItem, LeadQuote } from '@/lib/types/preturi'
 import type { Service } from '@/lib/supabase/serviceOperations'
 import type { Part } from '@/lib/supabase/partOperations'
@@ -17,6 +18,9 @@ import type { Technician } from '@/lib/types/preturi'
 import type { TrayImage } from '@/lib/supabase/imageOperations'
 
 interface DepartmentViewProps {
+  // Lead
+  leadId?: string | null
+  
   // State
   instrumentForm: { 
     instrument: string
@@ -138,6 +142,7 @@ interface DepartmentViewProps {
 }
 
 export function DepartmentView({
+  leadId,
   instrumentForm,
   instrumentSettings = {},
   svc,
@@ -267,6 +272,13 @@ export function DepartmentView({
           </div>
         </div>
       </div>
+
+      {/* Mesagerie - vizibilă pentru toți */}
+      {leadId && (
+        <div className="px-4">
+          <LeadMessenger leadId={leadId} />
+        </div>
+      )}
 
       {/* TrayTabs - butoanele pentru tăviță */}
       {quotes.length > 0 && (

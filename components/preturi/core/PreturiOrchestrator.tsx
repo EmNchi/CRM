@@ -42,6 +42,7 @@ interface PreturiOrchestratorProps {
   isCommercialPipeline: boolean
   
   // Data
+  leadId?: string | null
   lead: Lead | null
   quotes: LeadQuote[]
   selectedQuoteId: string | null
@@ -538,6 +539,8 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
     return (
       <>
         <DepartmentView
+          // Lead
+          leadId={props.leadId || null}
           // Form state
           instrumentForm={props.instrumentForm}
           instrumentSettings={props.instrumentSettings}
