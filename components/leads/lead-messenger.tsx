@@ -44,11 +44,13 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   const [attachedImages, setAttachedImages] = useState<Array<{ file: File; preview: string }>>([])
   const [mentionSuggestions, setMentionSuggestions] = useState<Array<{ id: string; name: string; type: string }>>([])
   const [showMentions, setShowMentions] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
   const [messageAttachments, setMessageAttachments] = useState<Record<string, any[]>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const conversationInitializedRef = useRef(false)
+  const isMounted = useRef(true)
 
   // Handle file attachment
   const handleAttachImage = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,97 +78,114 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   }, [])
 
   // Handle @mention suggestions
-  const handleMentionInput = useCallback((text: string) => {
+  const handleMentionInput = useCallback(async (text: string) => {
     const lastAtIndex = text.lastIndexOf('@')
+    
+    // Daca nu e @, ascunde dropdown
     if (lastAtIndex === -1) {
       setShowMentions(false)
+      setMentionQuery('')
       return
     }
 
-    const mentionText = text.substring(lastAtIndex + 1).toLowerCase()
-
-    // Cauta in DB pentru servicii, taguri, etc.
-    async function fetchSuggestions() {
-      try {
-        const suggestions: Array<{ id: string; name: string; type: string }> = []
-
-        // Cauta servicii din tray_items
-        const { data: servicesData } = await supabase
-          .from('tray_items')
-          .select('id, item_name')
-          .ilike('item_name', `%${mentionText}%`)
-          .limit(8) as any
-
-        if (servicesData && Array.isArray(servicesData)) {
-          (servicesData as any[]).forEach((s: any) => {
-            if (s.item_name) {
-              suggestions.push({
-                id: s.id,
-                name: s.item_name,
-                type: 'serviciu',
-              })
-            }
-          })
-        }
-
-        // Cauta taguri din lead_tags
-        const { data: tagsData } = await (supabase
-          .from('lead_tags')
-          .select('id, tag_name')
-          .ilike('tag_name', `%${mentionText}%`)
-          .limit(5) as any)
-
-        if (tagsData && Array.isArray(tagsData)) {
-          (tagsData as any[]).forEach((t: any) => {
-            if (t.tag_name) {
-              suggestions.push({
-                id: t.id,
-                name: t.tag_name,
-                type: 'tag',
-              })
-            }
-          })
-        }
-
-        // Cauta contacte/tehnicienii
-        const { data: techniciansData } = await (supabase
-          .from('technicians')
-          .select('id, name')
-          .ilike('name', `%${mentionText}%`)
-          .limit(5) as any)
-
-        if (techniciansData && Array.isArray(techniciansData)) {
-          (techniciansData as any[]).forEach((t: any) => {
-            if (t.name) {
-              suggestions.push({
-                id: t.id,
-                name: t.name,
-                type: 'tehnician',
-              })
-            }
-          })
-        }
-
-        setMentionSuggestions(suggestions)
-        setShowMentions(suggestions.length > 0)
-      } catch (error) {
-        console.error('Error fetching mention suggestions:', error)
-      }
+    // Extrage textul dupa @
+    const afterAt = text.substring(lastAtIndex + 1)
+    
+    // Daca am spatiu dupa @, inchidem dropdown
+    if (afterAt.includes(' ')) {
+      setShowMentions(false)
+      setMentionQuery('')
+      return
     }
 
-    // Arata toate sugestiile odata cand apesi @, sau filtreaza daca scrii text
-    fetchSuggestions()
+    setMentionQuery(afterAt.toLowerCase())
+
+    try {
+      const suggestions: Array<{ id: string; name: string; type: string }> = []
+      const searchTerm = `%${afterAt}%`
+
+      // Cauta servicii din tray_items
+      const { data: servicesData } = await (supabase
+        .from('tray_items')
+        .select('id, item_name')
+        .ilike('item_name', searchTerm)
+        .limit(5) as any)
+
+      if (servicesData && Array.isArray(servicesData)) {
+        (servicesData as any[]).forEach((s: any) => {
+          if (s.item_name) {
+            suggestions.push({
+              id: s.id,
+              name: s.item_name,
+              type: 'serviciu',
+            })
+          }
+        })
+      }
+
+      // Cauta taguri din lead_tags
+      const { data: tagsData } = await (supabase
+        .from('lead_tags')
+        .select('id, tag_name')
+        .ilike('tag_name', searchTerm)
+        .limit(3) as any)
+
+      if (tagsData && Array.isArray(tagsData)) {
+        (tagsData as any[]).forEach((t: any) => {
+          if (t.tag_name) {
+            suggestions.push({
+              id: t.id,
+              name: t.tag_name,
+              type: 'tag',
+            })
+          }
+        })
+      }
+
+      // Cauta tehnicienii
+      const { data: techniciansData } = await (supabase
+        .from('technicians')
+        .select('id, name')
+        .ilike('name', searchTerm)
+        .limit(3) as any)
+
+      if (techniciansData && Array.isArray(techniciansData)) {
+        (techniciansData as any[]).forEach((t: any) => {
+          if (t.name) {
+            suggestions.push({
+              id: t.id,
+              name: t.name,
+              type: 'tehnician',
+            })
+          }
+        })
+      }
+
+      setMentionSuggestions(suggestions)
+      setShowMentions(true) // Arata dropdown chiar daca e gol, pentru a arata "No results"
+    } catch (error) {
+      console.error('Error fetching mention suggestions:', error)
+    }
   }, [])
 
   // Insert mention
   const insertMention = useCallback((mention: { id: string; name: string; type: string }) => {
     const lastAtIndex = newMessage.lastIndexOf('@')
     const before = newMessage.substring(0, lastAtIndex)
-    const after = newMessage.substring(newMessage.lastIndexOf('@') + 1)
-    const afterText = after.substring(after.search(/\s/) === -1 ? after.length : after.search(/\s/))
+    const after = newMessage.substring(lastAtIndex + 1)
+    
+    // Gaseste pozitia spatiului dupa @mention
+    const spaceIndex = after.search(/\s/)
+    const afterMention = spaceIndex === -1 ? '' : after.substring(spaceIndex)
 
-    setNewMessage(`${before}@${mention.name} ${afterText}`)
+    setNewMessage(`${before}@${mention.name} ${afterMention}`)
     setShowMentions(false)
+    setMentionQuery('')
+    
+    // Focus back on textarea
+    setTimeout(() => {
+      textareaRef.current?.focus()
+    }, 0)
   }, [newMessage])
 
   // Obține numele expeditorului din sender_id
@@ -334,8 +353,6 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
   useEffect(() => {
     if (!leadId || !conversationId) return
 
-    let isMounted = true
-
     async function loadMessages() {
       setLoading(true)
       try {
@@ -348,13 +365,13 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
 
         if (error) {
           console.error('Error loading messages:', error.message || error)
-        } else if (isMounted) {
+        } else if (isMounted.current) {
           setMessages(data || [])
         }
       } catch (error) {
         console.error('Error loading messages:', error)
       } finally {
-        if (isMounted) {
+        if (isMounted.current) {
           setLoading(false)
         }
       }
@@ -374,7 +391,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          if (!isMounted) return
+          if (!isMounted.current) return
 
           if (payload.eventType === 'INSERT') {
             // Adaugă mesajul nou doar dacă nu e deja în lista (evita duplicate din optimistic update)
@@ -395,7 +412,7 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
       .subscribe()
 
     return () => {
-      isMounted = false
+      isMounted.current = false
       supabase.removeChannel(channel)
     }
   }, [leadId, conversationId])
@@ -817,52 +834,64 @@ export default function LeadMessenger({ leadId, leadTechnician }: LeadMessengerP
             </div>
           )}
 
-          {/* Mention suggestions */}
-          {showMentions && mentionSuggestions.length > 0 && (
-            <div className="bg-muted border border-muted-foreground/20 rounded-lg p-2 space-y-1 max-h-[200px] overflow-y-auto">
-              <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
-                Mențiuni disponibile:
-              </div>
-              {mentionSuggestions.map((suggestion) => {
-                const getIcon = () => {
-                  switch (suggestion.type) {
-                    case 'serviciu':
-                      return <Wrench className="h-3 w-3" />
-                    case 'tag':
-                      return <Tag className="h-3 w-3" />
-                    case 'tehnician':
-                      return <Users className="h-3 w-3" />
-                    default:
-                      return <AtSign className="h-3 w-3" />
-                  }
-                }
+          {/* Mention suggestions - Discord style */}
+          {showMentions && (
+            <div className="bg-popover border border-popover-foreground/10 rounded-lg shadow-lg p-2 space-y-0.5">
+              {mentionSuggestions.length === 0 ? (
+                <div className="text-xs text-muted-foreground px-2 py-2 text-center">
+                  Nicio sugestie pentru "{mentionQuery}"
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
+                    Mențiuni ({mentionSuggestions.length}):
+                  </div>
+                  <div className="max-h-[240px] overflow-y-auto">
+                    {mentionSuggestions.map((suggestion, idx) => {
+                      const getIcon = () => {
+                        switch (suggestion.type) {
+                          case 'serviciu':
+                            return <Wrench className="h-4 w-4" />
+                          case 'tag':
+                            return <Tag className="h-4 w-4" />
+                          case 'tehnician':
+                            return <Users className="h-4 w-4" />
+                          default:
+                            return <AtSign className="h-4 w-4" />
+                        }
+                      }
 
-                const getColor = () => {
-                  switch (suggestion.type) {
-                    case 'serviciu':
-                      return 'text-blue-500'
-                    case 'tag':
-                      return 'text-amber-500'
-                    case 'tehnician':
-                      return 'text-purple-500'
-                    default:
-                      return 'text-muted-foreground'
-                  }
-                }
+                      const getColor = () => {
+                        switch (suggestion.type) {
+                          case 'serviciu':
+                            return 'text-blue-500'
+                          case 'tag':
+                            return 'text-amber-500'
+                          case 'tehnician':
+                            return 'text-purple-500'
+                          default:
+                            return 'text-muted-foreground'
+                        }
+                      }
 
-                return (
-                  <button
-                    key={`${suggestion.type}-${suggestion.id}`}
-                    type="button"
-                    onClick={() => insertMention(suggestion)}
-                    className="w-full text-left px-2 py-1.5 hover:bg-primary/10 rounded text-sm flex items-center gap-2 transition-colors"
-                  >
-                    <span className={getColor()}>{getIcon()}</span>
-                    <span className="font-medium truncate">{suggestion.name}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{suggestion.type}</span>
-                  </button>
-                )
-              })}
+                      return (
+                        <button
+                          key={`${suggestion.type}-${suggestion.id}`}
+                          type="button"
+                          onClick={() => insertMention(suggestion)}
+                          className="w-full text-left px-2 py-2 hover:bg-accent rounded text-sm flex items-center gap-2.5 transition-colors"
+                        >
+                          <span className={`${getColor()} flex-shrink-0`}>{getIcon()}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-foreground truncate">{suggestion.name}</div>
+                            <div className="text-xs text-muted-foreground">{suggestion.type}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
