@@ -615,14 +615,14 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     )
   }
 
-  // Dacă nu e conversație, afișează mesaj că trebuie atribuite instrumente din Recepție
+  // Dacă nu e conversație, afișează mesaj că trebuie trimise tăvițele din Recepție
   if (!conversationId) {
     return (
       <div className="mt-4 p-4 rounded-lg border bg-muted/50">
         <div className="flex flex-col items-center justify-center gap-2">
           <MessageSquare className="h-5 w-5 text-muted-foreground" />
           <span className="text-sm text-muted-foreground text-center">
-            Conversația se va crea automat când se vor atribui instrumente din Recepție
+            Conversația se va crea automat când se apasă "Trimite Tăvițe" din Recepție
           </span>
         </div>
       </div>
@@ -911,7 +911,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                 }}
                 placeholder={
                   !conversationId
-                    ? 'Conversația se va crea când se atribuie instrumente din Recepție'
+                    ? 'Conversația se va crea când se apasă "Trimite Tăvițe" din Recepție'
                     : isTechnician
                     ? 'Scrie un mesaj pentru recepție... (@pentru mențiuni)'
                     : 'Scrie un mesaj pentru tehnician... (@pentru mențiuni)'
