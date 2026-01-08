@@ -278,6 +278,13 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
     async function ensureConversation() {
       try {
+        // Dacă selectedQuoteId e undefined, nu putem crea conversație de tip tray
+        // Așteptăm să fie selectată o tăviță
+        if (!selectedQuoteId && !leadId) {
+          conversationInitializedRef.current = true
+          return
+        }
+
         // Determină related_id și type pe baza selectedQuoteId
         const relatedId = selectedQuoteId || leadId
         const conversationType = selectedQuoteId ? 'tray' : 'lead'
