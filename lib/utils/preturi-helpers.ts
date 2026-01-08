@@ -81,6 +81,39 @@ export const createQuoteForLead = async (
     throw error || new Error('Failed to create tray')
   }
   
+  // Creează conversația pentru lead (dacă nu există deja)
+  try {
+    const { data: existingConv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('related_id', leadId)
+      .eq('type', 'lead')
+      .maybeSingle()
+    
+    if (!existingConv) {
+      // Obține user_id din sesiunea curentă pentru created_by
+      const { data: sessionData } = await supabase.auth.getSession()
+      const userId = sessionData?.session?.user?.id
+      
+      if (userId) {
+        await supabase
+          .from('conversations')
+          .insert({
+            related_id: leadId,
+            type: 'lead',
+            created_by: userId,
+          })
+          .select('id')
+          .single()
+        
+        console.log('Conversation created for lead:', leadId)
+      }
+    }
+  } catch (convError) {
+    console.error('Error creating conversation:', convError)
+    // Nu aruncam eroare, continuam cu tray creation
+  }
+  
   return {
     ...data,
     fisa_id: fisaId,

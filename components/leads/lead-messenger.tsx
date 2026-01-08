@@ -204,11 +204,11 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       }
 
       // Cauta în app_members cu user_id = sender_id pentru display_name din auth.users
-      const { data: memberData } = await supabase
+      const { data: memberData } = await (supabase
         .from('app_members')
         .select('display_name')
         .eq('user_id', senderId)
-        .single()
+        .single() as any)
 
       if (memberData?.display_name) {
         setSenderNamesCache((prev) => ({ ...prev, [senderId]: memberData.display_name }))
@@ -242,120 +242,69 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     async function fetchUserInfo() {
       if (!user) return
 
-      // obtine rolul din app_members
-      const { data: memberData } = await supabase
+      // obtine rolul si display_name din app_members
+      const { data: memberData } = await (supabase
         .from('app_members')
-        .select('role')
+        .select('role, display_name')
         .eq('user_id', user.id)
-        .single()
+        .single() as any)
 
       if (memberData) {
         setUserRole(memberData.role)
-      }
-
-      // verifica daca este tehnician
-      const { data: techData } = await supabase
-        .from('technicians')
-        .select('name')
-        .eq('user_id', user.id)
-        .single()
-
-      if (techData) {
-        setUserName(techData.name)
-        setUserRole('technician')
+        setUserName(memberData.display_name || user.email?.split('@')[0] || 'User')
       } else {
-        // daca nu este tehnician, foloseste email-ul sau numele din metadata
-        setUserName(user.email?.split('@')[0] || 'User')
+        // daca nu e in app_members, foloseste email-ul sau display_name din metadata
+        setUserName(user.user_metadata?.display_name || user.email?.split('@')[0] || 'User')
       }
     }
 
     fetchUserInfo()
   }, [user])
 
-  // Inițializează conversația la primeiro load
+  // Inițializează conversația la primul load
+  // Doar CAUTA conversația existentă (creată din Recepție când s-au atribuit instrumentele)
+  // Nu o mai creează automat
   useEffect(() => {
     if (!leadId || !user || conversationInitializedRef.current) return
 
-    async function ensureConversation() {
+    async function loadConversation() {
       try {
-        // Pentru conversations, totdeauna folosim leadId ca related_id
-        // Pentru a diferenția între lead și tray conversations, folosim un prefix în metadata
-        const relatedId = leadId
-        const conversationType = 'lead'
-        
-        // Construim un identificator unic pentru tray conversation
-        // Dacă avem selectedQuoteId, adăugăm un prefix
-        const conversationKey = selectedQuoteId ? `tray_${selectedQuoteId}` : `lead_${leadId}`
-
-        console.log('Creating conversation:', { relatedId, conversationType, conversationKey, selectedQuoteId })
+        console.log('Loading conversation for lead:', leadId)
 
         // Încearcă să găsești conversația existentă
-        // Căutăm prin metadata sau o combinație de filtre
-        let convData = null
-        
-        if (selectedQuoteId) {
-          // Pentru tray conversations, căutăm cu un query mai specific
-          const { data: allConvs } = await supabase
-            .from('conversations')
-            .select('id, metadata')
-            .eq('related_id', leadId)
-            .eq('type', 'lead')
-          
-          if (allConvs) {
-            convData = allConvs.find(c => c.metadata?.tray_id === selectedQuoteId)
-          }
-        } else {
-          // Pentru lead conversations, căutăm normal
-          const { data } = await supabase
-            .from('conversations')
-            .select('id')
-            .eq('related_id', leadId)
-            .eq('type', 'lead')
-            .is('metadata', null) // Fără tray_id
-            .single()
-          
-          convData = data
+        const { data: convData, error: searchError } = await (supabase
+          .from('conversations')
+          .select('id')
+          .eq('related_id', leadId)
+          .eq('type', 'lead')
+          .maybeSingle() as any)
+
+        if (searchError && searchError.code !== 'PGRST116') {
+          // PGRST116 = no rows found, asta e OK
+          console.error('Error searching conversation:', searchError?.message)
+          conversationInitializedRef.current = true
+          if (isMounted.current) setLoading(false)
+          return
         }
 
         if (convData) {
-          setConversationId(convData.id)
-          conversationInitializedRef.current = true
-          return
-        }
-
-        // Dacă nu există, creează una nouă
-        const { data: newConv, error: createError } = await supabase
-          .from('conversations')
-          .insert({
-            related_id: relatedId,
-            type: conversationType,
-            created_by: user.id,
-            metadata: selectedQuoteId ? { tray_id: selectedQuoteId } : null,
-          })
-          .select('id')
-          .single()
-
-        if (createError) {
-          console.error('Error creating conversation:', createError?.message)
-          conversationInitializedRef.current = true
-          setLoading(false)
-          return
-        }
-
-        if (newConv) {
-          setConversationId(newConv.id)
+          console.log('Found existing conversation:', convData.id)
+          if (isMounted.current) setConversationId(convData.id)
+        } else {
+          console.log('No conversation found for lead yet. It will be created when instruments are assigned from Reception.')
         }
 
         conversationInitializedRef.current = true
+        if (isMounted.current) setLoading(false)
       } catch (error) {
-        console.error('Error ensuring conversation:', error)
+        console.error('Error loading conversation:', error)
         conversationInitializedRef.current = true
-        setLoading(false)
+        if (isMounted.current) setLoading(false)
       }
     }
 
-    ensureConversation()
-  }, [leadId, selectedQuoteId, user])
+    loadConversation()
+  }, [leadId, user])
 
   // incarca mesajele pentru acest lead
   useEffect(() => {
@@ -365,11 +314,11 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       setLoading(true)
       try {
         // Încarcă mesajele pentru această conversație
-        const { data, error } = await supabase
+        const { data, error } = await (supabase
           .from('messages')
           .select('*')
-          .eq('conversation_id', conversationId)
-          .order('created_at', { ascending: true })
+          .eq('conversation_id', conversationId as string)
+          .order('created_at', { ascending: true }) as any)
 
         if (error) {
           console.error('Error loading messages:', error.message || error)
@@ -432,10 +381,10 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
       try {
         // Cauta imaginile din tray-ul curent
-        const { data: imagesData } = await supabase
+        const { data: imagesData } = await (supabase
           .from('tray_images')
           .select('id, file_path')
-          .eq('quote_id', selectedQuoteId)
+          .eq('quote_id', selectedQuoteId) as any)
 
         if (imagesData) {
           setTrayImages(imagesData)
@@ -458,25 +407,25 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
       try {
         // Load messages cu tray_id
-        const { data: messagesWithImages } = await supabase
+        const { data: messagesWithImages } = await (supabase
           .from('messages')
           .select('id, tray_id')
           .in('id', messageIds)
-          .not('tray_id', 'is', null)
+          .not('tray_id', 'is', null) as any)
 
         if (!messagesWithImages || messagesWithImages.length === 0) return
 
         // Cauta imagini din traiele specificate
-        const trayIds = messagesWithImages.map(m => m.tray_id).filter(Boolean) as string[]
-        const { data: imagesData } = await supabase
+        const trayIds = messagesWithImages.map((m: any) => m.tray_id).filter(Boolean) as string[]
+        const { data: imagesData } = await (supabase
           .from('tray_images')
           .select('id, file_path, quote_id')
-          .in('quote_id', trayIds)
+          .in('quote_id', trayIds) as any)
 
         if (imagesData) {
           // Creează map de tray_id -> imagini (luăm prima imagine din tray)
           const trayImageMap: Record<string, string> = {}
-          imagesData.forEach(img => {
+          imagesData.forEach((img: any) => {
             if (!trayImageMap[img.quote_id]) {
               trayImageMap[img.quote_id] = img.file_path
             }
@@ -484,7 +433,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
           
           // Salvează în state
           const messageImages: Record<string, string> = {}
-          messagesWithImages.forEach(msg => {
+          messagesWithImages.forEach((msg: any) => {
             if (msg.tray_id && trayImageMap[msg.tray_id]) {
               messageImages[msg.id] = trayImageMap[msg.tray_id]
             }
@@ -538,6 +487,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
         sender_id: user.id,
         content: messageText,
         message_type: 'text',
+        tray_id: selectedQuoteId || undefined,
         created_at: new Date().toISOString(),
       }
 
@@ -547,18 +497,26 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       setAttachedImages([])
 
       // Inserează mesajul în baza de date
-      const { data, error } = await supabase
+      const { data, error } = await (supabase
         .from('messages')
         .insert({
-          conversation_id: conversationId,
+          conversation_id: conversationId as string,
           sender_id: user.id,
           content: messageText,
           message_type: 'text',
+          tray_id: selectedQuoteId || null,
         })
         .select()
-        .single()
+        .single() as any)
 
-      if (error) throw error
+      if (error) {
+        console.error('Insert error details:', { error, message: error?.message, code: error?.code, details: error?.details })
+        throw error
+      }
+
+      if (!data) {
+        throw new Error('Nu s-au primit date după insert')
+      }
 
       // Înlocuiește mesajul optimist (temp) cu mesajul real din DB
       setMessages((prev) => {
@@ -571,11 +529,21 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       setPendingMessage(null)
       toast.success('Mesaj trimis cu succes')
     } catch (error: any) {
-      console.error('Error sending message:', error)
+      console.error('Error sending message:', error, error?.message)
       // Elimină mesajul optimist dacă a eșuat
       setMessages((prev) => prev.filter((msg) => !msg.id.startsWith('temp-')))
+      
+      let errorMsg = 'Eroare necunoscută'
+      if (typeof error === 'string') {
+        errorMsg = error
+      } else if (error?.message) {
+        errorMsg = error.message
+      } else if (error?.error_description) {
+        errorMsg = error.error_description
+      }
+      
       toast.error('Eroare la trimiterea mesajului', {
-        description: error?.message || 'Te rugăm să încerci din nou.',
+        description: errorMsg,
       })
     } finally {
       setSending(false)
@@ -592,7 +560,12 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     let currentDate = ''
     let currentGroup: LeadMessage[] = []
 
-    messages.forEach((msg) => {
+    // Filtrez mesajele pe baza selectedQuoteId dacă e selectată o tăviță
+    const filteredMessages = selectedQuoteId 
+      ? messages.filter(msg => msg.tray_id === selectedQuoteId)
+      : messages.filter(msg => !msg.tray_id) // Arată doar mesajele fără tray_id la nivel lead
+
+    filteredMessages.forEach((msg) => {
       const msgDate = format(new Date(msg.created_at), 'yyyy-MM-dd')
       if (msgDate !== currentDate) {
         if (currentGroup.length > 0) {
@@ -610,7 +583,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     }
 
     return groups
-  }, [messages])
+  }, [messages, selectedQuoteId])
 
   // formateaza data pentru header-ul de grup
   const formatGroupDate = useCallback((dateStr: string) => {
@@ -636,7 +609,21 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       <div className="mt-4 p-4 rounded-lg border bg-muted/50">
         <div className="flex items-center gap-3">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Se inițializează mesageria...</span>
+          <span className="text-sm text-muted-foreground">Se încarcă mesageria...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Dacă nu e conversație, afișează mesaj că trebuie atribuite instrumente din Recepție
+  if (!conversationId) {
+    return (
+      <div className="mt-4 p-4 rounded-lg border bg-muted/50">
+        <div className="flex flex-col items-center justify-center gap-2">
+          <MessageSquare className="h-5 w-5 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground text-center">
+            Conversația se va crea automat când se vor atribui instrumente din Recepție
+          </span>
         </div>
       </div>
     )
@@ -742,13 +729,16 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      const publicUrl = supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id]).data.publicUrl
-                                      window.open(publicUrl, '_blank')
+                                      const attachment = messageAttachments[msg.id]
+                                      if (typeof attachment === 'string') {
+                                        const publicUrl = supabase.storage.from('tray_images').getPublicUrl(attachment).data.publicUrl
+                                        window.open(publicUrl, '_blank')
+                                      }
                                     }}
                                     className="group relative block"
                                   >
                                     <img
-                                      src={supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id]).data.publicUrl}
+                                      src={typeof messageAttachments[msg.id] === 'string' ? supabase.storage.from('tray_images').getPublicUrl(messageAttachments[msg.id] as string).data.publicUrl : ''}
                                       alt="message image"
                                       className="max-w-[200px] max-h-[200px] rounded-md object-cover border border-muted"
                                     />
@@ -921,7 +911,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
                 }}
                 placeholder={
                   !conversationId
-                    ? 'Se inițializează mesageria...'
+                    ? 'Conversația se va crea când se atribuie instrumente din Recepție'
                     : isTechnician
                     ? 'Scrie un mesaj pentru recepție... (@pentru mențiuni)'
                     : 'Scrie un mesaj pentru tehnician... (@pentru mențiuni)'
