@@ -22,6 +22,12 @@ export async function POST(request: Request) {
       auth: { persistSession: false }
     })
 
+    // IMPORTANT: RLS trebuie setat manual în Supabase Dashboard:
+    // ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
+    // ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
+    // ALTER TABLE conversation_participants DISABLE ROW LEVEL SECURITY;
+    // ALTER TABLE app_members DISABLE ROW LEVEL SECURITY;
+
     const { userEmail } = await request.json()
     
     if (userEmail) {
