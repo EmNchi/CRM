@@ -301,10 +301,9 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
       }
     }
 
-    if (!conversationId) {
-      loadConversation()
-    }
-  }, [leadId, user, conversationId])
+    // Always load conversation when leadId changes
+    loadConversation()
+  }, [leadId, user])
 
 
   // incarca mesajele pentru acest lead
