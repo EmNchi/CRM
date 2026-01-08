@@ -278,23 +278,19 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
     async function ensureConversation() {
       try {
-        // Dacă selectedQuoteId e undefined, nu putem crea conversație de tip tray
-        // Așteptăm să fie selectată o tăviță
-        if (!selectedQuoteId && !leadId) {
+        // Conversația se creează NUMAI pentru tray (selectedQuoteId)
+        // Dacă nu avem selectedQuoteId, nu facem nimic
+        if (!selectedQuoteId) {
           conversationInitializedRef.current = true
           return
         }
 
-        // Determină related_id și type pe baza selectedQuoteId
-        const relatedId = selectedQuoteId || leadId
-        const conversationType = selectedQuoteId ? 'tray' : 'lead'
-
-        // Încearcă să găsești conversația existentă
+        // Încearcă să găsești conversația existentă pentru această tăviță
         const { data: convData } = await supabase
           .from('conversations')
           .select('id')
-          .eq('related_id', relatedId)
-          .eq('type', conversationType)
+          .eq('related_id', selectedQuoteId)
+          .eq('type', 'tray')
           .single()
 
         if (convData) {
@@ -307,8 +303,8 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
         const { data: newConv, error: createError } = await supabase
           .from('conversations')
           .insert({
-            related_id: relatedId,
-            type: conversationType,
+            related_id: selectedQuoteId,
+            type: 'tray',
             created_by: user.id,
           })
           .select('id')
