@@ -278,12 +278,16 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
 
     async function ensureConversation() {
       try {
+        // Determină related_id și type pe baza selectedQuoteId
+        const relatedId = selectedQuoteId || leadId
+        const conversationType = selectedQuoteId ? 'tray' : 'lead'
+
         // Încearcă să găsești conversația existentă
         const { data: convData } = await supabase
           .from('conversations')
           .select('id')
-          .eq('related_id', leadId)
-          .eq('type', 'lead')
+          .eq('related_id', relatedId)
+          .eq('type', conversationType)
           .single()
 
         if (convData) {
@@ -296,8 +300,8 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
         const { data: newConv, error: createError } = await supabase
           .from('conversations')
           .insert({
-            related_id: leadId,
-            type: 'lead',
+            related_id: relatedId,
+            type: conversationType,
             created_by: user.id,
           })
           .select('id')
@@ -323,7 +327,7 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     }
 
     ensureConversation()
-  }, [leadId, user])
+  }, [leadId, selectedQuoteId, user])
 
   // incarca mesajele pentru acest lead
   useEffect(() => {
@@ -467,48 +471,6 @@ export default function LeadMessenger({ leadId, leadTechnician, selectedQuoteId 
     loadImages()
   }, [messages])
 
-  // Load tray images din conversație pentru picker
-  useEffect(() => {
-    async function loadTrayImages() {
-      if (!leadId) return
-
-      try {
-        // Cauta service files pentru lead
-        const { data: sfData } = await supabase
-          .from('service_files')
-          .select('id')
-          .eq('lead_id', leadId)
-          .limit(5)
-
-        if (!sfData || sfData.length === 0) return
-
-        // Cauta quotes din aceste service files
-        const sfIds = sfData.map(sf => sf.id)
-        const { data: quotesData } = await supabase
-          .from('quotes')
-          .select('id')
-          .in('service_file_id', sfIds)
-
-        if (!quotesData || quotesData.length === 0) return
-
-        // Cauta imaginile din aceste quotes
-        const quoteIds = quotesData.map(q => q.id)
-        const { data: imagesData } = await supabase
-          .from('tray_images')
-          .select('id, file_path')
-          .in('quote_id', quoteIds)
-
-        if (imagesData && imagesData.length > 0) {
-          setTrayImages(imagesData)
-          console.log('Loaded tray images:', imagesData.length)
-        }
-      } catch (error) {
-        console.error('Error loading tray images:', error)
-      }
-    }
-
-    loadTrayImages()
-  }, [leadId])
 
   // scroll la ultimul mesaj cu debounce pentru performanta
   useEffect(() => {

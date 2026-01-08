@@ -961,6 +961,8 @@ export function LeadDetailsPanel({
                     setIsMessengerOpen={business.state.setIsMessengerOpen}
                     leadId={lead.id}
                     leadTechnician={lead.technician}
+                    quotes={trayTabsData.quotes}
+                    selectedQuoteId={trayTabsData.selectedQuoteId}
                   />
                 ) : (
                   <div className="flex items-center justify-center py-12">
