@@ -536,14 +536,15 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
 
   // View pentru Departamente
   if (isDepartmentPipeline && selectedQuote) {
-    // Get lead_id from lead object
-    const leadId = lead?.id || props.leadId || null
+    // Get lead_id: from lead object first, or from fisaId via service_files
+    const leadId = lead?.id || props.leadId || (fisaId ? props.fisaId : null) || null
     
     return (
       <>
         <DepartmentView
           // Lead
           leadId={leadId}
+          fisaId={fisaId}
           // Form state
           instrumentForm={props.instrumentForm}
           instrumentSettings={props.instrumentSettings}

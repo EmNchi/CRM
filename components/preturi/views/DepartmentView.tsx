@@ -11,6 +11,8 @@ import { TrayImagesSection } from '../sections/TrayImagesSection'
 import { TrayTabs } from '../sections/TrayTabs'
 import { TrayDetailsSection } from '../sections/TrayDetailsSection'
 import LeadMessenger from '@/components/leads/lead-messenger'
+import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
+import { useEffect, useState } from 'react'
 import type { LeadQuoteItem, LeadQuote } from '@/lib/types/preturi'
 import type { Service } from '@/lib/supabase/serviceOperations'
 import type { Part } from '@/lib/supabase/partOperations'
@@ -242,6 +244,38 @@ export function DepartmentView({
   onDetailsChange,
 }: DepartmentViewProps) {
   const selectedQuote = quotes.find(q => q.id === selectedQuoteId)
+  const [resolvedLeadId, setResolvedLeadId] = useState<string | null>(leadId || null)
+
+  // Dacă nu avem leadId direct, obținem din fisaId
+  useEffect(() => {
+    if (leadId) {
+      setResolvedLeadId(leadId)
+      return
+    }
+
+    if (!fisaId) {
+      setResolvedLeadId(null)
+      return
+    }
+
+    async function getLeadIdFromFisa() {
+      try {
+        const { data, error } = await supabaseBrowser()
+          .from('service_files')
+          .select('lead_id')
+          .eq('id', fisaId)
+          .single()
+
+        if (!error && data?.lead_id) {
+          setResolvedLeadId(data.lead_id)
+        }
+      } catch (err) {
+        console.error('Error fetching lead_id from service_file:', err)
+      }
+    }
+
+    getLeadIdFromFisa()
+  }, [leadId, fisaId])
 
   return (
     <div className="space-y-4 border rounded-xl bg-card shadow-sm overflow-hidden pb-4">
@@ -274,9 +308,9 @@ export function DepartmentView({
       </div>
 
       {/* Mesagerie - vizibilă pentru toți */}
-      {leadId && (
+      {resolvedLeadId && (
         <div className="px-4">
-          <LeadMessenger leadId={leadId} />
+          <LeadMessenger leadId={resolvedLeadId} />
         </div>
       )}
 
