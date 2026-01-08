@@ -737,9 +737,8 @@ export function usePreturiBusiness({
     }, 50)
   }, [onPartSelect, itemOperations.onAddPart])
   
-  const onRowClick = useCallback((itemId: string) => {
-    // Găsește item-ul după id
-    const item = items.find(i => i.id === itemId)
+  const onRowClick = useCallback((item: LeadQuoteItem) => {
+    // item-ul este deja transmis de ItemsTable
     if (!item) return
     
     // Găsește serviciul pentru a obține instrument_id

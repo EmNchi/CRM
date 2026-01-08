@@ -432,6 +432,7 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           partSearchFocused={props.partSearchFocused}
           onInstrumentChange={props.onInstrumentChange}
           onQtyChange={props.onQtyChange}
+          onRowClick={props.onRowClick}
           onAddBrandSerialGroup={props.onAddBrandSerialGroup}
           onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
           onUpdateBrand={props.onUpdateBrand}

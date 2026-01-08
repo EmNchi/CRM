@@ -144,6 +144,9 @@ interface ReceptieViewProps {
   loadingTrayDetails?: boolean | null | undefined
   isCommercialPipeline?: boolean | null | undefined
   onDetailsChange?: ((details: string) => void) | null | undefined
+  
+  // For ItemsTable row click
+  onRowClick?: ((item: LeadQuoteItem) => void) | null | undefined
 }
 
 // ============================================================================
@@ -520,6 +523,7 @@ export function ReceptieView(props: ReceptieViewProps) {
         canEditUrgentAndSubscription={props.canEditUrgentAndSubscription ?? true}
         onUpdateItem={props.onUpdateItem || (() => {})}
         onDelete={props.onDelete || (() => {})}
+        onRowClick={props.onRowClick || (() => {})}
         onMoveInstrument={onMoveInstrument}
       />
       
