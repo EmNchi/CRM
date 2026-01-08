@@ -232,13 +232,6 @@ export function LeadDetailsPanel({
     user,
   })
 
-  // Setează isContactOpen la false când intri în DepartmentView
-  useEffect(() => {
-    if (isDepartmentPipeline) {
-      business.state.setIsContactOpen(false)
-    }
-  }, [isDepartmentPipeline, business.state])
-
   // NOTĂ: Toate state-urile sunt gestionate în useLeadDetailsBusiness hook
   // Folosim business.state.* pentru toate state-urile
   
