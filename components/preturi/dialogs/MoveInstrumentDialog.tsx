@@ -1,6 +1,7 @@
 'use client'
 
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -49,6 +50,11 @@ export function MoveInstrumentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg p-0 overflow-hidden border-0 shadow-2xl">
+        {/* Accessibility title - hidden visually */}
+        <VisuallyHidden>
+          <DialogTitle>Mută Instrument în Tăviță</DialogTitle>
+        </VisuallyHidden>
+        
         {/* Header cu gradient */}
         <div className="bg-gradient-to-r from-indigo-500 to-purple-600 px-6 py-5">
           <div className="flex items-center gap-3">
