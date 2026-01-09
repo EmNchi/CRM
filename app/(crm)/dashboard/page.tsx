@@ -19,7 +19,7 @@ export type Lead = KanbanLead & { tags?: Tag[] }
 
 export default function DashboardPage() {
   const { leads, pipelines, loading, error, refresh } = useKanbanData()
-  const { isAdmin, loading: authLoading } = useAuthContext()
+  const { isAdmin, isOwner, loading: authLoading } = useAuthContext()
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -67,7 +67,7 @@ export default function DashboardPage() {
     )
   }
 
-  if (!isAdmin()) {
+  if (!isAdmin() && !isOwner()) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center space-y-4">
@@ -75,9 +75,9 @@ export default function DashboardPage() {
             <Lock className="h-16 w-16 text-amber-500 opacity-50" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-foreground">Acces Restricted</h2>
+            <h2 className="text-xl font-semibold text-foreground">Acces Restricționat</h2>
             <p className="text-sm text-muted-foreground mt-2">
-              Dashboard-ul este disponibil doar pentru administratori
+              Dashboard-ul este disponibil doar pentru administratori și proprietari
             </p>
           </div>
         </div>
