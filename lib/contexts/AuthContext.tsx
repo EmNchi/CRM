@@ -142,6 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   
   const loadPermissions = async (userId: string) => {
     try {
+      const supabase = supabaseBrowser()
       const { data, error } = await supabase
         .from('user_pipeline_permissions')
         .select('pipeline_id')
