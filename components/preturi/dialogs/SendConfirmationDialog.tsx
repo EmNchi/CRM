@@ -8,7 +8,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Loader2, Send, AlertTriangle, CheckCircle2 } from 'lucide-react'
-import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
 
 interface SendConfirmationDialogProps {
   open: boolean
@@ -31,9 +30,9 @@ export function SendConfirmationDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-md p-0 overflow-hidden border-0 shadow-2xl">
         {/* Titlu ascuns pentru accesibilitate */}
-        <VisuallyHidden>
-          <AlertDialogTitle>Trimite tăvițele în departamente</AlertDialogTitle>
-        </VisuallyHidden>
+        <AlertDialogTitle className="sr-only">
+          Trimite tăvițele în departamente
+        </AlertDialogTitle>
         <AlertDialogDescription className="sr-only">
           Confirmă trimiterea a {traysCount} tăvițe în departamente
         </AlertDialogDescription>
