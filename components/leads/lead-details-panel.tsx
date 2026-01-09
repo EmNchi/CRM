@@ -278,6 +278,7 @@ export function LeadDetailsPanel({
       }
 
       try {
+        const supabase = supabaseBrowser()
         const { data, error } = await supabase
           .from('service_files')
           .select('details')
@@ -312,7 +313,7 @@ export function LeadDetailsPanel({
 
     // Încarcă detaliile pentru toate pipeline-urile (nu doar pentru departamente)
     loadServiceFileDetails()
-  }, [lead.id, business.getServiceFileId, supabase])
+  }, [lead.id, business.getServiceFileId, business.state]) // ← FĂRĂ supabase
 
   const togglePipe = (name: string) =>
     business.state.setSelectedPipes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name])

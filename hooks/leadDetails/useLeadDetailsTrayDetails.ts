@@ -28,7 +28,6 @@ export function useLeadDetailsTrayDetails({
   setLoadingTrayDetails,
   getServiceFileId,
 }: UseLeadDetailsTrayDetailsProps) {
-  const supabase = supabaseBrowser()
 
   // Funcție pentru salvarea detaliilor
   const saveServiceFileDetails = useCallback(async (details: string) => {
@@ -47,6 +46,7 @@ export function useLeadDetailsTrayDetails({
       }
       
       // IMPORTANT: Salva MEREU ca JSON structure pentru consistency
+      const supabase = supabaseBrowser()
       const detailsToSave = JSON.stringify({
         text: details || '',
         paymentCash: false,
@@ -89,7 +89,7 @@ export function useLeadDetailsTrayDetails({
     } catch (err: any) {
       console.error('Error saving details:', err)
     }
-  }, [getServiceFileId, isVanzariPipeline, isReceptiePipeline, supabase])
+  }, [getServiceFileId, isVanzariPipeline, isReceptiePipeline]) // ← FĂRĂ supabase
 
   // Funcție debounced pentru auto-save
   const debouncedSaveDetails = useMemo(

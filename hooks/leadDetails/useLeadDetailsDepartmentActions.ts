@@ -28,7 +28,6 @@ export function useLeadDetailsDepartmentActions({
   setStage,
   user,
 }: UseLeadDetailsDepartmentActionsProps) {
-  const supabase = supabaseBrowser()
 
   // Handler pentru butonul "Finalizare" (mută în stage-ul Finalizare)
   const handleFinalizare = useCallback(async () => {
@@ -45,6 +44,7 @@ export function useLeadDetailsDepartmentActions({
 
     if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
       try {
+        const supabase = supabaseBrowser()
         const { data: stageData, error: stageError } = await supabase
           .from('stages')
           .select('id')
@@ -82,7 +82,7 @@ export function useLeadDetailsDepartmentActions({
       handleStageChange(finalizareStage)
       toast.success('Card mutat în Finalizare')
     }
-  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage, supabase])
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage]) // ← FĂRĂ supabase
 
   // Handler pentru butonul "Aștept piese" (pentru Reparații)
   const handleAsteptPiese = useCallback(async () => {
@@ -99,6 +99,7 @@ export function useLeadDetailsDepartmentActions({
 
     if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
       try {
+        const supabase = supabaseBrowser()
         const { data: stageData, error: stageError } = await supabase
           .from('stages')
           .select('id')
@@ -136,7 +137,7 @@ export function useLeadDetailsDepartmentActions({
       handleStageChange(asteptPieseStage)
       toast.success('Card mutat în Aștept piese')
     }
-  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage, supabase])
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage]) // ← FĂRĂ supabase
 
   // Handler pentru butonul "În așteptare" (pentru Saloane/Horeca/Frizerii)
   const handleInAsteptare = useCallback(async () => {
@@ -153,6 +154,7 @@ export function useLeadDetailsDepartmentActions({
 
     if (isDepartmentPipeline && leadAny?.type === 'tray' && leadAny?.pipelineId) {
       try {
+        const supabase = supabaseBrowser()
         const { data: stageData, error: stageError } = await supabase
           .from('stages')
           .select('id')
@@ -190,7 +192,7 @@ export function useLeadDetailsDepartmentActions({
       handleStageChange(inAsteptareStage)
       toast.success('Card mutat în În așteptare')
     }
-  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage, supabase])
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage]) // ← FĂRĂ supabase
 
   // Handler pentru butonul "În lucru" (atribuie tăvița utilizatorului curent)
   const handleInLucru = useCallback(async () => {
@@ -212,6 +214,7 @@ export function useLeadDetailsDepartmentActions({
           return
         }
 
+        const supabase = supabaseBrowser()
         const { data: stageData, error: stageError } = await supabase
           .from('stages')
           .select('id')
@@ -313,7 +316,7 @@ export function useLeadDetailsDepartmentActions({
       handleStageChange(inLucruStage)
       toast.success('Card mutat în IN LUCRU')
     }
-  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage, supabase, user])
+  }, [lead, stages, isDepartmentPipeline, handleStageChange, setStage, user]) // ← FĂRĂ supabase
 
   return {
     handleFinalizare,

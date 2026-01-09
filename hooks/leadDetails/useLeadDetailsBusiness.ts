@@ -53,7 +53,6 @@ export function useLeadDetailsBusiness({
   onClose,
   user,
 }: UseLeadDetailsBusinessProps) {
-  const supabase = supabaseBrowser()
   
   // Ref pentru componenta Preturi - pentru a apela salvarea la Close
   const preturiRef = useRef<PreturiRef>(null)
@@ -92,6 +91,7 @@ export function useLeadDetailsBusiness({
     if (leadAny?.type === 'tray' || leadAny?.isQuote) {
       const trayId = leadAny?.type === 'tray' ? lead.id : (leadAny?.quoteId || leadAny?.id)
       if (trayId) {
+        const supabase = supabaseBrowser()
         const { data: tray } = await supabase
           .from('trays')
           .select('service_file_id')
@@ -108,7 +108,7 @@ export function useLeadDetailsBusiness({
       return sheets.length > 0 ? sheets[0].id : null
     }
     return null
-  }, [lead, getLeadId, supabase])
+  }, [lead, getLeadId]) // ← FĂRĂ supabase
   
   // Helper pentru a obține trayId-ul corect pentru trays
   const getTrayId = useCallback(() => {

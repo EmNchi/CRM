@@ -68,6 +68,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true)
       setError(null)
       
+      const supabase = supabaseBrowser()
+      
       // 1. Get authenticated user
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
       
@@ -132,7 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setError(err.message || 'Unknown error')
       setLoading(false)
     }
-  }, [supabase])
+  }, []) // ← FĂRĂ supabase - e singleton
   
   // ===========================
   // LOAD PERMISSIONS
@@ -166,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadUserAndProfile()
     
     // Listen to auth state changes
+    const supabase = supabaseBrowser()
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         loadUserAndProfile()
@@ -180,7 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [loadUserAndProfile, supabase])
+  }, [loadUserAndProfile]) // ← FĂRĂ supabase - e singleton
   
   // ===========================
   // PERMISSION CHECKS

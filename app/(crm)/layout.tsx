@@ -1,7 +1,7 @@
 'use client'
 
 import { AppSidebar as Sidebar } from '@/components/layout'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabaseBrowser } from '@/lib/supabase/supabaseClient'
 import { Toaster } from '@/components/ui/sonner'
@@ -10,13 +10,13 @@ import { Button } from '@/components/ui/button'
 import { Menu } from 'lucide-react'
 
 export default function CrmShell({ children }: { children: React.ReactNode }) {
-  const supabase = useMemo(() => supabaseBrowser(), [])
   const router = useRouter()
   const pathname = usePathname()
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
+    const supabase = supabaseBrowser()
     let unsub: { unsubscribe: () => void } | undefined
     supabase.auth.getSession().then(({ data }) => setIsAuthed(!!data.session))
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
@@ -24,7 +24,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     })
     unsub = sub.subscription
     return () => unsub?.unsubscribe()
-  }, [supabase])
+  }, []) // ← FĂRĂ supabase - e singleton
 
   // Redirect la login dacă nu este autentificat (trebuie să fie în useEffect)
   useEffect(() => {

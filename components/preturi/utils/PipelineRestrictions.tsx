@@ -39,9 +39,10 @@ export function PipelineRestrictions({
   const [isTechnician, setIsTechnician] = useState(false)
   const supabase = supabaseBrowser()
 
-  // Verifică dacă utilizatorul este tehnician
+  // Verifică dacă utilizatorul este tehnician - rulează O SINGURĂ DATĂ la mount
   useEffect(() => {
     async function checkTechnician() {
+      const supabase = supabaseBrowser()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user?.id) {
         setIsTechnician(false)
@@ -58,7 +59,7 @@ export function PipelineRestrictions({
     }
 
     checkTechnician()
-  }, [supabase])
+  }, []) // ← FĂRĂ supabase - rulează doar la mount
 
   const isVanzator = !isTechnician && (role === 'admin' || role === 'owner' || role === 'member')
   const isOwner = role === 'owner'
