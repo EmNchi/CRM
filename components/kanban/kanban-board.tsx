@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
-import { LeadCard } from "./lead-card"
+import { LazyLeadCard } from "./LazyLeadCard"
 import { cn } from "@/lib/utils"
 import type { KanbanLead } from "../lib/types/database"
 import { Trash2, Loader2, TrendingUp, Inbox, Move, X } from "lucide-react"
@@ -687,7 +687,7 @@ export function KanbanBoard({
                           )}
                           style={{ animationDelay: `${index * 50}ms` }}
                         >
-                          <LeadCard
+                          <LazyLeadCard
                             key={lead.id}
                             lead={lead}
                             onMove={onLeadMove}
@@ -839,7 +839,7 @@ export function KanbanBoard({
                       <div className="flex gap-3 overflow-x-auto pb-1">
                         {stageLeads.map((lead) => (
                           <div key={lead.id} className="w-80 flex-shrink-0">
-                            <LeadCard
+                            <LazyLeadCard
                               lead={lead}
                               onMove={onLeadMove}
                               onClick={(e) => onLeadClick(lead, e)}
@@ -1006,7 +1006,7 @@ export function KanbanBoard({
                           )}
                           style={{ animationDelay: `${index * 50}ms` }}
                         >
-                          <LeadCard
+                          <LazyLeadCard
                             key={lead.id}
                             lead={lead}
                             onMove={onLeadMove}

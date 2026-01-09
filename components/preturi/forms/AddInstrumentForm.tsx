@@ -34,6 +34,7 @@ interface AddInstrumentFormProps {
   onRemoveSerialNumber?: (groupIndex: number, serialIndex: number) => void
   onUpdateSerialGarantie?: (groupIndex: number, serialIndex: number, garantie: boolean) => void
   setIsDirty?: (dirty: boolean) => void
+  isAddInstrumentDisabled?: boolean // Flag pentru a dezactiva adăugarea de instrumente
 }
 
 export function AddInstrumentForm({
@@ -57,6 +58,7 @@ export function AddInstrumentForm({
   onRemoveSerialNumber,
   onUpdateSerialGarantie,
   setIsDirty,
+  isAddInstrumentDisabled = false,
 }: AddInstrumentFormProps) {
   const isReparatiiInstrument = useMemo(() => {
     if (!instrumentForm.instrument) return false
@@ -120,6 +122,7 @@ export function AddInstrumentForm({
                 className="w-full h-10 text-sm rounded-lg border-2 border-emerald-200/80 dark:border-emerald-700/50 px-3 bg-white dark:bg-slate-900 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 value={instrumentForm.instrument}
                 onChange={e => onInstrumentChange(e.target.value)}
+                disabled={isAddInstrumentDisabled}
               >
                 <option value="">— selectează —</option>
                 {availableInstruments.map(inst => (
@@ -139,7 +142,7 @@ export function AddInstrumentForm({
                 value={instrumentForm.qty}
                 onChange={e => onQtyChange(e.target.value)}
                 placeholder="1"
-                disabled={hasServicesOrInstrumentInSheet && !isVanzariPipeline && !isDepartmentPipeline}
+                disabled={isAddInstrumentDisabled || (hasServicesOrInstrumentInSheet && !isVanzariPipeline && !isDepartmentPipeline)}
               />
             </div>
           </div>

@@ -245,12 +245,12 @@ export function LeadDetailsHeader({
             </Button>
           )}
           <Button 
-            variant="ghost" 
-            size="icon"
+            variant="outline" 
+            size="sm" 
             onClick={onClose} 
-            className="h-8 w-8 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="h-8 gap-1.5 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 dark:border-red-900 dark:hover:bg-red-950"
           >
-            <X className="h-4 w-4" />
+            Close
           </Button>
         </div>
       </div>

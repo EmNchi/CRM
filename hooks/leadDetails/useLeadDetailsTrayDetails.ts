@@ -10,6 +10,7 @@ import { debounce } from '@/lib/utils'
 interface UseLeadDetailsTrayDetailsProps {
   fisaId: string | null
   isVanzariPipeline: boolean
+  isReceptiePipeline?: boolean
   trayDetails: string
   setTrayDetails: React.Dispatch<React.SetStateAction<string>>
   setSavingTrayDetails: React.Dispatch<React.SetStateAction<boolean>>
@@ -20,6 +21,7 @@ interface UseLeadDetailsTrayDetailsProps {
 export function useLeadDetailsTrayDetails({
   fisaId,
   isVanzariPipeline,
+  isReceptiePipeline = false,
   trayDetails,
   setTrayDetails,
   setSavingTrayDetails,
@@ -30,10 +32,10 @@ export function useLeadDetailsTrayDetails({
 
   // Funcție pentru salvarea detaliilor
   const saveServiceFileDetails = useCallback(async (details: string) => {
-    // IMPORTANT: Detaliile pot fi modificate doar din pipeline-ul Vanzari
-    if (!isVanzariPipeline) {
-      console.warn('Cannot save details: modifications are only allowed in Vanzari pipeline')
-      toast.error('Detaliile pot fi modificate doar din pipeline-ul Vanzari')
+    // IMPORTANT: Detaliile pot fi modificate doar din pipeline-ul Vanzari sau Receptie
+    if (!isVanzariPipeline && !isReceptiePipeline) {
+      // console.warn('Cannot save details: modifications are only allowed in Vanzari or Receptie pipelines')
+      toast.error('Detaliile pot fi modificate doar din pipeline-ul Vânzări sau Recepție')
       return
     }
     
@@ -44,34 +46,40 @@ export function useLeadDetailsTrayDetails({
         return
       }
       
-      // Verifică dacă există deja payment info în details și păstrează-l
+      // IMPORTANT: Salva MEREU ca JSON structure pentru consistency
+      const detailsToSave = JSON.stringify({
+        text: details || '',
+        paymentCash: false,
+        paymentCard: false
+      })
+      
+      // Dar dacă exista deja payment info, păstrează-l
       const { data: existingData } = await supabase
         .from('service_files')
         .select('details')
         .eq('id', serviceFileId)
         .single()
       
-      let detailsToSave = details
+      let finalDetailsToSave = detailsToSave
       if (existingData?.details) {
         try {
           const parsedDetails = JSON.parse(existingData.details)
           if (typeof parsedDetails === 'object' && parsedDetails !== null && (parsedDetails.paymentCash !== undefined || parsedDetails.paymentCard !== undefined)) {
             // Păstrează payment info existent
-            detailsToSave = JSON.stringify({
-              text: details,
+            finalDetailsToSave = JSON.stringify({
+              text: details || '',
               paymentCash: parsedDetails.paymentCash || false,
               paymentCard: parsedDetails.paymentCard || false
             })
           }
         } catch {
-          // Dacă nu este JSON valid, folosește doar textul nou
-          detailsToSave = details
+          // Dacă parse eșuează, continuă cu structura noua
         }
       }
       
       const { error } = await supabase
         .from('service_files')
-        .update({ details: detailsToSave } as any)
+        .update({ details: finalDetailsToSave } as any)
         .eq('id', serviceFileId)
       
       if (error) {
@@ -81,7 +89,7 @@ export function useLeadDetailsTrayDetails({
     } catch (err: any) {
       console.error('Error saving details:', err)
     }
-  }, [getServiceFileId, isVanzariPipeline, supabase])
+  }, [getServiceFileId, isVanzariPipeline, isReceptiePipeline, supabase])
 
   // Funcție debounced pentru auto-save
   const debouncedSaveDetails = useMemo(

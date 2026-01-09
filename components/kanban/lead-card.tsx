@@ -428,6 +428,30 @@ export function LeadCard({ lead, onMove, onClick, onDragStart, onDragEnd, isDrag
                           </>
                         )}
                         
+                        {trayInfo.status === 'noua' && (
+                          <>
+                            {trayInfo.technician ? (
+                              <>
+                                <Circle className="h-3.5 w-3.5 text-blue-600 flex-shrink-0" />
+                                <span className="font-semibold text-blue-600">{trayInfo.technician}</span>
+                              </>
+                            ) : (
+                              <>
+                              <Circle className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
+                              <span className="font-semibold text-slate-400">No Teh.</span>
+                              </>
+                            )}
+                            {trayInfo.department && (
+                              <>
+                                <span className="text-slate-400 flex-shrink-0">
+                                  {getDepartmentIcon(trayInfo.department)}
+                                </span>
+                                
+                              </>
+                            )}
+                          </>
+                        )}
+                        
                         {/* Pentru tăvițe fără status definit dar cu tehnician */}
                         {!trayInfo.status && trayInfo.technician && (
                           <>

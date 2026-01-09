@@ -320,9 +320,9 @@ export function usePreturiEffects({
     loadCurrentStage()
   }, [fisaId, isReceptiePipeline, pipelinesWithIds, setCurrentServiceFileStage])
 
-  // Încarcă office_direct și curier_trimis din service file pentru Receptie
+  // Încarcă office_direct și curier_trimis din service file (pentru Receptie și Vânzări)
   useEffect(() => {
-    if (!fisaId || !isReceptiePipeline) {
+    if (!fisaId) {
       setOfficeDirect(false)
       setCurierTrimis(false)
       return
@@ -343,7 +343,7 @@ export function usePreturiEffects({
     }
 
     loadDeliveryFlags()
-  }, [fisaId, isReceptiePipeline, setOfficeDirect, setCurierTrimis])
+  }, [fisaId, setOfficeDirect, setCurierTrimis])
 
   // Încarcă detaliile pentru fișa de serviciu
   // IMPORTANT: Folosim useRef pentru a urmări fisaId-ul pentru care am încărcat deja detaliile
@@ -370,13 +370,16 @@ export function usePreturiEffects({
       setLoadingTrayDetails(true)
       try {
         const { data: serviceFileData } = await getServiceFile(fisaId)
+        // console.log('[DEBUG] Loaded from DB:', { fisaId, details: serviceFileData?.details })
         if (serviceFileData?.details) {
           try {
             const detailsObj = typeof serviceFileData.details === 'string' 
               ? JSON.parse(serviceFileData.details) 
               : serviceFileData.details
+            // console.log('[DEBUG] Parsed details object:', detailsObj)
             // Caută text, comments sau trayDetails în obiectul JSON
             const detailsText = detailsObj.text || detailsObj.comments || detailsObj.trayDetails || ''
+            // console.log('[DEBUG] Extracted detailsText:', detailsText)
             setTrayDetails(detailsText)
             lastLoadedFisaIdRef.current = fisaId
           } catch {

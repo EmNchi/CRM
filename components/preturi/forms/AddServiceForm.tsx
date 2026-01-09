@@ -156,10 +156,10 @@ export function AddServiceForm({
                         type="button"
                         onClick={() => onServiceSelect(s.id, s.name)}
                         onDoubleClick={() => onServiceDoubleClick(s.id, s.name)}
-                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 dark:hover:bg-blue-950/30 flex justify-between items-center border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors"
+                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-blue-50 dark:hover:bg-blue-950/30 flex justify-between items-center gap-3 border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors"
                       >
-                        <span className="font-medium">{s.name}</span>
-                        <span className="text-blue-600 dark:text-blue-400 font-semibold">{s.price.toFixed(2)} RON</span>
+                        <span className="font-medium min-w-0 flex-1 truncate">{s.name}</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-semibold flex-shrink-0">{s.price.toFixed(2)} RON</span>
                       </button>
                     ))}
                   {serviceSearchQuery && availableServices.filter(s => s.name.toLowerCase().includes(serviceSearchQuery.toLowerCase())).length === 0 && (

@@ -138,41 +138,25 @@ export function usePreturiTrayOperations({
       return
     }
 
-    // Verifică dacă există deja o tăviță cu acest număr care conține instrumente dintr-o altă fișă
+    // Verifică disponibilitatea tăviței la nivel global (număr + mărime unice)
     try {
-      const { data: existingTrays, error: checkError } = await supabase
-        .from('trays')
-        .select(`
-          id,
-          number,
-          service_file_id,
-          service_file:service_files!inner(id, number, lead_id)
-        `)
-        .eq('number', newTrayNumber.trim())
-        .neq('service_file_id', fisaId || '')
+      const { checkTrayAvailability } = await import('@/lib/supabase/serviceFileOperations')
+      const { available, error: availError } = await checkTrayAvailability(newTrayNumber.trim(), newTraySize)
       
-      if (checkError) {
-        console.error('Error checking existing trays:', checkError)
-      } else if (existingTrays && existingTrays.length > 0) {
-        const trayIds = existingTrays.map((t: any) => t.id)
-        const { data: trayItems, error: itemsError } = await supabase
-          .from('tray_items')
-          .select('tray_id, instrument_id')
-          .in('tray_id', trayIds)
-          .not('instrument_id', 'is', null)
-          .limit(1)
-        
-        if (itemsError) {
-          console.error('Error checking tray items:', itemsError)
-        } else if (trayItems && trayItems.length > 0) {
-          const occupiedTray = existingTrays.find((t: any) => t.id === trayItems[0].tray_id)
-          const serviceFileNumber = (occupiedTray as any)?.service_file?.number || 'necunoscută'
-          toast.error(`Tăvița "${newTrayNumber.trim()}" este deja ocupată de instrumente din fișa "${serviceFileNumber}". Te rog alege alt număr.`)
-          return
-        }
+      if (availError) {
+        console.error('Error checking tray availability:', availError)
+        toast.error('Eroare la verificarea disponibilității tăviței')
+        return
+      }
+      
+      if (!available) {
+        toast.error(`Tăvița cu numărul "${newTrayNumber.trim()}" și mărimea "${newTraySize}" este deja înregistrată în sistem. Te rog alege o altă combinație.`)
+        return
       }
     } catch (err: any) {
-      console.error('Error validating tray number:', err)
+      console.error('Error validating tray availability:', err)
+      toast.error('Eroare la validarea tăviței: ' + (err?.message || 'Eroare necunoscută'))
+      return
     }
 
     setCreatingTray(true)
@@ -229,41 +213,26 @@ export function usePreturiTrayOperations({
 
     // Verifică dacă numărul nou este diferit de cel curent
     if (editingTrayNumber.trim() !== (selectedQuote.number || '')) {
+      // Verifică disponibilitatea tăviței la nivel global, excluzând tăvița curentă
       try {
-        const { data: existingTrays, error: checkError } = await supabase
-          .from('trays')
-          .select(`
-            id,
-            number,
-            service_file_id,
-            service_file:service_files!inner(id, number, lead_id)
-          `)
-          .eq('number', editingTrayNumber.trim())
-          .neq('id', selectedQuote.id)
-          .neq('service_file_id', fisaId || '')
+        const { checkTrayAvailability } = await import('@/lib/supabase/serviceFileOperations')
+        const { available, existingTray, error: availError } = await checkTrayAvailability(editingTrayNumber.trim(), editingTraySize)
         
-        if (checkError) {
-          console.error('Error checking existing trays:', checkError)
-        } else if (existingTrays && existingTrays.length > 0) {
-          const trayIds = existingTrays.map((t: any) => t.id)
-          const { data: trayItems, error: itemsError } = await supabase
-            .from('tray_items')
-            .select('tray_id, instrument_id')
-            .in('tray_id', trayIds)
-            .not('instrument_id', 'is', null)
-            .limit(1)
-          
-          if (itemsError) {
-            console.error('Error checking tray items:', itemsError)
-          } else if (trayItems && trayItems.length > 0) {
-            const occupiedTray = existingTrays.find((t: any) => t.id === trayItems[0].tray_id)
-            const serviceFileNumber = (occupiedTray as any)?.service_file?.number || 'necunoscută'
-            toast.error(`Tăvița "${editingTrayNumber.trim()}" este deja ocupată de instrumente din fișa "${serviceFileNumber}". Te rog alege alt număr.`)
-            return
-          }
+        if (availError) {
+          console.error('Error checking tray availability:', availError)
+          toast.error('Eroare la verificarea disponibilității tăviței')
+          return
+        }
+        
+        // Dacă o tăviță cu acest număr și mărime există și nu e cea curentă, aruncă eroare
+        if (!available && existingTray && existingTray.id !== selectedQuote.id) {
+          toast.error(`Tăvița cu numărul "${editingTrayNumber.trim()}" și mărimea "${editingTraySize}" este deja înregistrată în sistem. Te rog alege o altă combinație.`)
+          return
         }
       } catch (err: any) {
-        console.error('Error validating tray number:', err)
+        console.error('Error validating tray availability:', err)
+        toast.error('Eroare la validarea tăviței: ' + (err?.message || 'Eroare necunoscută'))
+        return
       }
     }
 
@@ -390,6 +359,27 @@ export function usePreturiTrayOperations({
       
       if (!fisaId) {
         toast.error('Fișa de serviciu nu este setată')
+        return
+      }
+
+      // Verifică disponibilitatea tăviței la nivel global (număr + mărime unice)
+      try {
+        const { checkTrayAvailability } = await import('@/lib/supabase/serviceFileOperations')
+        const { available, error: availError } = await checkTrayAvailability(newTrayNumber.trim(), newTraySize || 'm')
+        
+        if (availError) {
+          console.error('Error checking tray availability:', availError)
+          toast.error('Eroare la verificarea disponibilității tăviței')
+          return
+        }
+        
+        if (!available) {
+          toast.error(`Tăvița cu numărul "${newTrayNumber.trim()}" și mărimea "${newTraySize || 'm'}" este deja înregistrată în sistem. Te rog alege o altă combinație.`)
+          return
+        }
+      } catch (err: any) {
+        console.error('Error validating tray availability:', err)
+        toast.error('Eroare la validarea tăviței: ' + (err?.message || 'Eroare necunoscută'))
         return
       }
 

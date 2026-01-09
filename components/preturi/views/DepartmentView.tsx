@@ -495,6 +495,7 @@ export function DepartmentView({
           onRemoveSerialNumber={onRemoveSerialNumber}
           onUpdateSerialGarantie={onUpdateSerialGarantie}
           setIsDirty={setIsDirty}
+          isAddInstrumentDisabled={true}
         />
         
         <AddServiceForm

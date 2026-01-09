@@ -98,6 +98,10 @@ interface VanzariViewProps {
   onUpdateSerialGarantie?: (groupIndex: number, serialIndex: number, garantie: boolean) => void
   setIsDirty?: (dirty: boolean) => void
   
+  // Flags pentru permisiuni
+  isVanzariPipeline?: boolean
+  isReceptiePipeline?: boolean
+  
   // Computed
   currentInstrumentId: string | null
   hasServicesOrInstrumentInSheet: boolean
@@ -219,6 +223,8 @@ export function VanzariView({
   onImageUpload,
   onDownloadAllImages,
   onImageDelete,
+  isVanzariPipeline = false,
+  isReceptiePipeline = false,
 }: VanzariViewProps) {
   // VERIFICARE: Fișa este LOCKED dacă a fost deja trimisă (office_direct sau curier_trimis este true)
   // Odată trimisă, fișa devine read-only și nu mai poate fi modificată
@@ -398,7 +404,25 @@ export function VanzariView({
 
      
       
-      
+        {canViewTrayImages && selectedQuoteId && !isServiceFileLocked && (
+        <TrayImagesSection
+          trayImages={trayImages}
+          uploadingImage={uploadingImage}
+          isImagesExpanded={isImagesExpanded}
+          canAddTrayImages={canAddTrayImages && !isServiceFileLocked}
+          canViewTrayImages={canViewTrayImages}
+          selectedQuoteId={selectedQuoteId}
+          onToggleExpanded={onToggleImagesExpanded || (() => {})}
+          onImageUpload={isServiceFileLocked ? (() => {}) : (event) => {
+            const file = event.target.files?.[0]
+            if (file && onImageUpload) {
+              onImageUpload(file)
+            }
+          }}
+          onDownloadAll={onDownloadAllImages || (() => {})}
+          onImageDelete={isServiceFileLocked ? (() => {}) : (onImageDelete || (() => {}))}
+        />
+      )}
       {/* Detalii comandă - read-only când fișa este locked */}
       <TrayDetailsSection
         trayDetails={trayDetails}
@@ -406,6 +430,8 @@ export function VanzariView({
         isCommercialPipeline={true}
         onDetailsChange={isServiceFileLocked ? undefined : onDetailsChange}
         setIsDirty={isServiceFileLocked ? undefined : setIsDirty}
+        isVanzariPipeline={isVanzariPipeline}
+        isReceptiePipeline={isReceptiePipeline}
       />
       
       {/* Formulare de editare - ASCUNSE când fișa este locked */}
@@ -520,11 +546,34 @@ export function VanzariView({
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground py-2">
                     <div className="flex flex-col gap-0.5">
-                      <span className="font-medium">{brandName}</span>
-                      {serialNumbers.length > 0 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {serialNumbers.join(', ')}
-                        </span>
+                      {isServiceFileLocked ? (
+                        <>
+                          <span className="font-medium">{brandName}</span>
+                          {serialNumbers.length > 0 && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {serialNumbers.join(', ')}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            className="h-6 text-[10px] w-24"
+                            placeholder="Brand..."
+                            value={it.brand || ''}
+                            onChange={e => {
+                              onUpdateItem(it.id, { brand: e.target.value || null });
+                            }}
+                          />
+                          <Input
+                            className="h-6 text-[10px] w-28"
+                            placeholder="Serial..."
+                            value={it.serial_number || ''}
+                            onChange={e => {
+                              onUpdateItem(it.id, { serial_number: e.target.value || null });
+                            }}
+                          />
+                        </>
                       )}
                     </div>
                   </TableCell>
@@ -594,26 +643,7 @@ export function VanzariView({
         </Table>
       </div>
       
-      {/* Galerie Imagini Tăviță - read-only când fișa este locked */}
-      {canViewTrayImages && selectedQuoteId && (
-        <TrayImagesSection
-          trayImages={trayImages}
-          uploadingImage={uploadingImage}
-          isImagesExpanded={isImagesExpanded}
-          canAddTrayImages={canAddTrayImages && !isServiceFileLocked}
-          canViewTrayImages={canViewTrayImages}
-          selectedQuoteId={selectedQuoteId}
-          onToggleExpanded={onToggleImagesExpanded || (() => {})}
-          onImageUpload={isServiceFileLocked ? (() => {}) : (event) => {
-            const file = event.target.files?.[0]
-            if (file && onImageUpload) {
-              onImageUpload(file)
-            }
-          }}
-          onDownloadAll={onDownloadAllImages || (() => {})}
-          onImageDelete={isServiceFileLocked ? (() => {}) : (onImageDelete || (() => {}))}
-        />
-      )}
+     
 
       {/* Totals - stilizat ca în Recepție și Department */}
       <TotalsSection

@@ -541,3 +541,129 @@ export async function moveTrayToPipeline(
     }
   }
 }
+
+/**
+ * Mişte lead-urile care au cel puţin o fişă de serviciu în stagiul "Lead-uri Vechi" din pipeline-ul "Vânzări".
+ * Această funcție identifică toate lead-urile care au cel puţin o fişă de serviciu asociată,
+ * și le mişte automat în stagiul "Lead-uri Vechi" din pipeline-ul de vânzări.
+ * 
+ * @returns Obiect cu rezultat: { success: boolean, movedLeadsCount: number, error?: any }
+ */
+export async function moveLeadsWithServiceFilesToOldStage(): Promise<{
+  success: boolean
+  movedLeadsCount: number
+  error?: any
+}> {
+  try {
+    const supabase = supabaseBrowser()
+    
+    // 1. Găsește pipeline-ul "Vânzări"
+    const { data: pipelines, error: pipelineError } = await supabase
+      .from('pipelines')
+      .select('id, name, stages(id, name)')
+      .ilike('name', '%Vânzări%')
+    
+    if (pipelineError) {
+      throw new Error(`Error fetching pipelines: ${pipelineError.message}`)
+    }
+    
+    const vanzariPipeline = pipelines?.[0]
+    if (!vanzariPipeline) {
+      throw new Error('Pipeline "Vânzări" not found')
+    }
+    
+    // 2. Găsește stagiul "Lead-uri Vechi" în pipeline-ul Vânzări
+    const oldLeadsStage = (vanzariPipeline.stages as any[])?.find((s: any) =>
+      s.name?.toLowerCase().includes('vechi') || s.name?.toLowerCase().includes('old')
+    )
+    
+    if (!oldLeadsStage) {
+      throw new Error('Stage "Lead-uri Vechi" not found in Vânzări pipeline')
+    }
+    
+    // 3. Găsește toate lead-urile care au cel puţin o fişă de serviciu
+    // SELECT lead_id din service_files, apoi DISTINCT pentru a obţine lead-urile unice
+    const { data: serviceFileLeads, error: sfError } = await supabase
+      .from('service_files')
+      .select('lead_id')
+    
+    if (sfError) {
+      throw new Error(`Error fetching service files: ${sfError.message}`)
+    }
+    
+    // Obţine lista unică de lead IDs
+    const leadIdsWithServiceFiles = [...new Set(
+      (serviceFileLeads as any[])
+        ?.map((sf: any) => sf.lead_id)
+        .filter((id: string | null) => id !== null && id !== undefined) || []
+    )]
+    
+    if (leadIdsWithServiceFiles.length === 0) {
+      return { success: true, movedLeadsCount: 0 }
+    }
+    
+    // 4. Pentru fiecare lead, mişte-l în stagiul "Lead-uri Vechi"
+    let movedCount = 0
+    
+    for (const leadId of leadIdsWithServiceFiles) {
+      try {
+        // Verifică dacă lead-ul este deja în pipeline-ul Vânzări
+        const { data: existingItem, error: checkError } = await supabase
+          .from('pipeline_items')
+          .select('id')
+          .eq('type', 'lead')
+          .eq('item_id', leadId)
+          .eq('pipeline_id', vanzariPipeline.id)
+          .maybeSingle()
+        
+        if (checkError && checkError.code !== 'PGRST116') {
+          console.warn(`[moveLeadsWithServiceFilesToOldStage] Error checking lead ${leadId}:`, checkError)
+          continue
+        }
+        
+        if (existingItem) {
+          // Lead-ul este deja în pipeline, mişte-l în stagiul "Lead-uri Vechi"
+          const { error: moveError } = await supabase
+            .from('pipeline_items')
+            .update({
+              stage_id: oldLeadsStage.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingItem.id)
+          
+          if (moveError) {
+            console.warn(`[moveLeadsWithServiceFilesToOldStage] Error moving lead ${leadId}:`, moveError)
+          } else {
+            movedCount++
+          }
+        } else {
+          // Lead-ul nu este în pipeline, adaug-ă-l
+          const { error: addError } = await supabase
+            .from('pipeline_items')
+            .insert({
+              type: 'lead',
+              item_id: leadId,
+              pipeline_id: vanzariPipeline.id,
+              stage_id: oldLeadsStage.id,
+            })
+          
+          if (addError) {
+            console.warn(`[moveLeadsWithServiceFilesToOldStage] Error adding lead ${leadId}:`, addError)
+          } else {
+            movedCount++
+          }
+        }
+      } catch (err) {
+        console.error(`[moveLeadsWithServiceFilesToOldStage] Unexpected error for lead ${leadId}:`, err)
+      }
+    }
+    
+    return { success: true, movedLeadsCount: movedCount }
+  } catch (error: any) {
+    return {
+      success: false,
+      movedLeadsCount: 0,
+      error: error?.message || 'Unknown error',
+    }
+  }
+}

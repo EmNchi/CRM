@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,8 @@ interface TrayDetailsSectionProps {
   setIsDirty?: (dirty: boolean) => void
   isExpanded?: boolean
   onToggleExpanded?: () => void
+  isVanzariPipeline?: boolean
+  isReceptiePipeline?: boolean
 }
 
 export function TrayDetailsSection({
@@ -25,8 +27,16 @@ export function TrayDetailsSection({
   setIsDirty,
   isExpanded: externalIsExpanded,
   onToggleExpanded: externalOnToggleExpanded,
+  isVanzariPipeline = false,
+  isReceptiePipeline = false,
 }: TrayDetailsSectionProps) {
   const { isAdmin } = useRole()
+  
+  // Determină dacă utilizatorul poate edita - vânzători (Vânzări + Recepție) și admin
+  const canEdit = useMemo(() => {
+    return isAdmin || isVanzariPipeline || isReceptiePipeline
+  }, [isAdmin, isVanzariPipeline, isReceptiePipeline])
+  
   // State local dacă nu este controlat extern
   const [internalIsExpanded, setInternalIsExpanded] = useState(true)
   const isExpanded = externalIsExpanded !== undefined ? externalIsExpanded : internalIsExpanded
@@ -90,15 +100,15 @@ export function TrayDetailsSection({
                 onDetailsChange(e.target.value)
                 if (setIsDirty) setIsDirty(true)
               }}
-              placeholder={isAdmin ? 'Exemple: "Clienta dorește vârfurile foarte ascuțite, fără polish", "Nu scurtați lama", "Preferă retur prin curier".' : 'Doar administratorii pot edita aceste informații.'}
+              placeholder={canEdit ? 'Exemple: "Clienta dorește vârfurile foarte ascuțite, fără polish", "Nu scurtați lama", "Preferă retur prin curier".' : 'Numai vânzători și recepție pot edita aceste informații.'}
               className="min-h-[100px] text-sm resize-none border-amber-200/80 dark:border-amber-700/50 focus-visible:ring-amber-400/50 focus-visible:border-amber-400 bg-white/90 dark:bg-slate-950/60 placeholder:text-amber-600/40 dark:placeholder:text-amber-400/30"
-              disabled={!isAdmin}
+              disabled={!canEdit}
             />
           )}
 
           <p className="text-[10px] text-amber-700/70 dark:text-amber-300/50 flex items-center gap-1">
             <span className="inline-block h-1 w-1 rounded-full bg-amber-400" />
-            {isAdmin 
+            {canEdit 
               ? "Salvare automată la închiderea panoului • Vizibil în toate departamentele" 
               : "Vizualizare protejată • Vizibil în toate departamentele"}
           </p>

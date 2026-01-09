@@ -139,7 +139,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
             !(directServiceFiles && Array.isArray(directServiceFiles) && (() => {
         // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
         for (let i = 0; i < directServiceFiles.length; i++) {
-          const sf = directServiceFiles[i]
+          const sf = directServiceFiles[i] as any
           if (sf && sf.id === id) {
             return true
           }
@@ -223,20 +223,6 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const deFacturatStage = findStageByPattern(receptieStages, 'DE_FACTURAT')
     const coletAjunsStage = findStageByPattern(receptieStages, 'COLET_AJUNS')
     
-    // Găsește stage-urile pentru tag-urile de departament
-    const horecaStage = findStageByPattern(receptieStages, 'HORECA')
-    const saloaneStage = findStageByPattern(receptieStages, 'SALOANE')
-    const frizeriiStage = findStageByPattern(receptieStages, 'FRIZERII')
-    const reparatiiStage = findStageByPattern(receptieStages, 'REPARATII')
-    
-    // Map pentru tag-uri de departament -> stage
-    const departmentTagToStage = new Map<string, { id: string; name: string } | undefined>([
-      ['Horeca', horecaStage],
-      ['Saloane', saloaneStage],
-      ['Frizerii', frizeriiStage],
-      ['Reparatii', reparatiiStage],
-    ])
-    
     // Check which service files have trays in department pipelines
     const serviceFilesWithTraysInDepartments = await this.getServiceFilesWithTraysInDepartments(
       context,
@@ -259,22 +245,19 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
         const leadTags = tagMap.get(serviceFile.lead.id) || []
         for (const tag of leadTags) {
           if (departmentTags.includes(tag.name)) {
-            departmentTagStage = departmentTagToStage.get(tag.name)
-            break // Folosește primul tag de departament găsit
+            // NU FACEM MAPARE LA STAGE pentru tag-uri de departament
+            // Tags-urile sunt doar pentru informații, nu pentru routing în Recepție
+            break
           }
         }
       }
       
-      // Determine target stage based on priority: Department Tag Stage > In Asteptare > In Lucru > De Facturat > Colet Ajuns
-      // IMPORTANT: Stage-ul bazat pe tag-ul de departament are prioritate maximă
+      // Determine target stage based on priority: In Asteptare > In Lucru > De Facturat > Colet Ajuns
+      // IMPORTANT: Tag-urile de departament NU determina stage-ul în Recepție
       let targetStage: { id: string; name: string } | undefined
       
-      // Prioritatea 1: Stage-ul bazat pe tag-ul de departament
-      if (departmentTagStage) {
-        targetStage = departmentTagStage
-      }
-      // Prioritatea 2: Verifică dacă există tăvițe cu status specific
-      else if (serviceFileTraysInfo && serviceFileTraysInfo.trays.length > 0) {
+      // Verifică dacă există tăvițe cu status specific
+      if (serviceFileTraysInfo && serviceFileTraysInfo.trays.length > 0) {
         // Prioritatea: In Asteptare > In Lucru > De Facturat
         if (serviceFileTraysInfo.hasInAsteptare && inAsteptareStage) {
           // Dacă există tăvițe în "In Asteptare" sau "Astept Piese", mută în "In Asteptare"
@@ -422,6 +405,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       }
       return false
     })
+  
     
     if (deptPipelines.length === 0) {
       return result
@@ -431,12 +415,14 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     
     // Find stages in department pipelines that matter for Receptie
     // Include "ASTEPT_PIESE" în verificarea pentru "IN_ASTEPTARE"
+    // IMPORTANT: Include și stagiul "NOUĂ" pentru tăvițele fără tehnician atribuit
     const relevantDeptStages = context.allStages.filter(s => 
       deptPipelineIds.includes(s.pipeline_id) &&
       (matchesStagePattern(s.name, 'IN_LUCRU') ||
        matchesStagePattern(s.name, 'IN_ASTEPTARE') ||
        matchesStagePattern(s.name, 'ASTEPT_PIESE') ||
-       matchesStagePattern(s.name, 'FINALIZARE'))
+       matchesStagePattern(s.name, 'FINALIZARE') ||
+       matchesStagePattern(s.name, 'NOUA'))     // Include tăvițe neatribuite din stagiul Nouă
     )
     
     if (relevantDeptStages.length === 0) {
@@ -460,7 +446,8 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     
     // Map tray to stage type
     // Include "ASTEPT_PIESE" în verificarea pentru "in_asteptare"
-    const trayToStageType = new Map<string, 'in_lucru' | 'in_asteptare' | 'finalizare'>()
+    // IMPORTANT: Pentru tăvițele din stagiul "NOUĂ", include doar cele fără tehnician
+    const trayToStageType = new Map<string, 'in_lucru' | 'in_asteptare' | 'finalizare' | 'new_unassigned'>()
     ;(trayPipelineItems as Array<{ item_id: string; stage_id: string }>).forEach(item => {
       const stage = relevantDeptStages.find(s => s.id === item.stage_id)
       if (stage) {
@@ -470,6 +457,9 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
           trayToStageType.set(item.item_id, 'in_asteptare')
         } else if (matchesStagePattern(stage.name, 'FINALIZARE')) {
           trayToStageType.set(item.item_id, 'finalizare')
+        } else if (matchesStagePattern(stage.name, 'NOUA')) {
+          // Marca ca 'new_unassigned' - va fi verificat mai târziu dacă are tehnician
+          trayToStageType.set(item.item_id, 'new_unassigned')
         }
       }
     })
@@ -505,19 +495,23 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       .select('item_id, stage_id')
       .eq('type', 'tray')
       .in('item_id', allTrayIds)
-      .in('pipeline_id', deptPipelineIds)
+      // IMPORTANT: NU filtram după pipeline_id - vrem TOATE tăvițele indiferent de pipeline
+      // deoarece o fişă de serviciu poate avea tăvițe în orice pipeline (departament)
     
     // Map all trays to their stage types
+    // IMPORTANT: Pentru tăvițele din stagiul "NOUĂ", marcăm ca 'new_unassigned' pentru filtrare ulterioară
     const allTrayToStageType = new Map<string, string>()
     ;(allTrayPipelineItems as Array<{ item_id: string; stage_id: string }> | null)?.forEach(item => {
       const stage = context.allStages.find(s => s.id === item.stage_id)
       if (stage) {
         if (matchesStagePattern(stage.name, 'IN_LUCRU')) {
           allTrayToStageType.set(item.item_id, 'in_lucru')
-        } else if (matchesStagePattern(stage.name, 'IN_ASTEPTARE')) {
+        } else if (matchesStagePattern(stage.name, 'IN_ASTEPTARE') || matchesStagePattern(stage.name, 'ASTEPT_PIESE')) {
           allTrayToStageType.set(item.item_id, 'in_asteptare')
         } else if (matchesStagePattern(stage.name, 'FINALIZARE')) {
           allTrayToStageType.set(item.item_id, 'finalizare')
+        } else if (matchesStagePattern(stage.name, 'NOUA')) {
+          allTrayToStageType.set(item.item_id, 'new_unassigned')
         }
       }
     })
@@ -536,9 +530,10 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       
       const hasInLucru = stageTypes.includes('in_lucru')
       const hasInAsteptare = stageTypes.includes('in_asteptare')
+      const hasNewUnassigned = stageTypes.includes('new_unassigned')
       const allFinalizare = stageTypes.length > 0 && stageTypes.every(s => s === 'finalizare')
       
-      // Determine Receptie stage based on priority: In Asteptare > In Lucru > De Facturat
+      // Determine Receptie stage based on priority: In Asteptare > In Lucru > De Facturat > Colet Ajuns (new_unassigned)
       // IMPORTANT: "In Asteptare" are prioritate mai mare decât "In Lucru" și "De Facturat"
       let receptieStage: { id: string; name: string } | undefined
       
@@ -551,11 +546,14 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
       } else if (allFinalizare) {
         // Dacă toate tăvițele sunt finalizate, mută în "De Facturat"
         receptieStage = findStageByPattern(receptieStages, 'DE_FACTURAT')
+      } else if (hasNewUnassigned) {
+        // Dacă sunt tăvițe neatribuite din stagiul NOUĂ, pune-le în COLET AJUNS
+        receptieStage = findStageByPattern(receptieStages, 'COLET_AJUNS')
       }
       
-      // Fallback
+      // Fallback - dacă nu e nicio altă situație
       if (!receptieStage) {
-        receptieStage = findStageByPattern(receptieStages, 'IN_LUCRU')
+        receptieStage = findStageByPattern(receptieStages, 'COLET_AJUNS')
       }
       
       if (receptieStage) {
@@ -801,16 +799,18 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     context: KanbanContext,
     serviceFileIds: string[]
   ): Promise<Map<string, {
-    trays: Array<{ trayNumber: string | null; traySize: string | null; technician: string | null; status: 'in_lucru' | 'in_asteptare' | 'finalizare' | null; department: string | null }>
+    trays: Array<{ trayNumber: string | null; traySize: string | null; technician: string | null; status: 'in_lucru' | 'in_asteptare' | 'finalizare' | 'noua' | null; department: string | null }>
     hasInLucru: boolean
     hasInAsteptare: boolean
     allFinalizare: boolean
+    hasNoua: boolean
   }>> {
     const result = new Map<string, {
-      trays: Array<{ trayNumber: string | null; traySize: string | null; technician: string | null; status: 'in_lucru' | 'in_asteptare' | 'finalizare' | null; department: string | null }>
+      trays: Array<{ trayNumber: string | null; traySize: string | null; technician: string | null; status: 'in_lucru' | 'in_asteptare' | 'finalizare' | 'noua' | null; department: string | null }>
       hasInLucru: boolean
       hasInAsteptare: boolean
       allFinalizare: boolean
+      hasNoua: boolean
     }>()
     
     if (serviceFileIds.length === 0) {
@@ -864,7 +864,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     }
     
     // Map trays to their stage types and departments
-    const trayToStageType = new Map<string, 'in_lucru' | 'in_asteptare' | 'finalizare' | 'other'>()
+    const trayToStageType = new Map<string, 'in_lucru' | 'in_asteptare' | 'finalizare' | 'noua' | 'other'>()
     const trayToDepartment = new Map<string, string | null>()
     ;(allTrayPipelineItems as Array<{ item_id: string; stage_id: string; pipeline_id: string }>).forEach(item => {
       const stage = context.allStages.find(s => s.id === item.stage_id)
@@ -875,6 +875,8 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
           trayToStageType.set(item.item_id, 'in_asteptare')
         } else if (matchesStagePattern(stage.name, 'FINALIZARE')) {
           trayToStageType.set(item.item_id, 'finalizare')
+        } else if (matchesStagePattern(stage.name, 'NOUA')) {
+          trayToStageType.set(item.item_id, 'noua')
         } else {
           trayToStageType.set(item.item_id, 'other')
         }
@@ -892,7 +894,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
     const technicianMap = extractTechnicianMap(trayItems || [])
     
     // Group trays by service file and determine status
-    // Include ALL trays that are in relevant stages (in_lucru, in_asteptare, finalizare)
+    // Include ALL trays that are in relevant stages (in_lucru, in_asteptare, finalizare, noua)
     ;(allTrays as Array<{ id: string; number: string | null; size: string | null; service_file_id: string | null }>).forEach(tray => {
       if (!tray.service_file_id) return
       
@@ -911,7 +913,8 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
           trays: [],
           hasInLucru: false,
           hasInAsteptare: false,
-          allFinalizare: false
+          allFinalizare: false,
+          hasNoua: false
         })
       }
       
@@ -925,7 +928,7 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
         trayNumber: tray.number,
         traySize: tray.size,
         technician,
-        status: stageType === 'in_lucru' || stageType === 'in_asteptare' || stageType === 'finalizare' ? stageType : null,
+        status: stageType === 'in_lucru' || stageType === 'in_asteptare' || stageType === 'finalizare' || stageType === 'noua' ? stageType : null,
         department
       })
       
@@ -934,6 +937,8 @@ export class ReceptiePipelineStrategy implements PipelineStrategy {
         info.hasInLucru = true
       } else if (stageType === 'in_asteptare') {
         info.hasInAsteptare = true
+      } else if (stageType === 'noua') {
+        info.hasNoua = true
       }
     })
     

@@ -219,6 +219,7 @@ export function useLeadDetailsBusiness({
   const trayDetailsHook = useLeadDetailsTrayDetails({
     fisaId: state.selectedFisaId,
     isVanzariPipeline,
+    isReceptiePipeline,
     trayDetails: state.trayDetails,
     setTrayDetails: state.setTrayDetails,
     setSavingTrayDetails: state.setSavingTrayDetails,
@@ -239,8 +240,8 @@ export function useLeadDetailsBusiness({
   // Handler pentru Close care salvează înainte de a închide
   const handleCloseWithSave = useCallback(async () => {
     try {
-      // Salvează detaliile înainte de a închide (doar dacă suntem în Vanzari)
-      if (isVanzariPipeline) {
+      // Salvează detaliile înainte de a închide (dacă suntem în Vanzari sau Receptie)
+      if (isVanzariPipeline || isReceptiePipeline) {
         const serviceFileId = await getServiceFileId()
         if (serviceFileId && state.trayDetails !== undefined) {
           await trayDetailsHook.saveServiceFileDetails(state.trayDetails)
@@ -256,7 +257,7 @@ export function useLeadDetailsBusiness({
     }
     // Închide panoul
     onClose()
-  }, [onClose, state.trayDetails, trayDetailsHook.saveServiceFileDetails, getServiceFileId, isVanzariPipeline])
+  }, [onClose, state.trayDetails, trayDetailsHook.saveServiceFileDetails, getServiceFileId, isVanzariPipeline, isReceptiePipeline])
 
   return {
     // State

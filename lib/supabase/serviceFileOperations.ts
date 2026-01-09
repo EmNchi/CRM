@@ -308,6 +308,51 @@ export async function createTray(data: {
 }
 
 /**
+ * Verifică disponibilitatea unei tăvițe la nivel global.
+ * Compară numărul și mărimea introduse de utilizator cu toate tăvițele înregistrate în baza de date.
+ * Dacă o tăviță cu același număr și mărime există deja, funcția returnează o eroare.
+ * Aceasta asigură că fiecare combinație (număr + mărime) este unică în sistem.
+ * 
+ * @param trayNumber - Numărul tăviței (ex: "Tăbliță 1")
+ * @param traySize - Mărimea tăviței (ex: "M", "L", "XL")
+ * @returns Obiect cu available: true dacă tăvița poate fi creată, false dacă există deja,
+ *          și existingTray cu datele tăviței existente (dacă aceasta există)
+ */
+export async function checkTrayAvailability(
+  trayNumber: string,
+  traySize: string
+): Promise<{ available: boolean; existingTray?: Tray; error: any }> {
+  try {
+    // Caută orice tăviță cu aceeași combinație de număr și mărime (global, nu per service_file)
+    const { data, error } = await supabase
+      .from('trays')
+      .select('*')
+      .eq('number', trayNumber.trim())
+      .eq('size', traySize.trim())
+      .maybeSingle()
+    
+    if (error) {
+      console.error('[checkTrayAvailability] Error checking tray availability:', error)
+      throw error
+    }
+    
+    // Dacă nu găsim vreo tăviță cu acest număr și mărime, e disponibilă
+    if (!data) {
+      return { available: true, error: null }
+    }
+    
+    // Dacă găsim o tăviță existentă, nu e disponibilă
+    return { 
+      available: false, 
+      existingTray: data as Tray,
+      error: null 
+    }
+  } catch (error) {
+    return { available: false, error }
+  }
+}
+
+/**
  * Obține o tăviță după ID-ul său.
  * Returnează toate detaliile unei tăvițe, inclusiv număr, mărime, status și flag-ul urgent.
  * 

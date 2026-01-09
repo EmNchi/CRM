@@ -635,16 +635,29 @@ export function usePreturiSaveOperations(props: UsePreturiSaveOperationsProps) {
     setSaving(true)
     
     try {
+      // 1. Asigură-te că există o tăviță (trebuie să fie prima!)
+      const quoteToUse = await ensureTrayExists()
+      if (!quoteToUse) {
+        toast.error('Nu s-a putut crea sau găsi o tăviță pentru salvare')
+        setSaving(false)
+        return
+      }
+      
+      // Determină fisaId din quote
+      const serviceFileIdToUse = fisaId || quoteToUse.service_file_id
+      
       // OPTIMIZARE: Combină saveServiceFileDetails și saveDeliveryCheckboxes într-un singur UPDATE
       // pentru a evita race conditions și a reduce numărul de call-uri
-      if (fisaId) {
-        const detailsToSave = trayDetails !== undefined 
+      if (serviceFileIdToUse) {
+        const detailsToSave = trayDetails !== undefined && trayDetails !== null
           ? JSON.stringify({
               text: trayDetails,
               paymentCash,
               paymentCard
             })
           : undefined
+        
+        console.log('[DEBUG] saveAllAndLog - About to save:', { serviceFileIdToUse, trayDetails, detailsToSave })
         
         // Combină ambele operații într-un singur UPDATE
         const combinedUpdates: any = {}
@@ -659,9 +672,12 @@ export function usePreturiSaveOperations(props: UsePreturiSaveOperationsProps) {
         }
         
         if (Object.keys(combinedUpdates).length > 0) {
-          const { error: updateError } = await updateServiceFile(fisaId, combinedUpdates)
+          console.log('[DEBUG] Updating service file with:', combinedUpdates)
+          const { error: updateError } = await updateServiceFile(serviceFileIdToUse, combinedUpdates)
           if (updateError) {
             console.error('Eroare la salvarea detaliilor și checkbox-urilor:', updateError)
+          } else {
+            console.log('[DEBUG] Service file updated successfully with details:', combinedUpdates.details)
           }
         }
         
@@ -677,19 +693,11 @@ export function usePreturiSaveOperations(props: UsePreturiSaveOperationsProps) {
                 s.is_active && s.name?.toLowerCase() === stageName.toLowerCase()
               )
               if (stage) {
-                await addServiceFileToPipeline(fisaId, receptiePipeline.id, stage.id)
+                await addServiceFileToPipeline(serviceFileIdToUse, receptiePipeline.id, stage.id)
               }
             }
           }
         }
-      }
-      
-      // 2. Asigură-te că există o tăviță (trebuie să fie după operațiile de mai sus)
-      const quoteToUse = await ensureTrayExists()
-      if (!quoteToUse) {
-        toast.error('Nu s-a putut crea sau găsi o tăviță pentru salvare')
-        setSaving(false)
-        return
       }
       
       // 4. Salvează brand/serial data dacă există și reîncarcă items-urile

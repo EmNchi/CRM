@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -44,6 +44,9 @@ export function ItemsTable({
   const safeInstruments = Array.isArray(instruments) ? instruments : []
   const safeTechnicians = Array.isArray(technicians) ? technicians : []
   const safePipelinesWithIds = Array.isArray(pipelinesWithIds) ? pipelinesWithIds : []
+  
+  // State pentru bifarea serial numberurilor
+  const [verifiedSerials, setVerifiedSerials] = useState<Set<string>>(new Set())
   
   // Grupează items-urile pe servicii cu același nume și service_id, combinând brand-urile
   const groupedItems = useMemo(() => {
@@ -276,22 +279,43 @@ export function ItemsTable({
               
               const brandName = bg.brand || '—'
               
-              // IMPORTANT: Creează un badge separat pentru fiecare serial number, afișat vertical pentru claritate
+              // IMPORTANT: Creează un badge separat pentru fiecare serial number, cu checkbox, afișat vertical pentru claritate
               return serialNumbers.map((sn: any, snIdx: number) => {
                 const serial = typeof sn === 'string' ? sn : (sn && typeof sn === 'object' ? sn?.serial || '' : '')
                 const serialDisplay = serial && serial.trim() ? serial.trim() : `Serial ${snIdx + 1}`
                 const garantie = typeof sn === 'object' ? (sn?.garantie || false) : (bg.garantie || false)
+                // Cheie unică pentru fiecare serial number
+                const verificationKey = `${item.id}_${bgIdx}_${snIdx}`
+                const isVerified = verifiedSerials.has(verificationKey)
                 
                 return (
                   <div 
                     key={`${bgIdx}-${snIdx}`}
                     className={cn(
-                      "flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium min-w-0",
-                      garantie 
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700"
-                        : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                      "flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium min-w-0 transition-all",
+                      isVerified
+                        ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 border border-green-300 dark:border-green-700"
+                        : garantie 
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700"
+                          : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                     )}
                   >
+                    <Checkbox 
+                      checked={isVerified}
+                      onCheckedChange={(checked) => {
+                        setVerifiedSerials((prev) => {
+                          const newSet = new Set(prev)
+                          if (checked) {
+                            newSet.add(verificationKey)
+                          } else {
+                            newSet.delete(verificationKey)
+                          }
+                          return newSet
+                        })
+                      }}
+                      className="h-3 w-3 flex-shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <Tag className="h-3 w-3 flex-shrink-0" />
                     <span className="font-semibold text-[11px]">{brandName}</span>
                     <span className="text-slate-400 dark:text-slate-500">—</span>
@@ -299,29 +323,41 @@ export function ItemsTable({
                     {garantie && (
                       <span className="text-emerald-600 dark:text-emerald-400 flex-shrink-0">✓</span>
                     )}
+                    {isVerified && (
+                      <span className="text-green-600 dark:text-green-400 flex-shrink-0 ml-auto">✓✓</span>
+                    )}
                   </div>
                 )
               })
             })}
           </div>
         )
-      } else if (item.brand || item.serial_number) {
+      } else {
+        // Pentru instrumente fără brand_groups (ex: ascuțire), afișăm câmpuri editabile pentru brand și serial
         return (
-          <span className={cn(
-            "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium",
-            item.garantie 
-              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-              : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-          )}>
-            <Tag className="h-2.5 w-2.5" />
-            {item.brand || '—'}
-            {item.serial_number && (
-              <span className="text-[9px] opacity-70">({item.serial_number})</span>
-            )}
-            {item.garantie && (
-              <span className="text-emerald-600">✓</span>
-            )}
-          </span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1">
+              <Tag className="h-2.5 w-2.5 text-slate-400 flex-shrink-0" />
+              <Input
+                className="h-6 text-[10px] w-24"
+                placeholder="Brand..."
+                value={item.brand || ''}
+                onChange={e => {
+                  onUpdateItem(item.id, { brand: e.target.value || null });
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+            <Input
+              className="h-6 text-[10px] w-28"
+              placeholder="Serial..."
+              value={item.serial_number || ''}
+              onChange={e => {
+                onUpdateItem(item.id, { serial_number: e.target.value || null });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
         )
       }
       return <span className="text-muted-foreground text-xs">—</span>

@@ -354,6 +354,8 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           onImageUpload={props.onImageUpload}
           onDownloadAllImages={props.onDownloadAllImages}
           onImageDelete={props.onImageDelete}
+          isVanzariPipeline={props.isVanzariPipeline}
+          isReceptiePipeline={props.isReceptiePipeline}
         />
         <CreateTrayDialog
           open={props.showCreateTrayDialog}
@@ -530,6 +532,17 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
           onNewTraySizeChange={props.onNewTraySizeChange}
           onMove={props.onMoveInstrumentConfirm}
           onCancel={props.onCancelMoveInstrument}
+        />
+        <CreateTrayDialog
+          open={props.showCreateTrayDialog}
+          onOpenChange={(open) => { if (!open) props.onCancelCreateTray() }}
+          newTrayNumber={props.newTrayNumber}
+          newTraySize={props.newTraySize === 'small' ? 's' : props.newTraySize === 'medium' ? 'm' : props.newTraySize === 'large' ? 'l' : props.newTraySize}
+          creatingTray={props.creatingTray}
+          onNumberChange={props.onNewTrayNumberChange}
+          onSizeChange={props.onNewTraySizeChange}
+          onCreate={props.onCreateTray}
+          onCancel={props.onCancelCreateTray}
         />
         <SendConfirmationDialog
           open={props.showSendConfirmation}
