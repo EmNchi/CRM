@@ -57,7 +57,9 @@ export function ItemsTable({
     }
     
     safeItems.forEach(item => {
-      if (!item || item.item_type === null) return
+      // Include items cu item_type null dacă au instrument_id (instrument fără serviciu)
+      if (!item) return
+      if (item.item_type === null && !item.instrument_id) return
       
       if (item.item_type === 'service' && item.service_id) {
         const key = `${item.service_id}_${item.name_snapshot || ''}`
@@ -143,10 +145,17 @@ export function ItemsTable({
     return result
   }, [safeItems])
   
-  const visibleItems = useMemo(() => groupedItems.filter(it => it.item_type !== null), [groupedItems])
+  // Include items cu item_type null dacă au instrument_id (instrument fără serviciu)
+  const visibleItems = useMemo(() => groupedItems.filter(it => it.item_type !== null || it.instrument_id), [groupedItems])
 
   const getInstrumentName = (item: LeadQuoteItem): string => {
     try {
+      // Instrument fără serviciu - are instrument_id direct pe item
+      if (item.instrument_id && (item.item_type === null || !item.service_id)) {
+        const instrument = safeInstruments.find(i => i && i.id === item.instrument_id)
+        return instrument?.name || item.instrument_id || '—'
+      }
+      
       if (item.item_type === 'service' && item.service_id) {
         const serviceDef = safeServices.find(s => s && s.id === item.service_id)
         if (serviceDef?.instrument_id) {
@@ -296,8 +305,8 @@ export function ItemsTable({
                       isVerified
                         ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 border border-green-300 dark:border-green-700"
                         : garantie 
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700"
-                          : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700"
+                        : "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                     )}
                   >
                     <Checkbox 
@@ -419,13 +428,18 @@ export function ItemsTable({
           const lineTotal = item.urgent ? afterDisc * (1 + URGENT_MARKUP_PCT / 100) : afterDisc
 
           const itemInstrument = getInstrumentName(item)
+          // Instrument fără serviciu: item_type === null și are instrument_id
+          const isInstrumentOnly = item.item_type === null && item.instrument_id
           const serviceName = item.item_type === 'service' 
             ? item.name_snapshot 
             : item.item_type === 'part' 
               ? 'Schimb piesă' 
-              : ''
+              : isInstrumentOnly
+                ? '(fără serviciu)'
+                : ''
 
-          const isFirstItem = isReceptiePipeline && onMoveInstrument 
+          // Butonul de mutare instrument - disponibil pentru TOATE pipeline-urile
+          const isFirstItem = onMoveInstrument 
             ? isFirstItemOfInstrument(item, safeItems)
             : false
           
@@ -476,7 +490,7 @@ export function ItemsTable({
                       Urgent
                     </span>
                   )}
-                  <span className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                  <span className={`text-sm truncate ${isInstrumentOnly ? 'italic text-slate-400 dark:text-slate-500' : 'font-medium text-slate-900 dark:text-slate-100'}`}>
                     {serviceName}
                   </span>
                 </div>
@@ -557,7 +571,8 @@ export function ItemsTable({
 
               {/* Actions */}
               <div className="col-span-1 flex justify-end gap-1">
-                {isReceptiePipeline && isFirstItem && instrumentGroup && onMoveInstrument && (
+                {/* Buton mutare instrument - disponibil pentru TOATE pipeline-urile */}
+                {isFirstItem && instrumentGroup && onMoveInstrument && (
                   <Button 
                     variant="ghost" 
                     size="icon" 

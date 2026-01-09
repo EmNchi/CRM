@@ -12,6 +12,7 @@ import {
 } from '@/lib/supabase/serviceFileOperations'
 import { listTrayImages } from '@/lib/supabase/imageOperations'
 import { addTrayToPipeline } from '@/lib/supabase/pipelineOperations'
+import { notifyTechniciansAboutNewTrays } from '@/lib/supabase/notificationOperations'
 import { 
   createQuoteForLead,
   updateQuote,
@@ -489,8 +490,14 @@ export function usePreturiTrayOperations({
             listTrayImages(currentUndefinedTray.id)
           ])
           
-          // Ștergem tăvița undefined DOAR dacă este goală (nu are nici items, nici imagini)
-          if ((!undefinedTrayItems || undefinedTrayItems.length === 0) && (!undefinedTrayImages || undefinedTrayImages.length === 0)) {
+          // Dacă tăvița undefined MAI ARE items, revenim pe ea pentru a continua distribuirea
+          if (undefinedTrayItems && undefinedTrayItems.length > 0) {
+            // IMPORTANT: Revenim pe tăvița undefined pentru a continua distribuirea
+            setSelectedQuoteId(currentUndefinedTray.id)
+            setItems(undefinedTrayItems)
+            // Nu ștergem tăvița, mai are items de distribuit
+          } else if ((!undefinedTrayItems || undefinedTrayItems.length === 0) && (!undefinedTrayImages || undefinedTrayImages.length === 0)) {
+            // Ștergem tăvița undefined DOAR dacă este goală (nu are nici items, nici imagini)
             try {
               const { success, error } = await deleteTray(currentUndefinedTray.id)
               if (success && !error) {
@@ -498,14 +505,17 @@ export function usePreturiTrayOperations({
                 const refreshedQuotes = refreshedQuotesData || []
                 setQuotes(refreshedQuotes)
                 
-                if (selectedQuoteId === currentUndefinedTray.id) {
-                  if (refreshedQuotes.length > 0) {
-                    setSelectedQuoteId(refreshedQuotes[0].id)
-                  } else {
-                    setSelectedQuoteId(null)
-                  }
+                // Selectează prima tăviță cu număr
+                if (refreshedQuotes.length > 0) {
+                  const firstNumberedTray = refreshedQuotes.find((q: any) => q.number && q.number.trim() !== '')
+                  setSelectedQuoteId(firstNumberedTray?.id || refreshedQuotes[0].id)
+                  const qi = await listQuoteItems(firstNumberedTray?.id || refreshedQuotes[0].id, services, instruments, pipelinesWithIds)
+                  setItems(qi ?? [])
+                } else {
+                  setSelectedQuoteId(null)
+                  setItems([])
                 }
-                toast.success('Tăvița nesemnată a fost ștearsă automat')
+                toast.success('Toate instrumentele au fost distribuite! Tăvița nesemnată a fost ștearsă.')
               }
             } catch (deleteError: any) {
               // Eroare la ștergerea tăviței - nu blocăm fluxul principal
@@ -592,28 +602,21 @@ export function usePreturiTrayOperations({
     
     for (let i = 0; i < quotes.length; i++) {
       const tray = quotes[i]
-      const trayItems = await listQuoteItems(tray.id, services, instruments, pipelinesWithIds)
       
-      if (trayItems.length === 0) {
-        errors.push(`Tăvița ${i + 1} este goală`)
+      // Ignoră tăvița "unassigned" (fără număr)
+      if (!tray.number || tray.number.trim() === '') {
         continue
       }
       
-      const trayItemsArray = Array.isArray(trayItems) ? trayItems : []
-      // FOLOSIM FOR LOOP ÎN LOC DE .some() - MAI SIGUR
-      let hasServices = false
-      if (Array.isArray(trayItemsArray)) {
-        for (let j = 0; j < trayItemsArray.length; j++) {
-          const item = trayItemsArray[j]
-          if (item && (item.item_type === 'service' || item.service_id)) {
-            hasServices = true
-            break
-          }
-        }
+      const trayItems = await listQuoteItems(tray.id, services, instruments, pipelinesWithIds)
+      
+      if (trayItems.length === 0) {
+        errors.push(`Tăvița ${tray.number} este goală`)
+        continue
       }
-      if (!hasServices) {
-        errors.push(`Tăvița ${i + 1} nu are servicii atașate`)
-      }
+      
+      // NOTE: Nu mai validăm dacă tăvița are servicii.
+      // Tehnicienii pot atribui serviciile necesare în departament.
     }
     
     return { valid: errors.length === 0, errors }
@@ -820,6 +823,30 @@ export function usePreturiTrayOperations({
       if (successCount > 0) {
         toast.success(`${successCount} tăviț${successCount === 1 ? 'ă transmisă' : 'e transmise'} cu succes!`)
         setTraysAlreadyInDepartments(true)
+        
+        // 🔔 NOTIFICĂ TEHNICIENII DESPRE TĂVIȚELE NOI
+        try {
+          const traysToNotify = quotes.map((q: any) => ({
+            id: q.id,
+            number: q.number || 'Fără număr',
+            size: q.size || 'm',
+          }))
+          
+          const notifyResult = await notifyTechniciansAboutNewTrays({
+            trays: traysToNotify,
+            serviceFileId: fisaId || '',
+          })
+          
+          if (notifyResult.notifiedCount > 0) {
+            console.log(`[sendAllTraysToPipeline] ${notifyResult.notifiedCount} tehnicieni notificați`)
+          }
+          if (notifyResult.errors.length > 0) {
+            console.warn('[sendAllTraysToPipeline] Erori notificări:', notifyResult.errors)
+          }
+        } catch (notifyError: any) {
+          // Nu blocăm fluxul principal dacă notificările eșuează
+          console.warn('[sendAllTraysToPipeline] Eroare la notificări:', notifyError?.message)
+        }
       } else if (successCount > 0 && errorCount > 0) {
         toast.warning(`${successCount} trimise, ${errorCount} erori`)
         const trayIds = quotes.map((q: any) => q.id)

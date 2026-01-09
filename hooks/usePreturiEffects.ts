@@ -102,8 +102,13 @@ export function usePreturiEffects({
     loadImages()
   }, [selectedQuoteId, setTrayImages])
 
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
   // Sincronizează instrumentForm.instrument cu svc.instrumentId
+  // IMPORTANT: NU suprascrie dacă svc.instrumentId este GOL - permite popularea manuală din onRowClick
   useEffect(() => {
+    // Dacă svc.instrumentId este gol, NU suprascrie instrumentForm (lasă utilizatorul să populeze manual)
+    if (!svc.instrumentId) return
+    
     if (svc.instrumentId !== instrumentForm.instrument || svc.qty !== instrumentForm.qty) {
       const savedSettings = instrumentSettings[svc.instrumentId]
       setInstrumentForm((prev: any) => ({ 
@@ -113,6 +118,7 @@ export function usePreturiEffects({
       }))
     }
   }, [svc.instrumentId, svc.qty, instrumentSettings, instrumentForm.instrument, setInstrumentForm])
+// -----------------------------------------------------------------------------------------------------------------------------------
 
   // Actualizează automat cantitatea instrumentului în funcție de numărul de serial number-uri
   useEffect(() => {

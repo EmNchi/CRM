@@ -13,6 +13,8 @@ interface TrayTabsProps {
   sendingTrays: boolean
   traysAlreadyInDepartments: boolean
   currentServiceFileStage?: string | null
+  officeDirect?: boolean  // Checkbox "Office Direct" bifat
+  curierTrimis?: boolean  // Checkbox "Curier Trimis" bifat
   onTraySelect: (trayId: string) => void
   onAddTray: () => void
   onDeleteTray: (trayId: string) => void
@@ -34,17 +36,26 @@ export function TrayTabs({
   sendingTrays,
   traysAlreadyInDepartments,
   currentServiceFileStage = null,
+  officeDirect = false,
+  curierTrimis = false,
   onTraySelect,
   onAddTray,
   onDeleteTray,
   onSendTrays,
   inline = false,
 }: TrayTabsProps) {
-  // Check if we're in a stage that allows sending (OFFICE DIRECT or CURIER TRIMIS)
+  // În Recepție: verifică checkbox-urile Office Direct sau Curier Trimis
+  // În alte pipeline-uri: verifică stage-ul fișei
   const stageLC = currentServiceFileStage?.toLowerCase() || ''
   const isOfficeDirectStage = stageLC.includes('office') && stageLC.includes('direct')
   const isCurierTrimisStage = stageLC.includes('curier') && stageLC.includes('trimis')
-  const canSendInThisStage = isOfficeDirectStage || isCurierTrimisStage
+  
+  // canSendInThisStage e true dacă:
+  // - În Recepție: unul dintre checkbox-uri e bifat
+  // - Altfel: stage-ul fișei e Office Direct sau Curier Trimis
+  const canSendInThisStage = isReceptiePipeline 
+    ? (officeDirect || curierTrimis)
+    : (isOfficeDirectStage || isCurierTrimisStage)
   // Nu afișa tabs în mod departament
   // Permite afișarea în VanzariView (isVanzariPipeline) și ReceptieView (isReceptiePipeline)
   if (isDepartmentPipeline) {
@@ -54,25 +65,33 @@ export function TrayTabs({
   return (
     <div className={inline ? "" : "px-2 sm:px-3 lg:px-4 pb-2 sm:pb-3"}>
       <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide">
-        {quotes.map((q, index) => (
+        {quotes.map((q, index) => {
+          const isUnassigned = !q.number || q.number.trim() === ''
+          return (
           <div key={q.id} className="relative group">
             <button
               onClick={() => onTraySelect(q.id)}
               className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 lg:px-4 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap
                 ${selectedQuoteId === q.id 
-                  ? 'bg-primary text-primary-foreground shadow-md shadow-primary/25' 
-                  : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+                  ? isUnassigned 
+                    ? 'bg-amber-500 text-white shadow-md shadow-amber-500/25'
+                    : 'bg-primary text-primary-foreground shadow-md shadow-primary/25' 
+                  : isUnassigned
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400'
+                    : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
                 }
                 ${(isVanzariPipeline || isReceptiePipeline) && quotes.length > 1 ? 'pr-8' : ''}`}
             >
               <span className={`flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold
                 ${selectedQuoteId === q.id 
                   ? 'bg-primary-foreground/20 text-primary-foreground' 
-                  : 'bg-muted-foreground/20 text-muted-foreground'
+                  : isUnassigned
+                    ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400'
+                    : 'bg-muted-foreground/20 text-muted-foreground'
                 }`}>
-                {q.number || index + 1}
+                {isUnassigned ? '?' : (q.number || index + 1)}
               </span>
-              <span>Tăviță {q.size && `(${q.size})`}</span>
+              <span>{isUnassigned ? 'Nerepartizat' : `Tăviță ${q.size && `(${q.size})`}`}</span>
             </button>
             {/* Buton de ștergere - doar pentru Vânzări și Recepție și când avem mai mult de o tăviță */}
             {(isVanzariPipeline || isReceptiePipeline) && quotes.length > 1 && (
@@ -88,7 +107,7 @@ export function TrayTabs({
               </button>
             )}
           </div>
-        ))}
+        )})}
         
         {/* Buton adaugă tăviță nouă */}
         <button
@@ -113,8 +132,10 @@ export function TrayTabs({
                 : traysAlreadyInDepartments 
                 ? "Tăvițele sunt deja trimise în departamente"
                 : !canSendInThisStage
-                ? `Mutează fișa în 'Office Direct' sau 'Curier Trimis' pentru a putea trimite (stage actual: ${currentServiceFileStage || 'necunoscut'})`
-                : `Trimite ${quotes.length} tăviț${quotes.length === 1 ? 'ă' : 'e'} în departamente`
+                ? isReceptiePipeline
+                  ? "Bifează 'Office Direct' sau 'Curier Trimis' pentru a putea trimite"
+                  : `Mutează fișa în 'Office Direct' sau 'Curier Trimis' pentru a putea trimite`
+                : `Trimite ${quotes.filter(q => q.number && q.number.trim() !== '').length} tăviț${quotes.filter(q => q.number && q.number.trim() !== '').length === 1 ? 'ă' : 'e'} în departamente`
             }
           >
             {sendingTrays ? (

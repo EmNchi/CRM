@@ -701,6 +701,8 @@ export function usePreturiSaveOperations(props: UsePreturiSaveOperationsProps) {
       }
       
       // 4. Salvează brand/serial data dacă există și reîncarcă items-urile
+      console.log('[usePreturiSaveOperations] Items to save:', items.length, items.map(i => ({ id: i.id, item_type: i.item_type, instrument_id: i.instrument_id })))
+      console.log('[usePreturiSaveOperations] Prev snapshot:', lastSavedRef.current.length, lastSavedRef.current)
       let itemsToSave = items // Folosim items-urile din state ca default
       const instrumentIdToUse = instrumentForm?.instrument || svc?.instrumentId
       const groupsToSave = Array.isArray(instrumentForm.brandSerialGroups) ? instrumentForm.brandSerialGroups : []

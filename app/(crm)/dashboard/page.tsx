@@ -8,16 +8,18 @@ import { calculateDashboardMetrics } from "@/lib/supabase/dashboardOperations"
 import { useEffect, useState } from "react"
 import type { KanbanLead } from "@/lib/types/database"
 import type { Tag } from "@/lib/supabase/tagOperations"
-import { RefreshCw, TrendingUp, Users } from "lucide-react"
+import { RefreshCw, TrendingUp, Users, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { DashboardMetrics } from "@/lib/supabase/dashboardOperations"
+import { useAuthContext } from "@/lib/contexts/AuthContext"
 
 export type Lead = KanbanLead & { tags?: Tag[] }
 
 export default function DashboardPage() {
   const { leads, pipelines, loading, error, refresh } = useKanbanData()
+  const { isAdmin, loading: authLoading } = useAuthContext()
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -54,6 +56,33 @@ export default function DashboardPage() {
     } finally {
       setRefreshing(false)
     }
+  }
+
+  // Verifică dacă userul e admin
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Skeleton className="w-32 h-10" />
+      </div>
+    )
+  }
+
+  if (!isAdmin()) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center space-y-4">
+          <div className="flex justify-center">
+            <Lock className="h-16 w-16 text-amber-500 opacity-50" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold text-foreground">Acces Restricted</h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              Dashboard-ul este disponibil doar pentru administratori
+            </p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (error) {

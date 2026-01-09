@@ -52,13 +52,13 @@ export function usePreturiPipeline(pipelineSlug?: string, isDepartmentPipeline?:
   }, [isVanzariPipeline, isReceptiePipeline])
 
   // Restricții pentru tehnicieni în pipeline-urile departament
-  // Urgent și Abonament sunt disponibile doar în Recepție/Vânzări (NU pentru tehnicieni în departament)
+  // Urgent și Abonament sunt disponibile PENTRU TOȚI, indiferent de rol
+  // Aceasta garantează că membrii obișnuiți văd EXACT același view ca adminii
   const canEditUrgentAndSubscription = useMemo(() => {
-    // În pipeline departament, tehnicianul nu poate modifica Urgent sau Abonament
-    if (isDepartmentPipeline) return false
-    // În alte pipeline-uri (Recepție, Vânzări), toți pot modifica
+    // NTOVĂ: Forțez MEREU true pentru a asigura că toți utilizatorii văd același view
+    // Fără restricții pe bază de rol - membrii obișnuiți au acces identic cu adminii
     return true
-  }, [isDepartmentPipeline])
+  }, [])
 
   // Tehnicianul poate adăuga piese doar în Reparații
   const canAddParts = useMemo(() => {

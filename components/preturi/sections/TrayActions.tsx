@@ -80,8 +80,8 @@ export function TrayActions({
   return (
     <div className="mx-1 sm:mx-2 lg:mx-3 mb-2 sm:mb-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-muted/30 border border-border/40">
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:gap-4">
-        {/* Urgent Toggle */}
-        {canEditUrgentAndSubscription && (
+        {/* Urgent Toggle - AFIȘAT PENTRU TOȚI utilizatorii */}
+        {true && (
           <>
             <label className="flex items-center gap-2.5 cursor-pointer group">
               <div className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${urgentAllServices ? 'bg-red-500' : 'bg-muted-foreground/20'}`}>
@@ -124,8 +124,8 @@ export function TrayActions({
           </>
         )}
       
-        {/* Checkbox-uri pentru livrare - doar în pipeline-ul Vânzări */}
-        {isVanzariPipeline && (
+        {/* Checkbox-uri pentru livrare - AFIȘATE PENTRU TOȚI utilizatorii */}
+        {true && (
           <div className="flex items-center gap-3">
             <div className="h-5 w-px bg-border/60" />
             

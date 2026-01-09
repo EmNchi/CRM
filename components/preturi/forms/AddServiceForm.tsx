@@ -179,6 +179,7 @@ export function AddServiceForm({
                 inputMode="numeric"
                 value={svc.qty}
                 onChange={e => onQtyChange(e.target.value)}
+                onFocus={e => e.target.select()}
                 placeholder="1"
               />
             </div>

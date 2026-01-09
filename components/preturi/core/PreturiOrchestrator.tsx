@@ -19,7 +19,6 @@ import { AddPartForm } from '../forms/AddPartForm'
 // Views
 import { VanzariView } from '../views/VanzariView'
 import { ReceptieView } from '../views/ReceptieView'
-import { DepartmentView } from '../views/DepartmentView'
 
 // Dialogs
 import { CreateTrayDialog } from '../dialogs/CreateTrayDialog'
@@ -32,6 +31,8 @@ import type { Service } from '@/lib/supabase/serviceOperations'
 import type { Part } from '@/lib/supabase/partOperations'
 import type { TrayImage } from '@/lib/supabase/imageOperations'
 import { URGENT_MARKUP_PCT } from '@/lib/types/preturi'
+import { createTrayItem } from '@/lib/supabase/serviceFileOperations'
+import { toast } from 'sonner'
 
 interface PreturiOrchestratorProps {
   // Pipeline checks
@@ -202,12 +203,17 @@ interface PreturiOrchestratorProps {
   onCancelSendTrays: () => void
   onRowClick?: (item: LeadQuoteItem) => void
   onClearForm?: () => void
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+  onUndo?: () => void
+  previousFormState?: any // Pentru a arăta dacă există stare de Undo
+// -----------------------------------------------------------------------------------------------------------------------------------
+  onRefreshItems?: () => void
   onBrandToggle?: (brandName: string, checked: boolean) => void
 }
 
 /**
  * Orchestrator principal care conectează componentele independente
- * Decide ce componente să afișeze bazat pe pipeline și context
+ * SIMPLIFICAT: Afișează MEREU VanzariView pentru toți utilizatorii, indiferent de pipeline
  */
 export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
   const {
@@ -224,6 +230,8 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
     fisaId,
     undefinedTray,
     instrumentsGrouped,
+    onClearForm,
+    onRefreshItems,
   } = props
 
   // Normalizează array-urile pentru a evita erorile de tip "Cannot read properties of undefined"
@@ -265,646 +273,218 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
     )
   }
 
-  // View pentru Vanzari - DOAR dacă suntem în pipeline Vanzari (nu în Receptie sau Departament)
-  if (isVanzatorMode && !isReceptiePipeline && !isDepartmentPipeline) {
+  // View pentru TOȚI utilizatorii - dar diferențiat pe pipeline
+  // - Recepție: ReceptieView (VanzariView + dialoguri Recepție)
+  // - Altele: VanzariView
+  
+  if (isReceptiePipeline) {
+    // ReceptieView pentru Recepție (extinde VanzariView + dialoguri)
     return (
-      <>
-        <VanzariView
-          instrumentForm={props.instrumentForm}
-          svc={props.svc}
-          serviceSearchQuery={props.serviceSearchQuery}
-          serviceSearchFocused={props.serviceSearchFocused}
-          items={props.items}
-          subscriptionType={props.subscriptionType}
-          trayDetails={props.trayDetails}
-          loadingTrayDetails={props.loadingTrayDetails}
-          urgentAllServices={props.urgentAllServices}
-          officeDirect={props.officeDirect}
-          curierTrimis={props.curierTrimis}
-          noDeal={props.noDeal}
-          nuRaspunde={props.nuRaspunde}
-          callBack={props.callBack}
-          loading={props.loading}
-          saving={props.saving}
-          isDirty={props.isDirty}
-          availableInstruments={props.availableInstruments}
-          availableServices={props.availableServices}
-          services={props.services}
-          instruments={props.instruments}
-          departments={props.departments}
-          lead={lead}
-          fisaId={fisaId}
-          selectedQuoteId={selectedQuoteId}
-          onInstrumentChange={props.onInstrumentChange}
-          onQtyChange={props.onQtyChange}
-          onServiceSearchChange={props.onServiceSearchChange}
-          onServiceSearchFocus={props.onServiceSearchFocus}
-          onServiceSearchBlur={props.onServiceSearchBlur}
-          onServiceSelect={props.onServiceSelect}
-          onServiceDoubleClick={props.onServiceDoubleClick}
-          onSvcQtyChange={props.onSvcQtyChange}
-          onSvcDiscountChange={props.onSvcDiscountChange}
-          onAddService={props.onAddService}
-          onUpdateItem={props.onUpdateItem}
-          onDelete={props.onDelete}
-          onDetailsChange={props.onDetailsChange}
-          onOfficeDirectChange={props.onOfficeDirectChange}
-          onCurierTrimisChange={props.onCurierTrimisChange}
-          onUrgentChange={props.onUrgentChange}
-          onSubscriptionChange={props.onSubscriptionChange}
-          onNoDealChange={() => props.onNoDealChange(true)}
-          onNuRaspundeChange={() => props.onNuRaspundeChange(true)}
-          onCallBackChange={() => props.onCallBackChange(true)}
-          onSave={props.onSave}
-          onBrandToggle={props.onBrandToggle}
-          onSerialNumberChange={props.onSerialNumberChange}
-          onAddBrandSerialGroup={props.onAddBrandSerialGroup}
-          onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
-          onUpdateBrand={props.onUpdateBrand}
-          onUpdateBrandQty={props.onUpdateBrandQty}
-          onUpdateSerialNumber={props.onUpdateSerialNumber}
-          onAddSerialNumber={props.onAddSerialNumber}
-          onRemoveSerialNumber={props.onRemoveSerialNumber}
-          onUpdateSerialGarantie={props.onUpdateSerialGarantie}
-          setIsDirty={props.setIsDirty}
-          currentInstrumentId={props.currentInstrumentId}
-          hasServicesOrInstrumentInSheet={props.hasServicesOrInstrumentInSheet}
-          isTechnician={props.isTechnician}
-          isDepartmentPipeline={props.isDepartmentPipeline}
-          subtotal={props.subtotal}
-          totalDiscount={props.totalDiscount}
-          total={props.total}
-          instrumentSettings={props.instrumentSettings}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          quotes={quotesArray}
-          onTraySelect={props.onTraySelect}
-          onAddTray={props.onAddTray}
-          onDeleteTray={props.onDeleteTray}
-          sendingTrays={props.sendingTrays}
-          traysAlreadyInDepartments={props.traysAlreadyInDepartments}
-          onSendTrays={props.onSendTrays}
-          instrumentsGrouped={props.instrumentsGrouped}
-          onMoveInstrument={props.onMoveInstrument}
-          trayImages={props.trayImages}
-          uploadingImage={props.uploadingImage}
-          isImagesExpanded={props.isImagesExpanded}
-          canAddTrayImages={props.canAddTrayImages}
-          canViewTrayImages={props.canViewTrayImages}
-          onToggleImagesExpanded={props.onToggleImagesExpanded}
-          onImageUpload={props.onImageUpload}
-          onDownloadAllImages={props.onDownloadAllImages}
-          onImageDelete={props.onImageDelete}
-          isVanzariPipeline={props.isVanzariPipeline}
-          isReceptiePipeline={props.isReceptiePipeline}
-        />
-        <CreateTrayDialog
-          open={props.showCreateTrayDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelCreateTray() }}
-          newTrayNumber={props.newTrayNumber}
-          newTraySize={props.newTraySize}
-          creatingTray={props.creatingTray}
-          onNumberChange={props.onNewTrayNumberChange}
-          onSizeChange={props.onNewTraySizeChange}
-          onCreate={props.onCreateTray}
-          onCancel={props.onCancelCreateTray}
-        />
-        <EditTrayDialog
-          open={props.showEditTrayDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelEditTray() }}
-          editingTrayNumber={props.editingTrayNumber}
-          editingTraySize={props.editingTraySize}
-          updatingTray={props.updatingTray}
-          onNumberChange={props.onEditingTrayNumberChange}
-          onSizeChange={props.onEditingTraySizeChange}
-          onUpdate={props.onUpdateTray}
-          onCancel={props.onCancelEditTray}
-        />
-        <MoveInstrumentDialog
-          open={props.showMoveInstrumentDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelMoveInstrument() }}
-          instrumentToMove={props.instrumentToMove}
-          quotes={quotes}
-          selectedQuoteId={selectedQuoteId}
-          targetTrayId={props.targetTrayId}
-          newTrayNumber={props.newTrayNumber}
-          newTraySize={props.newTraySize}
-          movingInstrument={props.movingInstrument}
-          onTargetTrayChange={props.onTargetTrayChange}
-          onNewTrayNumberChange={props.onNewTrayNumberChange}
-          onNewTraySizeChange={props.onNewTraySizeChange}
-          onMove={props.onMoveInstrumentConfirm}
-          onCancel={props.onCancelMoveInstrument}
-        />
-        <SendConfirmationDialog
-          open={props.showSendConfirmation}
-          onOpenChange={(open) => { if (!open) props.onCancelSendTrays() }}
-          traysCount={quotesArray.length}
-          sending={props.sendingTrays}
-          onConfirm={props.onConfirmSendTrays}
-          onCancel={props.onCancelSendTrays}
-        />
-      </>
+      <ReceptieView
+        {...props}  // Treci toți props-urile direct
+        // Dialog props
+        showCreateTrayDialog={props.showCreateTrayDialog}
+        onCancelCreateTray={props.onCancelCreateTray}
+        onCreateTray={props.onCreateTray}
+        newTrayNumber={props.newTrayNumber}
+        newTraySize={props.newTraySize}
+        creatingTray={props.creatingTray}
+        onNewTrayNumberChange={props.onNewTrayNumberChange}
+        onNewTraySizeChange={props.onNewTraySizeChange}
+        showMoveInstrumentDialog={props.showMoveInstrumentDialog}
+        instrumentToMove={props.instrumentToMove}
+        targetTrayId={props.targetTrayId}
+        movingInstrument={props.movingInstrument}
+        onCancelMoveInstrument={props.onCancelMoveInstrument}
+        onMoveInstrumentConfirm={props.onMoveInstrumentConfirm}
+        onTargetTrayChange={props.onTargetTrayChange}
+        showSendConfirmation={props.showSendConfirmation}
+        onConfirmSendTrays={props.onConfirmSendTrays}
+        onCancelSendTrays={props.onCancelSendTrays}
+      />
     )
   }
-
-  // View pentru Receptie
-  if (isReceptiePipeline && selectedQuote) {
-    // Calculate urgentAmount from items
-    const urgentAmount = items.reduce((acc, it) => {
-      const afterDisc = (it.qty || 0) * (it.price || 0) * (1 - Math.min(100, Math.max(0, it.discount_pct || 0)) / 100);
-      return acc + (it.urgent ? afterDisc * (URGENT_MARKUP_PCT / 100) : 0);
-    }, 0);
-    
-    return (
-      <>
-        <ReceptieView
-          items={Array.isArray(props.items) ? props.items : []}
-          subscriptionType={props.subscriptionType}
-          services={Array.isArray(props.services) ? props.services : []}
-          parts={Array.isArray(props.parts) ? props.parts : []}
-          instruments={Array.isArray(props.instruments) ? props.instruments : []}
-          technicians={Array.isArray(props.technicians) ? props.technicians : []}
-          pipelinesWithIds={Array.isArray(props.pipelinesWithIds) ? props.pipelinesWithIds : []}
-          quotes={quotesArray}
-          selectedQuoteId={selectedQuoteId}
-          onUpdateItem={props.onUpdateItem}
-          onDelete={props.onDelete}
-          onAddService={props.onAddService}
-          onAddPart={props.onAddPart}
-          onTraySelect={props.onTraySelect}
-          onAddTray={props.onAddTray}
-          onDeleteTray={props.onDeleteTray}
-          onSave={props.onSave}
-          onMoveInstrument={props.onMoveInstrument}
-          svc={props.svc}
-          part={props.part}
-          instrumentForm={props.instrumentForm}
-          serviceSearchQuery={props.serviceSearchQuery}
-          serviceSearchFocused={props.serviceSearchFocused}
-          partSearchQuery={props.partSearchQuery}
-          partSearchFocused={props.partSearchFocused}
-          onInstrumentChange={props.onInstrumentChange}
-          onQtyChange={props.onQtyChange}
-          onRowClick={props.onRowClick}
-          onClearForm={props.onClearForm}
-          onAddBrandSerialGroup={props.onAddBrandSerialGroup}
-          onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
-          onUpdateBrand={props.onUpdateBrand}
-          onUpdateBrandQty={props.onUpdateBrandQty}
-          onUpdateSerialNumber={props.onUpdateSerialNumber}
-          onAddSerialNumber={props.onAddSerialNumber}
-          onRemoveSerialNumber={props.onRemoveSerialNumber}
-          onUpdateSerialGarantie={props.onUpdateSerialGarantie}
-          setIsDirty={props.setIsDirty}
-          onServiceSearchChange={props.onServiceSearchChange}
-          onServiceSearchFocus={props.onServiceSearchFocus}
-          onServiceSearchBlur={props.onServiceSearchBlur}
-          onServiceSelect={props.onServiceSelect}
-          onServiceDoubleClick={props.onServiceDoubleClick}
-          onSvcQtyChange={props.onSvcQtyChange}
-          onSvcDiscountChange={props.onSvcDiscountChange}
-          onPartSearchChange={props.onPartSearchChange}
-          onPartSearchFocus={props.onPartSearchFocus}
-          onPartSearchBlur={props.onPartSearchBlur}
-          onPartSelect={props.onPartSelect}
-          onPartDoubleClick={props.onPartDoubleClick}
-          onPartQtyChange={props.onPartQtyChange}
-          onSerialNumberChange={props.onSerialNumberChange}
-          loading={props.loading}
-          saving={props.saving}
-          isDirty={props.isDirty}
-          paymentCash={props.paymentCash}
-          paymentCard={props.paymentCard}
-          onPaymentCashChange={props.onPaymentCashChange}
-          onPaymentCardChange={props.onPaymentCardChange}
-          urgentAllServices={props.urgentAllServices}
-          onUrgentChange={props.onUrgentChange}
-          onSubscriptionChange={props.onSubscriptionChange}
-          availableInstruments={props.availableInstruments}
-          availableServices={props.availableServices}
-          currentInstrumentId={props.currentInstrumentId}
-          hasServicesOrInstrumentInSheet={props.hasServicesOrInstrumentInSheet}
-          instrumentSettings={props.instrumentSettings}
-          departments={props.departments}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          subtotal={props.subtotal}
-          totalDiscount={props.totalDiscount}
-          urgentAmount={urgentAmount}
-          total={props.total}
-          allSheetsTotal={props.allSheetsTotal}
-          instrumentsGrouped={props.instrumentsGrouped}
-          fisaId={fisaId}
-          officeDirect={props.officeDirect}
-          curierTrimis={props.curierTrimis}
-          currentServiceFileStage={props.currentServiceFileStage}
-          onOfficeDirectChange={props.onOfficeDirectChange}
-          onCurierTrimisChange={props.onCurierTrimisChange}
-          sendingTrays={props.sendingTrays}
-          traysAlreadyInDepartments={props.traysAlreadyInDepartments}
-          onSendTrays={props.onSendTrays}
-          onEditTray={props.onEditTray}
-          trayImages={props.trayImages}
-          uploadingImage={props.uploadingImage}
-          isImagesExpanded={props.isImagesExpanded}
-          canAddTrayImages={props.canAddTrayImages}
-          canViewTrayImages={props.canViewTrayImages}
-          onToggleImagesExpanded={props.onToggleImagesExpanded}
-          onImageUpload={props.onImageUpload}
-          onDownloadAllImages={props.onDownloadAllImages}
-          onImageDelete={props.onImageDelete}
-          trayDetails={props.trayDetails}
-          loadingTrayDetails={props.loadingTrayDetails}
-          isCommercialPipeline={isCommercialPipeline}
-          onDetailsChange={props.onDetailsChange}
-        />
-        <MoveInstrumentDialog
-          open={props.showMoveInstrumentDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelMoveInstrument() }}
-          instrumentToMove={props.instrumentToMove}
-          quotes={quotes}
-          selectedQuoteId={selectedQuoteId}
-          targetTrayId={props.targetTrayId}
-          newTrayNumber={props.newTrayNumber}
-          newTraySize={props.newTraySize}
-          movingInstrument={props.movingInstrument}
-          onTargetTrayChange={props.onTargetTrayChange}
-          onNewTrayNumberChange={props.onNewTrayNumberChange}
-          onNewTraySizeChange={props.onNewTraySizeChange}
-          onMove={props.onMoveInstrumentConfirm}
-          onCancel={props.onCancelMoveInstrument}
-        />
-        <CreateTrayDialog
-          open={props.showCreateTrayDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelCreateTray() }}
-          newTrayNumber={props.newTrayNumber}
-          newTraySize={props.newTraySize === 'small' ? 's' : props.newTraySize === 'medium' ? 'm' : props.newTraySize === 'large' ? 'l' : props.newTraySize}
-          creatingTray={props.creatingTray}
-          onNumberChange={props.onNewTrayNumberChange}
-          onSizeChange={props.onNewTraySizeChange}
-          onCreate={props.onCreateTray}
-          onCancel={props.onCancelCreateTray}
-        />
-        <SendConfirmationDialog
-          open={props.showSendConfirmation}
-          onOpenChange={(open) => { if (!open) props.onCancelSendTrays() }}
-          traysCount={quotesArray.length}
-          sending={props.sendingTrays}
-          onConfirm={props.onConfirmSendTrays}
-          onCancel={props.onCancelSendTrays}
-        />
-      </>
-    )
-  }
-
-  // View pentru Curier - ELIMINAT - folosim doar Receptie
-
-  // View pentru Departamente
-  if (isDepartmentPipeline && selectedQuote) {
-    // NU transmitem leadId pentru department view!
-    // lead?.id ar putea fi ID-ul tray-ului (nu al lead-ului)
-    // DepartmentView va rezolva lead_id din selectedQuoteId → service_file → lead
-    
-    return (
-      <>
-        <DepartmentView
-          // Lead - NU transmitem leadId, DepartmentView îl va rezolva din selectedQuoteId
-          leadId={null}
-          fisaId={fisaId}
-          selectedQuoteId={selectedQuoteId}
-          // Form state
-          instrumentForm={props.instrumentForm}
-          instrumentSettings={props.instrumentSettings}
-          svc={props.svc}
-          part={props.part}
-          serviceSearchQuery={props.serviceSearchQuery}
-          serviceSearchFocused={props.serviceSearchFocused}
-          partSearchQuery={props.partSearchQuery}
-          partSearchFocused={props.partSearchFocused}
-          items={props.items}
-          subscriptionType={props.subscriptionType}
-          
-          // Data
-          availableInstruments={props.availableInstruments}
-          availableServices={props.availableServices}
-          services={props.services}
-          parts={props.parts}
-          instruments={props.instruments}
-          departments={props.departments}
-          technicians={props.technicians}
-          pipelinesWithIds={props.pipelinesWithIds}
-          
-          // Form callbacks
-          onInstrumentChange={props.onInstrumentChange}
-          onQtyChange={props.onQtyChange}
-          onServiceSearchChange={props.onServiceSearchChange}
-          onServiceSearchFocus={props.onServiceSearchFocus}
-          onServiceSearchBlur={props.onServiceSearchBlur}
-          onServiceSelect={props.onServiceSelect}
-          onServiceDoubleClick={props.onServiceDoubleClick}
-          onSvcQtyChange={props.onSvcQtyChange}
-          onSvcDiscountChange={props.onSvcDiscountChange}
-          onAddService={props.onAddService}
-          onPartSearchChange={props.onPartSearchChange}
-          onPartSearchFocus={props.onPartSearchFocus}
-          onPartSearchBlur={props.onPartSearchBlur}
-          onPartSelect={props.onPartSelect}
-          onPartDoubleClick={props.onPartDoubleClick}
-          onPartQtyChange={props.onPartQtyChange}
-          onSerialNumberChange={props.onSerialNumberChange}
-          onAddPart={props.onAddPart}
-          onUpdateItem={props.onUpdateItem}
-          onDelete={props.onDelete}
-          onRowClick={props.onRowClick}
-          onClearForm={props.onClearForm}
-          onBrandToggle={props.onBrandToggle}
-          onAddBrandSerialGroup={props.onAddBrandSerialGroup}
-          onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
-          onUpdateBrand={props.onUpdateBrand}
-          onUpdateBrandQty={props.onUpdateBrandQty}
-          onUpdateSerialNumber={props.onUpdateSerialNumber}
-          onAddSerialNumber={props.onAddSerialNumber}
-          onRemoveSerialNumber={props.onRemoveSerialNumber}
-          onUpdateSerialGarantie={props.onUpdateSerialGarantie}
-          setIsDirty={props.setIsDirty}
-          
-          // Pipeline flags
-          currentInstrumentId={props.currentInstrumentId}
-          hasServicesOrInstrumentInSheet={props.hasServicesOrInstrumentInSheet}
-          isTechnician={props.isTechnician}
-          isDepartmentPipeline={isDepartmentPipeline}
-          isReparatiiPipeline={props.isReparatiiPipeline}
-          canAddParts={props.canAddParts}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          
-          // Tray images
-          selectedQuoteId={selectedQuoteId}
-          trayImages={props.trayImages}
-          uploadingImage={props.uploadingImage}
-          isImagesExpanded={props.isImagesExpanded}
-          canAddTrayImages={props.canAddTrayImages}
-          canViewTrayImages={props.canViewTrayImages}
-          onToggleImagesExpanded={props.onToggleImagesExpanded}
-          onImageUpload={props.onImageUpload}
-          onDownloadAllImages={props.onDownloadAllImages}
-          onImageDelete={props.onImageDelete}
-          
-          // Save
-          onSaveToHistory={props.onSaveToHistory}
-          saving={props.saving}
-          
-          // Tray tabs
-          quotes={quotesArray}
-          onTraySelect={props.onTraySelect}
-          onAddTray={props.onAddTray}
-          onDeleteTray={props.onDeleteTray}
-          sendingTrays={props.sendingTrays}
-          traysAlreadyInDepartments={props.traysAlreadyInDepartments}
-          onSendTrays={props.onSendTrays}
-          
-          // Tray actions
-          urgentAllServices={props.urgentAllServices}
-          paymentCash={props.paymentCash}
-          paymentCard={props.paymentCard}
-          officeDirect={props.officeDirect}
-          curierTrimis={props.curierTrimis}
-          loading={props.loading}
-          isDirty={props.isDirty}
-          fisaId={fisaId}
-          currentServiceFileStage={props.currentServiceFileStage}
-          onUrgentChange={props.onUrgentChange}
-          onSubscriptionChange={props.onSubscriptionChange}
-          onOfficeDirectChange={props.onOfficeDirectChange}
-          onCurierTrimisChange={props.onCurierTrimisChange}
-          onPaymentCashChange={props.onPaymentCashChange}
-          onPaymentCardChange={props.onPaymentCardChange}
-          onSave={props.onSave}
-          
-          // Tray details
-          trayDetails={props.trayDetails}
-          loadingTrayDetails={props.loadingTrayDetails}
-          isCommercialPipeline={isCommercialPipeline}
-          onDetailsChange={props.onDetailsChange}
-        />
-      </>
-    )
-  }
-
-  // View default - combină componentele independente
+  
+  // VanzariView pentru Vânzări și alte pipelines
   return (
     <>
-      {/* PrintViewData - ascuns vizual, dar în DOM pentru print */}
-      {lead && (
-        <div className="pb-2">
-          <PrintViewData 
-            lead={lead}
-            quotes={quotes}
-            allSheetsTotal={props.allSheetsTotal}
-            urgentMarkupPct={URGENT_MARKUP_PCT}
-            subscriptionType={props.subscriptionType}
-            services={props.services}
-            instruments={props.instruments}
-            pipelinesWithIds={props.pipelinesWithIds}
-          />
-        </div>
-      )}
+      <VanzariView
+        instrumentForm={props.instrumentForm}
+        svc={props.svc}
+        serviceSearchQuery={props.serviceSearchQuery}
+        serviceSearchFocused={props.serviceSearchFocused}
+        items={props.items}
+        subscriptionType={props.subscriptionType}
+        trayDetails={props.trayDetails}
+        loadingTrayDetails={props.loadingTrayDetails}
+        urgentAllServices={props.urgentAllServices}
+        officeDirect={props.officeDirect}
+        curierTrimis={props.curierTrimis}
+        noDeal={props.noDeal}
+        nuRaspunde={props.nuRaspunde}
+        callBack={props.callBack}
+        loading={props.loading}
+        saving={props.saving}
+        isDirty={props.isDirty}
+        availableInstruments={props.availableInstruments}
+        availableServices={props.availableServices}
+        services={props.services}
+        instruments={props.instruments}
+        departments={props.departments}
+        lead={lead}
+        fisaId={fisaId}
+        selectedQuoteId={selectedQuoteId}
+        onInstrumentChange={props.onInstrumentChange}
+        onQtyChange={props.onQtyChange}
+        onServiceSearchChange={props.onServiceSearchChange}
+        onServiceSearchFocus={props.onServiceSearchFocus}
+        onServiceSearchBlur={props.onServiceSearchBlur}
+        onServiceSelect={props.onServiceSelect}
+        onServiceDoubleClick={props.onServiceDoubleClick}
+        onSvcQtyChange={props.onSvcQtyChange}
+        onSvcDiscountChange={props.onSvcDiscountChange}
+        onAddService={props.onAddService}
+        onUpdateItem={props.onUpdateItem}
+        onDelete={props.onDelete}
+        onDetailsChange={props.onDetailsChange}
+        onOfficeDirectChange={props.onOfficeDirectChange}
+        onCurierTrimisChange={props.onCurierTrimisChange}
+        onUrgentChange={props.onUrgentChange}
+        onSubscriptionChange={props.onSubscriptionChange}
+        onNoDealChange={() => props.onNoDealChange(true)}
+        onNuRaspundeChange={() => props.onNuRaspundeChange(true)}
+        onCallBackChange={() => props.onCallBackChange(true)}
+        onSave={props.onSave}
+        onBrandToggle={props.onBrandToggle}
+        onSerialNumberChange={props.onSerialNumberChange}
+        onAddBrandSerialGroup={props.onAddBrandSerialGroup}
+        onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
+        onUpdateBrand={props.onUpdateBrand}
+        onUpdateBrandQty={props.onUpdateBrandQty}
+        onUpdateSerialNumber={props.onUpdateSerialNumber}
+        onAddSerialNumber={props.onAddSerialNumber}
+        onRemoveSerialNumber={props.onRemoveSerialNumber}
+        onUpdateSerialGarantie={props.onUpdateSerialGarantie}
+        setIsDirty={props.setIsDirty}
+        currentInstrumentId={props.currentInstrumentId}
+        hasServicesOrInstrumentInSheet={props.hasServicesOrInstrumentInSheet}
+        isTechnician={props.isTechnician}
+        isDepartmentPipeline={props.isDepartmentPipeline}
+        subtotal={props.subtotal}
+        totalDiscount={props.totalDiscount}
+        total={props.total}
+        instrumentSettings={props.instrumentSettings}
+        canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
+        quotes={quotesArray}
+        onTraySelect={props.onTraySelect}
+        onAddTray={props.onAddTray}
+        onDeleteTray={props.onDeleteTray}
+        sendingTrays={props.sendingTrays}
+        traysAlreadyInDepartments={props.traysAlreadyInDepartments}
+        onSendTrays={props.onSendTrays}
+        instrumentsGrouped={props.instrumentsGrouped}
+        onMoveInstrument={props.onMoveInstrument}
+        trayImages={props.trayImages}
+        uploadingImage={props.uploadingImage}
+        isImagesExpanded={props.isImagesExpanded}
+        canAddTrayImages={props.canAddTrayImages}
+        canViewTrayImages={props.canViewTrayImages}
+        onToggleImagesExpanded={props.onToggleImagesExpanded}
+        onImageUpload={props.onImageUpload}
+        onDownloadAllImages={props.onDownloadAllImages}
+        onImageDelete={props.onImageDelete}
+        isVanzariPipeline={props.isVanzariPipeline}
+        isReceptiePipeline={props.isReceptiePipeline}
+        onRowClick={props.onRowClick}
+        onClearForm={props.onClearForm}
+/* -------------------------------------------------- COD PENTRU POPULARE CASETE ----------------------------------------------------- */
+        onUndo={props.onUndo}
+        previousFormState={props.previousFormState}
+/* ----------------------------------------------------------------------------------------------------------------------------------- */
+        onAddInstrumentDirect={async (instrumentId, qty, brand) => {
+          try {
+            if (!selectedQuote) {
+              toast.error('Nu există o tăviță selectată')
+              return
+            }
 
+            // Găsește instrumentul pentru a obține department_id
+            const instrument = props.instruments?.find(i => i.id === instrumentId)
+            if (!instrument) {
+              toast.error('Instrumentul selectat nu a fost găsit')
+              return
+            }
 
+            // Construiește brandSerialGroups dacă brand e furnizat
+            const brandSerialGroups = brand && brand.trim() 
+              ? [{
+                  brand: brand.trim(),
+                  serialNumbers: [],
+                  garantie: false
+                }]
+              : undefined
 
-      {/* TrayTabs este acum afișat în LeadServiceFilesSelector pe același rând cu dropdown-ul pentru fișa de serviciu */}
+            // Creează item-ul instrument-only (fără serviciu)
+            const { data: newItem, error } = await createTrayItem({
+              tray_id: selectedQuote.id,
+              instrument_id: instrumentId,
+              department_id: instrument.department_id || undefined,
+              pipeline: instrument.pipeline || undefined,
+              qty: qty,
+              brandSerialGroups: brandSerialGroups,
+            })
 
-      {/* TrayActions - acțiuni pentru tăviță */}
-      {!isDepartmentPipeline && (
-        <TrayActions
-          urgentAllServices={props.urgentAllServices}
-          subscriptionType={props.subscriptionType}
-          officeDirect={props.officeDirect}
-          curierTrimis={props.curierTrimis}
-          paymentCash={props.paymentCash}
-          paymentCard={props.paymentCard}
-          loading={props.loading}
-          saving={props.saving}
-          isDirty={props.isDirty}
-          isVanzariPipeline={isVanzariPipeline}
-          isReceptiePipeline={isReceptiePipeline}
-          currentServiceFileStage={props.currentServiceFileStage}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          fisaId={fisaId}
-          selectedQuoteId={selectedQuoteId}
-          items={items}
-          onUrgentChange={props.onUrgentChange || (async () => {})}
-          onSubscriptionChange={props.onSubscriptionChange || (() => {})}
-          onOfficeDirectChange={props.onOfficeDirectChange}
-          onCurierTrimisChange={props.onCurierTrimisChange || (async () => {})}
-          onPaymentCashChange={props.onPaymentCashChange}
-          onPaymentCardChange={props.onPaymentCardChange}
-          onSave={props.onSave}
-          onPrint={props.onPrint}
-        />
-      )}
+            if (error) {
+              toast.error('Eroare la adăugare instrument: ' + (error?.message || 'Necunoscut'))
+              return
+            }
 
-      {/* TrayImagesSection - doar dacă este permis */}
-      {props.canViewTrayImages && (
-        <TrayImagesSection
-          trayImages={props.trayImages}
-          uploadingImage={props.uploadingImage}
-          isImagesExpanded={props.isImagesExpanded}
-          canAddTrayImages={props.canAddTrayImages}
-          canViewTrayImages={props.canViewTrayImages}
-          selectedQuoteId={selectedQuoteId}
-          onToggleExpanded={props.onToggleImagesExpanded}
-          onImageUpload={(event) => {
-          const file = event.target.files?.[0]
-          if (file) {
-            props.onImageUpload(file)
+            if (newItem) {
+              console.log('[PreturiOrchestrator] Instrument creat:', newItem)
+              toast.success(`Instrument adăugat cu succes (Cant: ${qty})`)
+              props.setIsDirty?.(true)
+              // Delay mic pentru a permite DB să se sincronizeze, apoi refresh items
+              setTimeout(() => {
+                console.log('[PreturiOrchestrator] Triggering refresh...')
+                onRefreshItems?.()
+              }, 500)
+            }
+          } catch (err: any) {
+            toast.error('Eroare: ' + (err?.message || 'Necunoscut'))
           }
         }}
-          onDownloadAll={props.onDownloadAllImages}
-          onImageDelete={props.onImageDelete}
-        />
-      )}
-
-      {/* AddInstrumentForm - doar dacă nu suntem în mod departament sau vânzător */}
-      {!isDepartmentPipeline && !isVanzatorMode && (() => {
-        return (
-          <AddInstrumentForm
-            instrumentForm={props.instrumentForm}
-            availableInstruments={props.availableInstruments}
-            instruments={props.instruments}
-            departments={props.departments}
-            instrumentSettings={props.instrumentSettings}
-            hasServicesOrInstrumentInSheet={props.hasServicesOrInstrumentInSheet}
-            isVanzariPipeline={isVanzariPipeline}
-            isDepartmentPipeline={isDepartmentPipeline}
-            isTechnician={props.isTechnician}
-            onInstrumentChange={props.onInstrumentChange}
-            onQtyChange={props.onQtyChange}
-            onAddBrandSerialGroup={props.onAddBrandSerialGroup}
-            onRemoveBrandSerialGroup={props.onRemoveBrandSerialGroup}
-            onUpdateBrand={props.onUpdateBrand}
-            onUpdateBrandQty={props.onUpdateBrandQty}
-            onUpdateSerialNumber={props.onUpdateSerialNumber}
-            onUpdateSerialGarantie={props.onUpdateSerialGarantie}
-            setIsDirty={props.setIsDirty}
-          />
-        )
-      })()}
-
-      {/* AddServiceForm - doar dacă nu suntem în mod departament sau vânzător */}
-      {!isDepartmentPipeline && !isVanzatorMode && (
-        <AddServiceForm
-          svc={props.svc}
-          serviceSearchQuery={props.serviceSearchQuery}
-          serviceSearchFocused={props.serviceSearchFocused}
-          currentInstrumentId={props.currentInstrumentId}
-          availableServices={props.availableServices}
-          instrumentForm={props.instrumentForm}
-          isVanzariPipeline={isVanzariPipeline}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          onServiceSearchChange={props.onServiceSearchChange}
-          onServiceSearchFocus={props.onServiceSearchFocus}
-          onServiceSearchBlur={props.onServiceSearchBlur}
-          onServiceSelect={props.onServiceSelect}
-          onServiceDoubleClick={props.onServiceDoubleClick}
-          onQtyChange={props.onSvcQtyChange}
-          onDiscountChange={props.onSvcDiscountChange}
-          onAddService={props.onAddService}
-          onBrandToggle={props.onBrandToggle}
-          onSerialNumberChange={props.onSerialNumberChange}
-        />
-      )}
-
-      {/* AddPartForm - doar pentru Reparații */}
-      {props.canAddParts && props.isReparatiiPipeline && (
-        <AddPartForm
-          part={props.part}
-          partSearchQuery={props.partSearchQuery}
-          partSearchFocused={props.partSearchFocused}
-          parts={props.parts}
-          items={props.items}
-          instrumentForm={props.instrumentForm}
-          canAddParts={props.canAddParts}
-          onPartSearchChange={props.onPartSearchChange}
-          onPartSearchFocus={props.onPartSearchFocus}
-          onPartSearchBlur={props.onPartSearchBlur}
-          onPartSelect={props.onPartSelect}
-          onPartDoubleClick={props.onPartDoubleClick}
-          onQtyChange={props.onPartQtyChange}
-          onSerialNumberChange={props.onSerialNumberChange}
-          onAddPart={props.onAddPart}
-        />
-      )}
-
-      {/* ItemsTable - doar dacă nu suntem în view-uri specifice */}
-      {!isReceptiePipeline && !isDepartmentPipeline && (
-        <ItemsTable
-          items={props.items}
-          services={props.services}
-          instruments={props.instruments}
-          technicians={props.technicians}
-          pipelinesWithIds={props.pipelinesWithIds}
-          isReceptiePipeline={isReceptiePipeline}
-          canEditUrgentAndSubscription={props.canEditUrgentAndSubscription}
-          onUpdateItem={props.onUpdateItem}
-          onDelete={props.onDelete}
-          onRowClick={props.onRowClick}
-          onMoveInstrument={props.onMoveInstrument}
-        />
-      )}
-
-      {/* TotalsSection - doar dacă nu suntem în view-uri specifice */}
-      {!isReceptiePipeline && !isDepartmentPipeline && (
-        <TotalsSection
-          items={props.items}
-          subscriptionType={props.subscriptionType}
-          services={props.services}
-          instruments={props.instruments}
-        />
-      )}
-
-      {/* TrayDetailsSection - doar pentru pipeline-urile comerciale */}
-      {isCommercialPipeline && quotesArray.length > 0 && (
-        <TrayDetailsSection
-          trayDetails={props.trayDetails}
-          loadingTrayDetails={props.loadingTrayDetails}
-          isCommercialPipeline={isCommercialPipeline}
-          onDetailsChange={props.onDetailsChange}
-        />
-      )}
-
-      {/* Dialog-uri */}
+      />
       <CreateTrayDialog
         open={props.showCreateTrayDialog}
         onOpenChange={(open) => { if (!open) props.onCancelCreateTray() }}
         newTrayNumber={props.newTrayNumber}
-        newTraySize={props.newTraySize === 'small' ? 's' : props.newTraySize === 'medium' ? 'm' : props.newTraySize === 'large' ? 'l' : props.newTraySize}
+        newTraySize={props.newTraySize}
         creatingTray={props.creatingTray}
         onNumberChange={props.onNewTrayNumberChange}
         onSizeChange={props.onNewTraySizeChange}
         onCreate={props.onCreateTray}
         onCancel={props.onCancelCreateTray}
       />
-      
-        <EditTrayDialog
-          open={props.showEditTrayDialog}
-          onOpenChange={(open) => { if (!open) props.onCancelEditTray() }}
-          editingTrayNumber={props.editingTrayNumber}
-          editingTraySize={props.editingTraySize}
-          updatingTray={props.updatingTray}
-          onNumberChange={props.onEditingTrayNumberChange}
-          onSizeChange={props.onEditingTraySizeChange}
-          onUpdate={props.onUpdateTray}
-          onCancel={props.onCancelEditTray}
-        />
-      
+      <EditTrayDialog
+        open={props.showEditTrayDialog}
+        onOpenChange={(open) => { if (!open) props.onCancelEditTray() }}
+        editingTrayNumber={props.editingTrayNumber}
+        editingTraySize={props.editingTraySize}
+        updatingTray={props.updatingTray}
+        onNumberChange={props.onEditingTrayNumberChange}
+        onSizeChange={props.onEditingTraySizeChange}
+        onUpdate={props.onUpdateTray}
+        onCancel={props.onCancelEditTray}
+      />
       <MoveInstrumentDialog
         open={props.showMoveInstrumentDialog}
         onOpenChange={(open) => { if (!open) props.onCancelMoveInstrument() }}
         instrumentToMove={props.instrumentToMove}
-        quotes={quotes}
+        quotes={quotesArray}
         selectedQuoteId={selectedQuoteId}
         targetTrayId={props.targetTrayId}
         newTrayNumber={props.newTrayNumber}
-        newTraySize={props.newTraySize === 'small' ? 's' : props.newTraySize === 'medium' ? 'm' : props.newTraySize === 'large' ? 'l' : props.newTraySize}
+        newTraySize={props.newTraySize}
         movingInstrument={props.movingInstrument}
         onTargetTrayChange={props.onTargetTrayChange}
         onNewTrayNumberChange={props.onNewTrayNumberChange}
@@ -912,8 +492,6 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
         onMove={props.onMoveInstrumentConfirm}
         onCancel={props.onCancelMoveInstrument}
       />
-      
-      {/* Dialog confirmare trimitere tăvițe */}
       <SendConfirmationDialog
         open={props.showSendConfirmation}
         onOpenChange={(open) => { if (!open) props.onCancelSendTrays() }}
@@ -925,5 +503,3 @@ export function PreturiOrchestrator(props: PreturiOrchestratorProps) {
     </>
   )
 }
-
-

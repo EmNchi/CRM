@@ -202,8 +202,9 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
   }, [state.quotes])
   
   const instrumentsGrouped = useMemo(() => {
-    // Calculează instrumentsGrouped doar pentru tăvița undefined
-    const isUndefinedTray = state.selectedQuote && (!state.selectedQuote.number || state.selectedQuote.number === '')
+    // Calculează instrumentsGrouped DOAR pentru tăvița undefined (fără număr)
+    // Aceasta e tăvița "unassigned" din care se distribuie instrumentele
+    const isUndefinedTray = state.selectedQuote && (!state.selectedQuote.number || state.selectedQuote.number.trim() === '')
     if (!isUndefinedTray) return []
     
     const grouped = new Map<string, { instrument: { id: string; name: string }; items: typeof state.items }>()
@@ -411,6 +412,7 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
     
     const loadItems = async () => {
       try {
+        console.log('[PreturiMain] Loading items for tray:', state.selectedQuoteId)
         const loadedItems = await listQuoteItems(
           state.selectedQuoteId!,
           state.services,
@@ -418,16 +420,12 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
           state.pipelinesWithIds
         )
         
+        console.log('[PreturiMain] Loaded items:', loadedItems.length, loadedItems.map(i => ({ id: i.id, item_type: i.item_type, instrument_id: i.instrument_id })))
+        
         if (!isMounted) return
         
-        // Actualizează items-urile doar dacă s-au schimbat
-        state.setItems(prevItems => {
-          if (prevItems.length === loadedItems.length && 
-              prevItems.every((item, idx) => item.id === loadedItems[idx]?.id)) {
-            return prevItems // Nu face update dacă items-urile sunt aceleași
-          }
-          return loadedItems
-        })
+        // Actualizează items-urile - forțează update pentru a include items noi
+        state.setItems(loadedItems)
         
         // IMPORTANT: Inițializează snapshot-ul când se încarcă items-urile pentru prima dată
         // Asta previne ștergerea items-urilor existente când se salvează
@@ -450,7 +448,7 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
     return () => {
       isMounted = false
     }
-  }, [state.selectedQuoteId, state.services, state.instruments, state.pipelinesWithIds, state.loading, state.setItems])
+  }, [state.selectedQuoteId, state.services, state.instruments, state.pipelinesWithIds, state.loading, state.setItems, state.itemsRefreshKey])
   
   // Hook-uri pentru effects
   usePreturiEffects({
@@ -740,8 +738,162 @@ const PreturiMain = forwardRef<PreturiRef, PreturiProps>(function PreturiMain({
       }}
       onConfirmSendTrays={business.sendAllTraysToPipeline}
       onCancelSendTrays={() => state.setShowSendConfirmation(false)}
-      onRowClick={business.onRowClick}
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+      onRowClick={(item) => {
+        // ═══════════════════════════════════════════════════════════════════
+        // LOGICĂ CLARĂ: Click pe rând → Populează formulare cu datele rândului
+        // ═══════════════════════════════════════════════════════════════════
+        
+        if (!item) return
+        
+        // STEP 1: Salvează starea curentă pentru UNDO
+        state.setPreviousFormState({
+          instrumentForm: { ...state.instrumentForm },
+          svc: { ...state.svc },
+          part: { ...state.part },
+          serviceSearchQuery: state.serviceSearchQuery,
+          partSearchQuery: state.partSearchQuery
+        })
+        
+        // STEP 2: Extrage datele din înregistrare
+        const instrumentId = item.instrument_id || ''
+        const qty = String(item.qty || 1)
+        
+        // STEP 3: Construiește brandSerialGroups
+        // Format: [{brand, serialNumbers: [{serial, garantie}], qty}]
+        let brandSerialGroups: any[] = []
+        
+        if (item.brand_groups && Array.isArray(item.brand_groups) && item.brand_groups.length > 0) {
+          // Format NOU: brand_groups din DB
+          brandSerialGroups = item.brand_groups.map((bg: any) => ({
+            brand: bg.brand || '',
+            serialNumbers: Array.isArray(bg.serialNumbers) 
+              ? bg.serialNumbers.map((sn: any) => 
+                  typeof sn === 'string' 
+                    ? { serial: sn, garantie: false }
+                    : { serial: sn?.serial || '', garantie: sn?.garantie || false }
+                )
+              : [],
+            qty: bg.qty || '1'
+          }))
+        } else if (item.brand || item.serial_number) {
+          // Format VECHI: brand + serial_number simple
+          brandSerialGroups = [{
+            brand: item.brand || '',
+            serialNumbers: item.serial_number 
+              ? [{ serial: item.serial_number, garantie: false }]
+              : [],
+            qty: '1'
+          }]
+        } else {
+          // NIMIC: Grup gol default
+          brandSerialGroups = [{
+            brand: '',
+            serialNumbers: [],
+            qty: '1'
+          }]
+        }
+        
+        // STEP 4: Populează INSTRUMENT FORM (înlocuiește complet)
+        state.setInstrumentForm({
+          instrument: instrumentId,
+          qty: qty,
+          brandSerialGroups: brandSerialGroups
+        })
+        
+        // STEP 5: Populează SERVICIU (doar dacă există și e valid)
+        if (item.item_type === 'service' && item.service_id) {
+          const serviceExists = state.services.find(s => s.id === item.service_id)
+          if (serviceExists) {
+            // Serviciul există în listă - populează
+            state.setSvc({
+              instrumentId: instrumentId,
+              id: item.service_id,
+              qty: qty,
+              discount: String(item.discount_pct || 0),
+              urgent: false,
+              technicianId: '',
+              pipelineId: '',
+              serialNumberId: '',
+              selectedBrands: []
+            })
+            state.setServiceSearchQuery(serviceExists.name || item.name_snapshot || '')
+          }
+          // Dacă serviciul NU există în listă → SKIP (nu populez)
+        } else {
+          // Nu e serviciu → resetează formularul de serviciu DAR păstrează instrumentId pentru sincronizare
+          state.setSvc({
+            instrumentId: instrumentId,  // IMPORTANT: Păstrează instrumentId pentru a evita suprascrierea de useEffect
+            id: '',
+            qty: qty,
+            discount: '0',
+            urgent: false,
+            technicianId: '',
+            pipelineId: '',
+            serialNumberId: '',
+            selectedBrands: []
+          })
+          state.setServiceSearchQuery('')
+        }
+        
+        // STEP 6: Populează PIESE (doar dacă există și e valid)
+        if (item.item_type === 'part' && item.part_id) {
+          const partExists = state.parts.find(p => p.id === item.part_id)
+          if (partExists) {
+            // Piesa există în listă - populează
+            state.setPart({
+              id: item.part_id,
+              overridePrice: String(item.price || ''),
+              qty: qty,
+              discount: String(item.discount_pct || 0),
+              urgent: false,
+              serialNumberId: ''
+            })
+            state.setPartSearchQuery(partExists.name || item.name_snapshot || '')
+          }
+          // Dacă piesa NU există în listă → SKIP (nu populez)
+        } else {
+          // Nu e piesă → resetează formularul de piese
+          state.setPart({
+            id: '',
+            overridePrice: '',
+            qty: '1',
+            discount: '0',
+            urgent: false,
+            serialNumberId: ''
+          })
+          state.setPartSearchQuery('')
+        }
+        
+        // STEP 7: Toast informativ
+        toast.info('Date încărcate pentru editare. Apasă Undo pentru a anula.')
+      }}
+      onUndo={() => {
+        // ═══════════════════════════════════════════════════════════════════
+        // UNDO: Restaurează starea anterioară a formularelor
+        // ═══════════════════════════════════════════════════════════════════
+        
+        if (!state.previousFormState) {
+          toast.warning('Nu există date anterioare pentru a fi restaurate.')
+          return
+        }
+        
+        // Restaurează toate formularele
+        state.setInstrumentForm(state.previousFormState.instrumentForm)
+        state.setSvc(state.previousFormState.svc)
+        state.setPart(state.previousFormState.part)
+        state.setServiceSearchQuery(state.previousFormState.serviceSearchQuery)
+        state.setPartSearchQuery(state.previousFormState.partSearchQuery)
+        
+        // Șterge starea anterioară
+        state.setPreviousFormState(null)
+        
+        toast.success('Formularele au fost restaurate la starea anterioară.')
+      }}
+      previousFormState={state.previousFormState}
+// -----------------------------------------------------------------------------------------------------------------------------------
       onClearForm={business.onClearForm}
+      onRefreshItems={() => state.setItemsRefreshKey(k => k + 1)}
       onBrandToggle={business.onBrandToggle}
       
       // Quick actions for department view

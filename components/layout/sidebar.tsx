@@ -11,6 +11,7 @@ import { getPipelinesWithStages } from "@/lib/supabase/leadOperations"
 import { supabaseBrowser } from "@/lib/supabase/supabaseClient"
 import { useRole, useAuth, useAuthContext } from "@/lib/contexts/AuthContext"
 import { toast } from "sonner"
+import { NotificationBell } from "@/components/notifications"
 
 interface SidebarProps {
   canManagePipelines?: boolean
@@ -46,7 +47,7 @@ const getPipelineIcon = (pipelineName: string) => {
 export function Sidebar({ canManagePipelines }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const { isOwner, role: userRole } = useRole()
+  const { isOwner, role: userRole, isAdmin } = useRole()
   const { user } = useAuth()
   const { hasAccess, isMember } = useAuthContext()
   const supabase = supabaseBrowser()
@@ -199,23 +200,29 @@ export function Sidebar({ canManagePipelines }: SidebarProps) {
   return (
     <aside className="w-50 bg-sidebar border-r border-sidebar-border h-full">
       <div className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Users className="h-5 w-5 text-sidebar-foreground" />
-          <h2 className="font-semibold text-sidebar-foreground">ascutzit.ro – CRM</h2>
+        <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-sidebar-foreground" />
+            <h2 className="font-semibold text-sidebar-foreground">ascutzit.ro – CRM</h2>
+          </div>
+          <NotificationBell />
         </div>
 
         {/* Main nav */}
         <nav className="space-y-2 mb-6">
-          <Link
-            href="/dashboard"
-            className={cn(
-              "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
-              pathname === "/dashboard" && "bg-sidebar-accent"
-            )}
-          >
-            <LayoutDashboard className="h-4 w-4" />
-            <span>Dashboard</span>
-          </Link>
+          {/* Dashboard - Numai pentru admini */}
+          {isAdmin && (
+            <Link
+              href="/dashboard"
+              className={cn(
+                "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-sidebar-accent",
+                pathname === "/dashboard" && "bg-sidebar-accent"
+              )}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Dashboard</span>
+            </Link>
+          )}
 
           {/* Link pentru profil - accesibil pentru toți */}
           <Link

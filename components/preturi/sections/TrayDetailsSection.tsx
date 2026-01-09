@@ -5,7 +5,6 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Loader2, MessageSquare, Info, ChevronDown, ChevronUp } from 'lucide-react'
-import { useRole } from '@/lib/contexts/AuthContext'
 
 interface TrayDetailsSectionProps {
   trayDetails: string
@@ -30,15 +29,11 @@ export function TrayDetailsSection({
   isVanzariPipeline = false,
   isReceptiePipeline = false,
 }: TrayDetailsSectionProps) {
-  const { isAdmin } = useRole()
+  // TOȚI utilizatorii pot edita - nicio diferență pe bază de rol
+  const canEdit = true
   
-  // Determină dacă utilizatorul poate edita - vânzători (Vânzări + Recepție) și admin
-  const canEdit = useMemo(() => {
-    return isAdmin || isVanzariPipeline || isReceptiePipeline
-  }, [isAdmin, isVanzariPipeline, isReceptiePipeline])
-  
-  // State local dacă nu este controlat extern
-  const [internalIsExpanded, setInternalIsExpanded] = useState(true)
+  // State local dacă nu este controlat extern - minimizat by default pentru toți utilizatorii
+  const [internalIsExpanded, setInternalIsExpanded] = useState(false)
   const isExpanded = externalIsExpanded !== undefined ? externalIsExpanded : internalIsExpanded
   const toggleExpanded = externalOnToggleExpanded || (() => setInternalIsExpanded(prev => !prev))
 

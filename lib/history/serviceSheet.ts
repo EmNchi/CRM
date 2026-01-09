@@ -172,9 +172,12 @@ export async function persistAndLogServiceSheet(params: {
 
   // Deletes: anything that existed before (real DB id) but not anymore in current items
   const currentDbIds = new Set(items.filter(it => !isLocalId(it.id)).map(it => String(it.id)))
+  console.log('[persistAndLogServiceSheet] Current DB IDs:', Array.from(currentDbIds))
+  console.log('[persistAndLogServiceSheet] Prev snapshot IDs:', prevSnapshot.map(p => p.id))
   for (const prev of prevSnapshot) {
     const wasDbId = !isLocalId(prev.id)
     if (wasDbId && !currentDbIds.has(String(prev.id))) {
+      console.log('[persistAndLogServiceSheet] DELETING item:', prev.id, prev.name, prev.type)
       const { success, error } = await deleteTrayItem(String(prev.id))
       if (!success || error) {
         console.error('Error deleting tray item:', error)

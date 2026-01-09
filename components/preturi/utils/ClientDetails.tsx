@@ -2,7 +2,6 @@
 
 import { Checkbox } from '@/components/ui/checkbox'
 import type { Lead } from '@/app/(crm)/dashboard/page'
-import { useRole } from '@/lib/contexts/AuthContext'
 
 interface ClientDetailsProps {
   lead: Lead | null
@@ -29,7 +28,6 @@ export function ClientDetails({
   onCallBackChange,
   showCheckboxes = true,
 }: ClientDetailsProps) {
-  const { isAdmin } = useRole()
   if (!lead) return null
 
   return (
@@ -77,7 +75,7 @@ export function ClientDetails({
         </div>
       </div>
 
-      {/* Checkboxes pentru acțiuni lead */}
+      {/* Checkboxes pentru acțiuni lead - accesibile pentru toți utilizatorii */}
       {showCheckboxes && (
         <div className="px-4 py-3 bg-muted/30 border rounded-lg">
           <h4 className="font-medium text-sm mb-3">Acțiuni Lead</h4>
@@ -86,7 +84,6 @@ export function ClientDetails({
               <Checkbox
                 checked={noDeal}
                 onCheckedChange={onNoDealChange}
-                disabled={!isAdmin}
                 className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
               />
               <span className={`text-sm font-medium ${noDeal ? 'text-red-600' : 'text-muted-foreground'}`}>
@@ -97,7 +94,6 @@ export function ClientDetails({
               <Checkbox
                 checked={callBack}
                 onCheckedChange={onCallBackChange}
-                disabled={!isAdmin}
                 className="data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
               />
               <span className={`text-sm font-medium ${callBack ? 'text-blue-600' : 'text-muted-foreground'}`}>
@@ -108,7 +104,6 @@ export function ClientDetails({
               <Checkbox
                 checked={nuRaspunde}
                 onCheckedChange={onNuRaspundeChange}
-                disabled={!isAdmin}
                 className="data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
               />
               <span className={`text-sm font-medium ${nuRaspunde ? 'text-orange-600' : 'text-muted-foreground'}`}>

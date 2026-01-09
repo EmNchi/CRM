@@ -21,7 +21,7 @@ import type { LeadQuoteItem, LeadQuote } from '@/lib/types/preturi'
 import type { Service } from '@/lib/supabase/serviceOperations'
 import type { Lead } from '@/app/(crm)/dashboard/page'
 
-interface VanzariViewProps {
+export interface VanzariViewProps {
   // State
   instrumentForm: { 
     instrument: string
@@ -80,9 +80,9 @@ interface VanzariViewProps {
   onCurierTrimisChange?: (checked: boolean) => Promise<void>
   onUrgentChange: (checked: boolean) => Promise<void>
   onSubscriptionChange: (value: 'services' | 'parts' | 'both' | '') => void
-  onNoDealChange: () => void
-  onNuRaspundeChange: () => void
-  onCallBackChange: () => void
+  onNoDealChange: (checked: boolean) => void
+  onNuRaspundeChange: (checked: boolean) => void
+  onCallBackChange: (checked: boolean) => void
   onSave: () => void
   // Callbacks pentru brand selection (opționale)
   onBrandToggle?: (brandName: string, checked: boolean) => void
@@ -101,6 +101,19 @@ interface VanzariViewProps {
   // Flags pentru permisiuni
   isVanzariPipeline?: boolean
   isReceptiePipeline?: boolean
+  
+  // Callbacks pentru adăugare instrument direct
+  onAddInstrumentDirect?: (instrumentId: string, qty: number, brand?: string) => void
+  
+  // Callback pentru click pe rând (editare)
+  onRowClick?: (item: LeadQuoteItem) => void
+  
+  // Callback pentru resetare formulare (undo)
+  onClearForm?: () => void
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+  onUndo?: () => void
+  previousFormState?: any
+// -----------------------------------------------------------------------------------------------------------------------------------
   
   // Computed
   currentInstrumentId: string | null
@@ -225,10 +238,18 @@ export function VanzariView({
   onImageDelete,
   isVanzariPipeline = false,
   isReceptiePipeline = false,
+  onAddInstrumentDirect,
+  onRowClick,
+  onClearForm,
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+  onUndo,
+  previousFormState,
+// -----------------------------------------------------------------------------------------------------------------------------------
 }: VanzariViewProps) {
   // VERIFICARE: Fișa este LOCKED dacă a fost deja trimisă (office_direct sau curier_trimis este true)
   // Odată trimisă, fișa devine read-only și nu mai poate fi modificată
-  const isServiceFileLocked = officeDirect || curierTrimis
+  // EXCEPȚIE: Pentru Recepție și Department, fișa NU se blochează niciodată
+  const isServiceFileLocked = (officeDirect || curierTrimis) && !isReceptiePipeline && !isDepartmentPipeline
   
   // Validări pentru checkbox-urile Office Direct și Curier Trimis
   // Permitem selecția chiar și fără items, dar salvăm doar când există items
@@ -312,8 +333,30 @@ export function VanzariView({
         </div>
       </div>
 
-      {/* Urgent și Abonament - DOAR VIZUALIZARE dacă fișa este locked */}
-      {canEditUrgentAndSubscription && (
+      {/* TrayTabs - Navigare între tăvițe, Adaugă tăviță, Trimite */}
+      {quotes && quotes.length > 0 && (
+        <div className="px-4">
+          <TrayTabs
+            quotes={quotes}
+            selectedQuoteId={selectedQuoteId}
+            isVanzariPipeline={isVanzariPipeline ?? false}
+            isReceptiePipeline={isReceptiePipeline ?? false}
+            isDepartmentPipeline={isDepartmentPipeline}
+            isVanzatorMode={false}
+            sendingTrays={sendingTrays ?? false}
+            traysAlreadyInDepartments={traysAlreadyInDepartments ?? false}
+            officeDirect={officeDirect}
+            curierTrimis={curierTrimis}
+            onTraySelect={onTraySelect || (() => {})}
+            onAddTray={onAddTray || (() => {})}
+            onDeleteTray={onDeleteTray || (() => {})}
+            onSendTrays={onSendTrays || (() => {})}
+          />
+        </div>
+      )}
+
+      {/* Urgent și Abonament - AFIȘAT PENTRU TOȚI utilizatorii, indiferent de rol */}
+      {(true) && (
         <div className={`mx-4 px-3 py-2 rounded-lg border ${isServiceFileLocked ? 'bg-muted/50 opacity-75' : 'bg-muted/30'}`}>
           <div className="flex flex-wrap items-center gap-4">
             <label className={`flex items-center gap-2.5 group ${isServiceFileLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
@@ -437,8 +480,8 @@ export function VanzariView({
       {/* Formulare de editare - ASCUNSE când fișa este locked */}
       {!isServiceFileLocked && (
         <>
-          {/* Add Instrument */}
-          {!(isDepartmentPipeline && isTechnician) && (
+          {/* Add Instrument - disponibil pentru TOATE pipeline-urile */}
+          {(true) && (
             <AddInstrumentForm
               instrumentForm={instrumentForm as any}
               availableInstruments={availableInstruments}
@@ -460,6 +503,12 @@ export function VanzariView({
               onRemoveSerialNumber={onRemoveSerialNumber}
               onUpdateSerialGarantie={onUpdateSerialGarantie}
               setIsDirty={setIsDirty}
+              onAddInstrumentDirect={onAddInstrumentDirect}
+              onClearForm={onClearForm}
+/* -------------------------------------------------- COD PENTRU POPULARE CASETE ----------------------------------------------------- */
+              onUndo={onUndo}
+              previousFormState={previousFormState}
+/* ----------------------------------------------------------------------------------------------------------------------------------- */
             />
           )}
           
@@ -503,7 +552,35 @@ export function VanzariView({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.filter(it => it.item_type !== null).map(it => {
+            {/* Include items cu item_type null dacă au instrument_id (instrument fără serviciu) */}
+            {items.filter(it => it.item_type !== null || it.instrument_id).map((it, index, filteredItems) => {
+              // Verifică dacă acest item este primul pentru instrumentul său (pentru butonul de mutare)
+              const currentInstrumentId = it.instrument_id || (it.item_type === 'service' && it.service_id 
+                ? availableServices.find(s => s.id === it.service_id)?.instrument_id 
+                : null)
+              
+              const isFirstItemOfInstrument = currentInstrumentId && filteredItems.findIndex(item => {
+                const itemInstrId = item.instrument_id || (item.item_type === 'service' && item.service_id
+                  ? availableServices.find(s => s.id === item.service_id)?.instrument_id
+                  : null)
+                return itemInstrId === currentInstrumentId
+              }) === index
+              
+              // Construiește grupul de instrumente pentru mutare
+              const buildInstrumentGroupForMove = () => {
+                if (!currentInstrumentId) return null
+                const instrument = instruments.find(i => i.id === currentInstrumentId)
+                const instrumentItems = filteredItems.filter(item => {
+                  const itemInstrId = item.instrument_id || (item.item_type === 'service' && item.service_id
+                    ? availableServices.find(s => s.id === item.service_id)?.instrument_id
+                    : null)
+                  return itemInstrId === currentInstrumentId
+                })
+                return {
+                  instrument: { id: currentInstrumentId, name: instrument?.name || 'Instrument' },
+                  items: instrumentItems
+                }
+              }
               const disc = Math.min(100, Math.max(0, it.discount_pct || 0));
               const base = (it.qty || 0) * (it.price || 0);
               const afterDisc = base * (1 - disc / 100);
@@ -538,10 +615,15 @@ export function VanzariView({
               }
               
               return (
-                <TableRow key={it.id} className="hover:bg-muted/30">
+                <TableRow 
+                  key={it.id} 
+                  className="hover:bg-muted/30 cursor-pointer"
+                  onClick={() => onRowClick?.(it)}
+                >
                   <TableCell className="text-xs text-muted-foreground py-2">
                     <div className="flex flex-col">
-                      <span>{instrumentName}</span>
+                      <span className="font-medium">{instrumentName}</span>
+                      <span className="text-[10px] text-primary/70 cursor-pointer hover:underline">Click pentru editare</span>
                     </div>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground py-2">
@@ -615,19 +697,40 @@ export function VanzariView({
                   </TableCell>
                   <TableCell className="text-right font-medium text-sm py-2">{lineTotal?.toFixed(2) || '0.00'}</TableCell>
                   <TableCell className="py-2">
-                    {!isServiceFileLocked && (
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDelete(it.id)
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-1 justify-end">
+                      {/* Buton mutare instrument - afișat pentru primul item al fiecărui instrument */}
+                      {!isServiceFileLocked && isFirstItemOfInstrument && onMoveInstrument && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/30" 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const group = buildInstrumentGroupForMove()
+                            if (group) {
+                              onMoveInstrument(group)
+                            }
+                          }}
+                          title={`Mută instrumentul în altă tăviță`}
+                        >
+                          <Move className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {/* Buton ștergere */}
+                      {!isServiceFileLocked && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" 
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDelete(it.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );

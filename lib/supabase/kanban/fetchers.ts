@@ -38,6 +38,7 @@ export async function fetchPipelineItems(
       stage:stages(id, name)
     `)
     .eq('pipeline_id', pipelineId)
+    .order('created_at', { ascending: false })
   
   if (error) return { data: [], error }
   return { data: (data || []) as PipelineItemWithStage[], error: null }

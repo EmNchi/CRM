@@ -207,6 +207,7 @@ export function AddPartForm({
                 inputMode="numeric"
                 value={part.qty}
                 onChange={e => onQtyChange(e.target.value)}
+                onFocus={e => e.target.select()}
                 placeholder="1"
               />
             </div>

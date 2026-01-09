@@ -68,7 +68,14 @@ export class StandardPipelineStrategy implements PipelineStrategy {
     // Transform leads to KanbanItems
     const kanbanItems: KanbanItem[] = []
     
-    leadsResult.data.forEach(lead => {
+    // Sortează leads-urile în ordinea inversă (cel mai nou prim)
+    const sortedLeads = [...leadsResult.data].sort((a, b) => {
+      const dateA = new Date(a.created_at || 0).getTime()
+      const dateB = new Date(b.created_at || 0).getTime()
+      return dateB - dateA // Descending: newest first
+    })
+    
+    sortedLeads.forEach(lead => {
       const pipelineItem = getPipelineItem(itemMap, 'lead', lead.id)
       if (!pipelineItem) return
       

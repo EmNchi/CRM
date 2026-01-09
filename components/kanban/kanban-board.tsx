@@ -119,6 +119,7 @@ export function KanbanBoard({
       const stageLower = stage.toLowerCase()
       const isDeConfirmat = stageLower.includes('confirmat') && !stageLower.includes('confirmari')
       const isInAsteptare = stageLower.includes('asteptare')
+      const isLeadNou = stageLower.includes('lead') && stageLower.includes('nou')
       
       // pentru pipeline-ul Receptie, stage-urile "De confirmat" si "In asteptare" se sorteaza dupa timpul in stage
       const shouldSortByTimeInStage = isReceptie && (isDeConfirmat || isInAsteptare)
@@ -188,7 +189,18 @@ export function KanbanBoard({
           }
         }
         
-        // fallback: sortare dupa data crearii
+        // Pentru stage-ul "Lead Nou", sortare descrescătoare (cel mai nou prim)
+        if (isLeadNou) {
+          const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0
+          const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0
+          
+          // sortare descrescatoare: cele mai noi vor fi primele
+          if (aDate !== bDate) {
+            return bDate - aDate
+          }
+        }
+        
+        // fallback: sortare dupa data crearii (crescatoare - cel mai vechi prim)
         const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0
         const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0
         

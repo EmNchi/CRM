@@ -41,6 +41,7 @@ export function usePreturiState(initialQuoteId?: string | null) {
   // Items state
   const [items, setItems] = useState<LeadQuoteItem[]>([])
   const [allSheetsTotal, setAllSheetsTotal] = useState<number>(0)
+  const [itemsRefreshKey, setItemsRefreshKey] = useState(0)
 
   // Tray images state
   const [trayImages, setTrayImages] = useState<TrayImage[]>([])
@@ -170,6 +171,15 @@ export function usePreturiState(initialQuoteId?: string | null) {
   const [serviceSearchFocused, setServiceSearchFocused] = useState(false)
   const [partSearchFocused, setPartSearchFocused] = useState(false)
 
+// -------------------------------------------------- COD PENTRU POPULARE CASETE ----------------------------------------------------- 
+  const [previousFormState, setPreviousFormState] = useState<{
+    instrumentForm: typeof instrumentForm
+    svc: typeof svc
+    part: typeof part
+    serviceSearchQuery: string
+    partSearchQuery: string
+  } | null>(null)
+// -----------------------------------------------------------------------------------------------------------------------------------
   // Refs
   const lastSavedRef = useRef<any[]>([])
 
@@ -214,6 +224,8 @@ export function usePreturiState(initialQuoteId?: string | null) {
     setItems,
     allSheetsTotal,
     setAllSheetsTotal,
+    itemsRefreshKey,
+    setItemsRefreshKey,
 
     // Tray images
     trayImages,
@@ -352,6 +364,10 @@ export function usePreturiState(initialQuoteId?: string | null) {
     setServiceSearchFocused,
     partSearchFocused,
     setPartSearchFocused,
+
+    // Undo
+    previousFormState,
+    setPreviousFormState,
 
     // Refs
     lastSavedRef,

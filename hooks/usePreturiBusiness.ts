@@ -737,77 +737,12 @@ export function usePreturiBusiness({
     }, 50)
   }, [onPartSelect, itemOperations.onAddPart])
   
+  // NOTA: Logica onRowClick a fost mutată în PreturiMain.tsx pentru acces direct la state
+  // Acest callback e păstrat pentru compatibilitate dar nu mai e folosit activ
   const onRowClick = useCallback((item: LeadQuoteItem) => {
-    // item-ul este deja transmis de ItemsTable
-    if (!item) return
-    
-    // Găsește serviciul pentru a obține instrument_id
-    const serviceDef = services.find(s => s.id === item.service_id)
-    const instrumentId = serviceDef?.instrument_id || item.instrument_id || ''
-    
-    // NU mai suprascriu instrumentForm.brandSerialGroups - păstrez toate serial numbers din tăviță
-    // Doar setez instrumentul dacă s-a schimbat
-    if (instrumentId && instrumentForm.instrument !== instrumentId) {
-      // Dacă instrumentul s-a schimbat, reîncarcă toate serial numbers pentru acest instrument
-      populateInstrumentFormFromItems(items, instrumentId, true)
-    }
-    
-    // Populează formularul de serviciu
-    if (item.item_type === 'service' && item.service_id) {
-      // Găsește definiția serviciului
-      const service = services.find(s => s.id === item.service_id)
-      
-      // Construiește selectedBrands din brand_groups ale ACESTUI ITEM pentru checkbox-uri
-      const selectedBrands: string[] = []
-      if (item.brand_groups && Array.isArray(item.brand_groups)) {
-        item.brand_groups.forEach((bg: any, bgIdx: number) => {
-          const brandName = bg.brand || ''
-          const serialNumbers = Array.isArray(bg.serialNumbers) ? bg.serialNumbers : []
-          
-          serialNumbers.forEach((sn: any, snIdx: number) => {
-            const serial = typeof sn === 'string' ? sn : (sn && typeof sn === 'object' ? sn?.serial || '' : '')
-            const serialValue = serial && serial.trim() ? serial.trim() : `empty-${bgIdx}-${snIdx}`
-            const brandKey = `${brandName}::${serialValue}`
-            selectedBrands.push(brandKey)
-          })
-        })
-      } else if (item.brand || item.serial_number) {
-        // Fallback pentru format vechi
-        const brandKey = `${item.brand || ''}::${item.serial_number || ''}`
-        selectedBrands.push(brandKey)
-      }
-      
-      // Actualizează svc cu TOATE datele într-un singur apel (include și datele din service)
-      setSvc({
-        id: item.service_id,
-        name: service?.name || item.name_snapshot || '',
-        price: service?.price || item.price || 0,
-        qty: String(item.qty || 1),
-        discount: String(item.discount_pct || 0),
-        instrumentId: instrumentId,
-        selectedBrands: selectedBrands
-      })
-      
-      // Actualizează și search query pentru afișare
-      setServiceSearchQuery(service?.name || item.name_snapshot || '')
-      setServiceSearchFocused(false)
-    }
-    
-    // Populează formularul de piesă (dacă este piesă)
-    if (item.item_type === 'part' && item.part_id) {
-      // Selectează piesa în dropdown
-      onPartSelect(item.part_id, item.name_snapshot || '')
-      
-      // Actualizează part cu datele complete
-      setPart((prev: any) => ({
-        ...prev,
-        qty: String(item.qty || 1),
-        serialNumberId: ''
-      }))
-    }
-    
-    toast.info('Datele au fost încărcate în formulare pentru editare')
-  }, [items, services, instrumentForm.instrument, setSvc, setServiceSearchQuery, setServiceSearchFocused, setPart, setPartSearchQuery, onPartSelect, populateInstrumentFormFromItems])
+    // Logica e acum în PreturiMain.tsx - callback direct cu acces la state
+    console.log('[usePreturiBusiness] onRowClick called - redirecting to PreturiMain')
+  }, [])
   
   // Resetează toate formularele la starea inițială
   const onClearForm = useCallback(() => {
@@ -835,7 +770,7 @@ export function usePreturiBusiness({
     setPartSearchQuery('')
     setPartSearchFocused(false)
     
-    toast.info('Formularele au fost resetate')
+    // Toast eliminat - era confuz pentru utilizatori
   }, [setSvc, setServiceSearchQuery, setServiceSearchFocused, setPart, setPartSearchQuery, setPartSearchFocused])
   
   const onBrandToggle = useCallback((brandKey: string, checked: boolean) => {

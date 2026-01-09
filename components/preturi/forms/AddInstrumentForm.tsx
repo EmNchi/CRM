@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Wrench, Plus, Trash2, Tag, Hash } from 'lucide-react'
+import { Wrench, Plus, Trash2, Tag, Hash, RotateCcw } from 'lucide-react'
 import { useMemo } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -35,6 +35,12 @@ interface AddInstrumentFormProps {
   onUpdateSerialGarantie?: (groupIndex: number, serialIndex: number, garantie: boolean) => void
   setIsDirty?: (dirty: boolean) => void
   isAddInstrumentDisabled?: boolean // Flag pentru a dezactiva adăugarea de instrumente
+  onAddInstrumentDirect?: (instrumentId: string, qty: number, brand?: string) => void // Callback pentru adăugare instrument direct (fără serviciu)
+  onClearForm?: () => void // Callback pentru resetare formulare
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+  onUndo?: () => void // Callback pentru undo (restaurare stare anterioară)
+  previousFormState?: any // Stare anterioară pentru a arăta dacă există undo disponibil
+// -----------------------------------------------------------------------------------------------------------------------------------
 }
 
 export function AddInstrumentForm({
@@ -59,6 +65,12 @@ export function AddInstrumentForm({
   onUpdateSerialGarantie,
   setIsDirty,
   isAddInstrumentDisabled = false,
+  onAddInstrumentDirect,
+  onClearForm,
+// -------------------------------------------------- COD PENTRU POPULARE CASETE -----------------------------------------------------
+  onUndo,
+  previousFormState,
+// -----------------------------------------------------------------------------------------------------------------------------------
 }: AddInstrumentFormProps) {
   const isReparatiiInstrument = useMemo(() => {
     if (!instrumentForm.instrument) return false
@@ -95,18 +107,53 @@ export function AddInstrumentForm({
       <div className="rounded-xl border-2 border-emerald-200/80 dark:border-emerald-700/50 bg-gradient-to-br from-emerald-50 via-green-50/50 to-teal-50/30 dark:from-emerald-950/40 dark:via-green-950/30 dark:to-teal-950/20 shadow-sm overflow-hidden">
         {/* Header */}
         <div className="px-4 py-3 bg-gradient-to-r from-emerald-100/80 to-green-100/60 dark:from-emerald-900/40 dark:to-green-900/30 border-b border-emerald-200/60 dark:border-emerald-700/40">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-sm">
-              <Wrench className="h-4.5 w-4.5 text-white" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-sm">
+                <Wrench className="h-4.5 w-4.5 text-white" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-emerald-900 dark:text-emerald-100">
+                  Adaugă Instrument
+                </h3>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/70">
+                  Selectează instrumentul pentru servicii
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-sm text-emerald-900 dark:text-emerald-100">
-                Adaugă Instrument
-              </h3>
-              <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/70">
-                Selectează instrumentul pentru servicii
-              </p>
+{/* -------------------------------------------------- COD PENTRU POPULARE CASETE ----------------------------------------------------- */}
+            {/* Butoane: Undo și Reset */}
+            <div className="flex items-center gap-2">
+              {/* Buton UNDO - afișat doar când există stare anterioară */}
+              {previousFormState && onUndo && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onUndo}
+                  className="text-blue-600 border-blue-300 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-700 dark:hover:bg-blue-950/30"
+                  title="Anulează ultima selecție și restaurează formularele"
+                >
+                  <RotateCcw className="h-4 w-4 mr-1" />
+                  Undo
+                </Button>
+              )}
+              {/* Buton RESET - golește formularele complet */}
+              {instrumentForm.instrument && onClearForm && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClearForm}
+                  className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                  title="Golește toate formularele"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Golește
+                </Button>
+              )}
             </div>
+{/* ----------------------------------------------------------------------------------------------------------------------------------- */}
           </div>
         </div>
 
@@ -141,8 +188,9 @@ export function AddInstrumentForm({
                 inputMode="numeric"
                 value={instrumentForm.qty}
                 onChange={e => onQtyChange(e.target.value)}
+                onFocus={e => e.target.select()}
                 placeholder="1"
-                disabled={isAddInstrumentDisabled || (hasServicesOrInstrumentInSheet && !isVanzariPipeline && !isDepartmentPipeline)}
+                disabled={isAddInstrumentDisabled}
               />
             </div>
           </div>
@@ -200,6 +248,7 @@ export function AddInstrumentForm({
                                   onUpdateBrandQty!(groupIndex, String(qtyNum))
                                   if (setIsDirty) setIsDirty(true)
                                 }}
+                                onFocus={e => e.currentTarget.select()}
                               />
                             </div>
                           ) : (
@@ -295,6 +344,28 @@ export function AddInstrumentForm({
                 )
               })}
             </div>
+          )}
+        </div>
+
+        {/* Butoane Acțiuni */}
+        <div className="px-4 py-3 border-t border-emerald-200/60 dark:border-emerald-700/40 bg-emerald-50/50 dark:bg-emerald-900/20 flex flex-wrap gap-2 sm:gap-3">
+          {/* Buton Adaugă Instrument cu Serviciu (normal) - implicit */}
+          {/* Acesta nu e afisat, dar logica e că default se adaugă cu serviciu prin AddServiceForm */}
+          
+          {/* Buton Adaugă Instrument Direct (fără serviciu) - disponibil pentru TOATE pipeline-urile */}
+          {onAddInstrumentDirect && instrumentForm.instrument && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const qty = Math.max(1, Number(instrumentForm.qty) || 1)
+                onAddInstrumentDirect(instrumentForm.instrument, qty, '')
+              }}
+              className="border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+            >
+              Adaugă Instrument (fără Serviciu)
+            </Button>
           )}
         </div>
       </div>
